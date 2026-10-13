@@ -21,7 +21,7 @@ actor FeedService {
 
     // 본문과 함께 문자 인코딩 이름(헤더 기준)을 돌려준다
     func fetchWithEncoding(_ url: String, conditional: Bool = false) async throws -> (data: Data, encoding: String?)? {
-        guard let u = URL(string: url), await URLSafety.resolvesPublic(u) else { throw FeedError.badFormat }
+        guard let u = URL(string: url), await URLSafety.resolvesPublic(u) else { throw FeedError.blocked("주소 확인") }
         var req = URLRequest(url: u)
         req.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
         req.setValue("application/rss+xml, application/atom+xml, application/xml, text/xml, text/html;q=0.8", forHTTPHeaderField: "Accept")
@@ -32,7 +32,7 @@ actor FeedService {
         let guardian = RequestGuard()
         let (data, resp) = try await session.data(for: req, delegate: guardian)
         // 실제로 접속한 IP 가 내부망이면(확인 뒤 DNS 응답을 바꾸는 공격) 받은 내용을 버린다
-        if guardian.connectedToPrivate { throw FeedError.badFormat }
+        if guardian.connectedToPrivate { throw FeedError.blocked("접속 IP \(guardian.lastRemote ?? "?")") }
         let http = resp as? HTTPURLResponse
         if http?.statusCode == 304 { return nil }
         if let code = http?.statusCode, !(200..<300).contains(code) { throw FeedError.http(code) }
@@ -108,7 +108,9 @@ enum Gzip {
 final class RequestGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     private let lock = NSLock()
     private var privateHit = false
+    private var lastIP: String?
     var connectedToPrivate: Bool { lock.lock(); defer { lock.unlock() }; return privateHit }
+    var lastRemote: String? { lock.lock(); defer { lock.unlock() }; return lastIP }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest) async -> URLRequest? {
@@ -123,6 +125,7 @@ final class RequestGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable 
             if let v6 = URLSafety.parseV6(bare.split(separator: "%").first.map(String.init) ?? bare) { return !URLSafety.isPublic(v6: v6) }
             return false
         }
-        if bad { lock.lock(); privateHit = true; lock.unlock() }
+        let last = metrics.transactionMetrics.last?.remoteAddress
+        lock.lock(); lastIP = last; if bad { privateHit = true }; lock.unlock()
     }
 }

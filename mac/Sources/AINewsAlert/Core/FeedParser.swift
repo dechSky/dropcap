@@ -29,9 +29,10 @@ private final class TreeBuilder: NSObject, XMLParserDelegate {
 }
 
 enum FeedError: LocalizedError {
-    case badFormat, http(Int)
+    case badFormat, http(Int), blocked(String)
     var errorDescription: String? {
         switch self {
+        case .blocked(let why): return "안전하지 않은 주소라 막음: \(why)"
         case .badFormat: return "RSS/Atom 형식을 알아볼 수 없음"
         case .http(let c): return "HTTP \(c)"
         }

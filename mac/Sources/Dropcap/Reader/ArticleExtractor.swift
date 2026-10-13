@@ -31,7 +31,25 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
       if (!art || !art.content) return null;
       const box = new DOMParser().parseFromString(art.content, 'text/html').body;
       const blocks = [];
-      const abs = (u) => { try { return new URL(u, location.href).href; } catch { return null; } };
+      const abs = (u) => { try { const h = new URL(u, location.href).href; return /^https?:/.test(h) ? h : null; } catch { return null; } };
+      // 늦게 불러오는 사진은 src 가 빈 자리표시이고 진짜 주소는 srcset·data-* 에 있다 — 가장 큰 진짜 주소를 고른다
+      const bestSrc = (img) => {
+        if (!img) return null;
+        const cands = [];
+        const fromSet = (v) => (v || '').split(',').map(x => x.trim().split(/\\s+/)).forEach(([u, d]) => {
+          if (u) cands.push([u, parseFloat(d) || (d && d.endsWith('x') ? parseFloat(d) * 1000 : 1)]);
+        });
+        fromSet(img.getAttribute('srcset')); fromSet(img.getAttribute('data-srcset'));
+        const pic = img.closest('picture');
+        if (pic) pic.querySelectorAll('source').forEach(s => fromSet(s.getAttribute('srcset') || s.getAttribute('data-srcset')));
+        cands.sort((a, b) => b[1] - a[1]);
+        for (const [u] of cands) { const h = abs(u); if (h) return h; }
+        for (const a of ['data-src', 'data-lazy-src', 'data-original', 'data-url', 'src']) {
+          const v = img.getAttribute(a);
+          if (v && !v.startsWith('data:')) { const h = abs(v); if (h && !/(1x1|spacer|blank|pixel)\\.(gif|png)/i.test(h)) return h; }
+        }
+        return null;
+      };
       const clean = (s) => (s || '').replace(/\\((opens in a new (window|tab)|새 창에서 열기)\\)/gi, '').replace(/\\s+/g, ' ').trim();
       const walk = (el) => {
         for (const n of el.children) {
@@ -39,16 +57,17 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
           const t = clean(n.textContent);
           if (/^h[1-6]$/.test(tag)) { if (t) blocks.push({ type: 'h', text: t }); }
           else if (tag === 'p') {
-            const img = n.querySelector('img');
+            const img = n.querySelector('img'); const src = bestSrc(img);
             if (t) blocks.push({ type: 'p', text: t });
-            else if (img && abs(img.getAttribute('src'))) blocks.push({ type: 'img', src: abs(img.getAttribute('src')) });
+            if (src) blocks.push({ type: 'img', src });
           }
           else if (tag === 'li') { if (t) blocks.push({ type: 'li', text: t }); }
           else if (tag === 'blockquote') { if (t) blocks.push({ type: 'quote', text: t }); }
           else if (tag === 'pre') { if (t) blocks.push({ type: 'pre', text: n.textContent }); }
-          else if (tag === 'img') { const s = abs(n.getAttribute('src')); if (s) blocks.push({ type: 'img', src: s }); }
+          else if (tag === 'img') { const s = bestSrc(n); if (s) blocks.push({ type: 'img', src: s }); }
+          else if (tag === 'picture') { const s = bestSrc(n.querySelector('img')); if (s) blocks.push({ type: 'img', src: s }); }
           else if (tag === 'figure') {
-            const img = n.querySelector('img'); const s = img && abs(img.getAttribute('src'));
+            const s = bestSrc(n.querySelector('img'));
             if (s) blocks.push({ type: 'img', src: s });
             const cap = n.querySelector('figcaption'); const c = cap && clean(cap.textContent);
             if (c) blocks.push({ type: 'cap', text: c });

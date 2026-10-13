@@ -101,6 +101,7 @@ final class ArticleService {
             emit(item.link, a)
             return a
         }
+        NSLog("[기사] 그림 %d개", art.blocks.filter { $0.type == .img }.count)
         let artTitle = art.title?.nonEmpty ?? item.title
         a.originalTitle = artTitle
         a.blocks = art.blocks

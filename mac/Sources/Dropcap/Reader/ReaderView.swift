@@ -74,6 +74,7 @@ struct ReaderView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
+                cover
                 header
                 switch model.phase {
                 case .loading:
@@ -250,6 +251,16 @@ struct ReaderView: View {
         }
     }
 
+    // 표지: 피드의 대표 사진, 없으면 본문의 첫 사진(본문에서는 그 사진을 다시 싣지 않음)
+    private var coverURL: String? { model.item.image ?? model.blocks.first { $0.type == .img }?.src }
+
+    @ViewBuilder private var cover: some View {
+        if let url = coverURL {
+            CoverImage(url: url, accent: model.item.accent, category: model.item.category)
+                .padding(.bottom, 22)
+        }
+    }
+
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
@@ -289,10 +300,12 @@ struct ReaderView: View {
             ForEach(Array(blocks.enumerated()), id: \.offset) { i, b in
                 let text = (model.showOriginal ? b.original : nil) ?? b.text ?? ""
                 let prevIsLi = i > 0 && blocks[i - 1].type == .li
+                if !(b.type == .img && b.src == coverURL && model.item.image == nil) {
                 blockView(b, text: text, prevIsLi: prevIsLi)
                     .modifier(ScrapHover(item: model.item, text: text,
                                          original: model.showOriginal ? nil : b.original,
                                          enabled: [.p, .li, .quote, .h].contains(b.type) && !text.isEmpty))
+                }
             }
         }
     }
@@ -560,5 +573,39 @@ private struct ArticleImage: View {
         }
         .frame(maxWidth: .infinity)
         .task(id: url) { image = await ImageLoader.shared.image(url) }
+    }
+}
+
+
+// 읽기 창 표지: 사진 비율을 지키되 너무 길면 잘라서 16:9 안팎으로, 불러오는 동안은 분야 색 바탕
+private struct CoverImage: View {
+    let url: String
+    let accent: Color
+    let category: NewsCategory
+    @State private var image: NSImage?
+    @State private var failed = false
+
+    var body: some View {
+        if failed { EmptyView() } else { content }
+    }
+
+    private var content: some View {
+        ZStack {
+            if let image {
+                Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
+                    .transition(.opacity)
+            } else {
+                LinearGradient(colors: [accent.opacity(0.35), category.color.opacity(0.2)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                    .overlay(ProgressView().controlSize(.small))
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 340)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(.primary.opacity(0.06), lineWidth: 0.5))
+        .task(id: url) {
+            let img = await ImageLoader.shared.image(url)
+            withAnimation(.easeOut(duration: 0.35)) { image = img; failed = img == nil }
+        }
     }
 }

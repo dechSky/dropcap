@@ -65,6 +65,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     }
                 }
             }
+            if env["AINEWS_TEST_MENU"] != nil, let dir = env["AINEWS_TEST_SHOT_DIR"] { // 시험용: 상단바 창을 일반 창에 띄워 찍기
+                DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+                    let w = NSWindow(contentViewController: NSHostingController(rootView: MenuView()))
+                    w.title = "menu-test"
+                    w.appearance = NSAppearance(named: .darkAqua)
+                    NSApp.setActivationPolicy(.regular)
+                    NSApp.activate(ignoringOtherApps: true)
+                    w.makeKeyAndOrderFront(nil)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+                        let r = ImageRenderer(content: MenuView().environment(\.colorScheme, .dark).background(Color(white: 0.16)))
+                        r.scale = 2
+                        if let cg = r.cgImage {
+                            try? NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "\(dir)/menu.png"))
+                        }
+                    }
+                }
+            }
             if env["AINEWS_TEST_SETTINGS"] != nil {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
                     NSApp.activate(ignoringOtherApps: true)
@@ -100,7 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             if env["AINEWS_TEST_TOAST"] != nil {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1) { AppModel.shared.preview() }
                 if let dir = env["AINEWS_TEST_SHOT_DIR"] {
-                    for ms in [1700, 2150, 2250, 2350, 2450, 2600, 2800, 3050, 3400, 4500, 6500, 8500] {
+                    for ms in [1300, 1700, 1950, 2100, 2200, 2300, 2450, 3400] {
                         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(ms)) {
                             ToastCenter.shared.snapshot(to: "\(dir)/toast-\(ms).png")
                         }

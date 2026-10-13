@@ -37,29 +37,39 @@ struct DripView: View {
         TimelineView(.animation) { tl in
             let s = state(at: tl.date.timeIntervalSince(start))
             let glass = Glass.clear.tint(dark ? Color.black.opacity(0.85) : color.opacity(0.22))
+            let cx = Self.width / 2
+            // 유리는 '그려지는 자리'가 아니라 '배치된 자리'를 기준으로 렌더링된다.
+            // 그래서 offset 대신 position(배치)으로 놓아야 물방울·반사광·카드 착지점이 같은 좌표를 쓴다.
             GlassEffectContainer(spacing: 18) {
-                ZStack(alignment: .top) {
-                    if s.film > 0 { blob(44 * s.film, 12, -7, glass) }
-                    if s.beadR > 0.5 { blob(s.beadR * 2.3, s.beadR * 1.6, -s.beadR * 0.35, glass) }
+                ZStack(alignment: .topLeading) {
+                    Color.clear
+                    if s.film > 0 { blob(44 * s.film, 12, center: CGPoint(x: cx, y: -1), glass) }
+                    if s.beadR > 0.5 { blob(s.beadR * 2.3, s.beadR * 1.6, center: CGPoint(x: cx, y: s.beadR * 0.45), glass) }
                     if s.dropR > 0.5 {
                         let w = s.dropR * 2 / sqrt(s.stretch), h = s.dropR * 2 * s.stretch
-                        blob(w, h, s.dropY - h / 2, glass)
+                        blob(w, h, center: CGPoint(x: cx, y: s.dropY), glass)
                     }
-                    if s.satR > 0.5 { blob(s.satR * 2, s.satR * 2, s.satY - s.satR, glass) }
+                    if s.satR > 0.5 { blob(s.satR * 2, s.satR * 2, center: CGPoint(x: cx, y: s.satY), glass) }
                 }
-                .frame(width: Self.width, height: landY + Self.dropRadius * 2, alignment: .top)
+                .frame(width: Self.width, height: landY + Self.dropRadius * 2)
             }
             .overlay(alignment: .top) { highlight(s) }
         }
     }
 
     @available(macOS 26.0, *)
-    private func blob(_ w: CGFloat, _ h: CGFloat, _ y: CGFloat, _ glass: Glass) -> some View {
-        Color.clear
-            .frame(width: max(w, 1), height: max(h, 1))
-            .glassEffect(glass, in: Ellipse())
-            .offset(y: y)
+    private func blob(_ w: CGFloat, _ h: CGFloat, center: CGPoint, _ glass: Glass) -> some View {
+        Group {
+            // 시험용: AINEWS_DEBUG_DRIP=1 이면 유리 대신 보이는 색으로(캡처로 자리 확인)
+            if Self.debugFill {
+                Ellipse().fill(Color.red.opacity(0.8)).frame(width: max(w, 1), height: max(h, 1))
+            } else {
+                Color.clear.frame(width: max(w, 1), height: max(h, 1)).glassEffect(glass, in: Ellipse())
+            }
+        }
+        .position(center)
     }
+    private static let debugFill = ProcessInfo.processInfo.environment["AINEWS_DEBUG_DRIP"] == "1"
 
     // 물방울 위쪽의 반짝이는 반사광과 아래쪽의 맺힌 빛
     private func highlight(_ s: S) -> some View {

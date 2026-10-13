@@ -95,7 +95,6 @@ struct ToastView: View {
                 .offset(y: dropY)
                 .opacity(alpha)
             closeButton
-            quickActions
         }
         .frame(width: 360)
         .overlay(alignment: .top) {
@@ -109,7 +108,6 @@ struct ToastView: View {
         })
         .onPreferenceChange(CardFrameKey.self) { frames in
             for (k, v) in frames { center.cardFrames[k] = v }
-            if let f = frames[toast.id], f.height > 20 { cardH = f.height }
         }
         .onChange(of: center.hoveredID) { _, id in
             withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) { hovering = id == toast.id && !leaving }
@@ -130,8 +128,12 @@ struct ToastView: View {
                 }
             }
             .overlay { tintLayer }
+            .overlay(alignment: .bottomTrailing) { quickActions }
             .clipShape(DropletShape(t: t))
             .contentShape(DropletShape(t: t))
+            .background(GeometryReader { g in
+                Color.clear.onAppear { cardH = g.size.height }.onChange(of: g.size.height) { _, h in cardH = h }
+            })
             .background {
                 DropletShape(t: t)
                     .fill(Color.black.opacity(0.001))
@@ -176,7 +178,6 @@ struct ToastView: View {
                 }
             }
             .padding(8)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
             .opacity(hovering ? 1 : 0)
             .offset(y: hovering ? 0 : 4)
         }

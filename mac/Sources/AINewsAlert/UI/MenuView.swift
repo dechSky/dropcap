@@ -55,6 +55,21 @@ struct MenuView: View {
                     Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }.buttonStyle(.plain)
                 }
                 Menu {
+                    Picker("분야", selection: $category) {
+                        Label("전체 분야", systemImage: "square.grid.2x2").tag(NewsCategory?.none)
+                        ForEach(NewsCategory.allCases) { c in Label(c.label, systemImage: c.symbol).tag(NewsCategory?.some(c)) }
+                    }
+                    .pickerStyle(.inline)
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: category?.symbol ?? "line.3.horizontal.decrease")
+                        if let c = category { Text(c.label).lineLimit(1) }
+                    }
+                    .font(.app(11, category == nil ? .regular : .semibold))
+                    .foregroundStyle(category?.color ?? .secondary)
+                }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("분야 거르기")
+                Menu {
                     Picker("정렬", selection: $sortRaw) {
                         Label("최신순", systemImage: "clock").tag("newest")
                         Label("중요·많이 보도된 순", systemImage: "star").tag("important")
@@ -66,15 +81,7 @@ struct MenuView: View {
             }
             .padding(.horizontal, 9).padding(.vertical, 5)
             .background(.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .padding(.horizontal, 14)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 5) {
-                    chip(nil, "전체 분야", "square.grid.2x2")
-                    ForEach(NewsCategory.allCases.filter { $0 != .other }) { c in chip(c, c.label, c.symbol) }
-                }
-                .padding(.horizontal, 14)
-            }
-            .padding(.vertical, 8)
+            .padding(.horizontal, 14).padding(.bottom, 10)
             Divider().opacity(0.5)
             if items.isEmpty {
                 empty
@@ -95,19 +102,6 @@ struct MenuView: View {
         }
         .frame(width: 370)
         .onAppear { model.markRead() }
-    }
-
-    private func chip(_ c: NewsCategory?, _ label: String, _ symbol: String) -> some View {
-        let on = category == c
-        let color = c?.color ?? .accentColor
-        return Button { category = c } label: {
-            Label(label, systemImage: symbol)
-                .font(.system(size: 11, weight: on ? .semibold : .regular))
-                .padding(.horizontal, 8).padding(.vertical, 4)
-                .foregroundStyle(on ? color : .secondary)
-                .background(on ? color.opacity(0.15) : Color.primary.opacity(0.05), in: Capsule())
-        }
-        .buttonStyle(.plain)
     }
 
     @ViewBuilder private func menu(for it: NewsItem) -> some View {
@@ -149,10 +143,6 @@ struct MenuView: View {
             }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             .help(model.isSnoozed ? "알림 꺼짐 — \(AppModel.clock(model.state.snoozeUntil))까지" : "알림 잠시 끄기")
-            Button { MagazineController.open() } label: { Image(systemName: "book.pages").font(.app(12)) }
-                .buttonStyle(.borderless).help("AI 매거진 (⌥⌘M)")
-            Button { model.markAllRead() } label: { Image(systemName: "checkmark.circle").font(.app(13)) }
-                .buttonStyle(.borderless).help("모두 읽음으로 표시")
             Button {
                 Task { await model.checkAll(manual: true) }
             } label: {
@@ -181,18 +171,33 @@ struct MenuView: View {
     }
 
     private var footer: some View {
-        HStack(spacing: 2) {
-            Button { MagazineController.open() } label: { Label("매거진", systemImage: "book.pages") }
-            Button { model.preview() } label: { Label("미리 보기", systemImage: "play.circle") }
+        HStack(spacing: 4) {
+            Button { MagazineController.open() } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "book.pages.fill")
+                    Text("매거진 열기").font(.app(12.5, .semibold))
+                    Text("⌥⌘M").font(.app(11)).foregroundStyle(.white.opacity(0.7))
+                }
+                .padding(.horizontal, 11).padding(.vertical, 6)
+                .background(Color.accentColor.gradient, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .foregroundStyle(.white)
+            }
+            .buttonStyle(.plain)
             Spacer()
             Button {
                 NSApp.activate(ignoringOtherApps: true)
                 openSettings()
-            } label: { Label("설정", systemImage: "gearshape") }
-            Button { NSApp.terminate(nil) } label: { Label("종료", systemImage: "power") }
+            } label: { Image(systemName: "gearshape").font(.app(13)) }
+            .buttonStyle(FooterButton()).help("설정")
+            Menu {
+                Button("모두 읽음으로 표시") { model.markAllRead() }
+                Button("알림 미리 보기") { model.preview() }
+                Divider()
+                Button("AI News Alert 종료") { NSApp.terminate(nil) }
+            } label: { Image(systemName: "ellipsis.circle").font(.app(13)) }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("더 보기")
         }
-        .buttonStyle(FooterButton())
-        .padding(.horizontal, 8).padding(.vertical, 6)
+        .padding(.horizontal, 10).padding(.vertical, 8)
     }
 }
 

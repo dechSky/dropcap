@@ -15,6 +15,9 @@ struct AppState: Codable {
     var customSources: [Source] = []    // 직접 추가한 출처
     var snoozeUntil: Date?              // 알림 잠시 끄기
     var lastDigest: Date?               // 마지막 아침 브리핑
+    var interestCategory: [String: Double] = [:]  // 분야별로 연 횟수(관심사)
+    var interestSource: [String: Double] = [:]
+    var magazineBackfilled = false      // 처음 매거진을 채웠는지
     var settings = Settings()
 
     struct Settings: Codable, Equatable {
@@ -69,6 +72,9 @@ struct AppState: Codable {
         customSources = (try? c.decodeIfPresent([Source].self, forKey: .customSources)) ?? []
         snoozeUntil = try? c.decodeIfPresent(Date.self, forKey: .snoozeUntil)
         lastDigest = try? c.decodeIfPresent(Date.self, forKey: .lastDigest)
+        interestCategory = (try? c.decodeIfPresent([String: Double].self, forKey: .interestCategory)) ?? [:]
+        interestSource = (try? c.decodeIfPresent([String: Double].self, forKey: .interestSource)) ?? [:]
+        magazineBackfilled = (try? c.decodeIfPresent(Bool.self, forKey: .magazineBackfilled)) ?? false
         settings = (try? c.decodeIfPresent(Settings.self, forKey: .settings)) ?? Settings()
     }
 }

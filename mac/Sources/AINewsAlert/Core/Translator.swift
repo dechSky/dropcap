@@ -19,6 +19,16 @@ actor Translator {
         return Double(hangul) / Double(s.count) < 0.2
     }
 
+    // 한국어 제목을 영어로(같은 소식 비교용). 실패하면 nil.
+    func toEnglish(_ texts: [String]) async -> [String?] {
+        await withTaskGroup(of: (Int, String?).self) { g in
+            for (i, t) in texts.enumerated() { g.addTask { (i, await Self.google(t, target: "en")) } }
+            var out = [String?](repeating: nil, count: texts.count)
+            for await (i, r) in g { out[i] = r }
+            return out
+        }
+    }
+
     func translate(_ text: String) async -> String {
         let src = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard Self.looksForeign(src) else { return text }
@@ -96,9 +106,9 @@ actor Translator {
         return await LanguageAvailability().status(from: Locale.Language(identifier: "en"), to: Locale.Language(identifier: "ko")) == .installed
     }
 
-    private static func google(_ text: String) async -> String? {
+    private static func google(_ text: String, target: String = "ko") async -> String? {
         var c = URLComponents(string: "https://translate.googleapis.com/translate_a/single")!
-        c.queryItems = [.init(name: "client", value: "gtx"), .init(name: "sl", value: "auto"), .init(name: "tl", value: "ko"),
+        c.queryItems = [.init(name: "client", value: "gtx"), .init(name: "sl", value: "auto"), .init(name: "tl", value: target),
                         .init(name: "dt", value: "t"), .init(name: "q", value: String(text.prefix(4500)))]
         guard let url = c.url else { return nil }
         var req = URLRequest(url: url, timeoutInterval: 15)

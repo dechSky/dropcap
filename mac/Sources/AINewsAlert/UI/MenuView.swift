@@ -128,8 +128,8 @@ struct MenuView: View {
             }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             .help(model.isSnoozed ? "알림 꺼짐 — \(AppModel.clock(model.state.snoozeUntil))까지" : "알림 잠시 끄기")
-            Button { DigestController.open() } label: { Image(systemName: "sun.horizon").font(.system(size: 12)) }
-                .buttonStyle(.borderless).help("오늘의 AI 브리핑")
+            Button { MagazineController.open() } label: { Image(systemName: "book.pages").font(.system(size: 12)) }
+                .buttonStyle(.borderless).help("AI 매거진 (⌥⌘M)")
             Button { model.markAllRead() } label: { Image(systemName: "checkmark.circle").font(.system(size: 13)) }
                 .buttonStyle(.borderless).help("모두 읽음으로 표시")
             Button {
@@ -161,6 +161,7 @@ struct MenuView: View {
 
     private var footer: some View {
         HStack(spacing: 2) {
+            Button { MagazineController.open() } label: { Label("매거진", systemImage: "book.pages") }
             Button { model.preview() } label: { Label("미리 보기", systemImage: "play.circle") }
             Spacer()
             Button {

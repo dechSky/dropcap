@@ -186,3 +186,43 @@ import Testing
         #expect(await URLSafety.resolvesPublic(URL(string: "https://openai.com/")))
     }
 }
+
+@Suite struct SameStoryMeaningTests {
+    private func item(_ title: String, en: String? = nil, source: String? = nil) -> NewsItem {
+        NewsItem(id: title, title: title, titleKo: nil, link: "https://x.com/" + title.prefix(8), date: nil, summary: "",
+                 sourceId: source ?? UUID().uuidString, sourceName: "S", tier: "press", titleEn: en)
+    }
+
+    @Test func sameOutletNeverMerges() {
+        #expect(!StoryMatch.same(item("OpenAI launches GPT-6 with new reasoning", source: "a"), item("OpenAI launches GPT-6 with new reasoning", source: "a")))
+    }
+
+    @Test func groupsAcrossLanguages() {
+        let ko = item("메타, 자체 최고 모델 ‘뮤즈 원더’ 출시로 프런티어 경쟁 합류", en: "Meta joins frontier competition by launching its own top model 'Muse Wonder'")
+        let en = item("Meta has some Wonder Full new AI models")
+        #expect(StoryMatch.same(ko, en))
+        let ko2 = item("\"AI 대신 SI 써라\"...트럼프 압박에 실리콘밸리 굴복", en: "\"Use SI instead of AI\"... Silicon Valley succumbs to Trump pressure")
+        #expect(StoryMatch.same(ko2, item("Silicon Valley is falling in line with Trump’s attempt to rename AI")))
+    }
+
+    @Test func keepsDifferentStoriesApart() {
+        #expect(!StoryMatch.same(item("Microsoft’s new AI chip makes it less reliant on Nvidia’s GPUs"), item("Meta has some Wonder Full new AI models")))
+        #expect(!StoryMatch.same(item("Anthropic is cutting off its internal evaluations from the internet"),
+                                 item("Anthropic's Claude AI submitted false murder tip to Philadelphia police")))
+        #expect(!StoryMatch.same(item("Learning to use local AI is exciting, overwhelming, and frustrating"),
+                                 item("AI agent makers are promising privacy — will they deliver?")))
+    }
+}
+
+@Suite struct SameStoryFalsePositiveTests {
+    private func item(_ title: String, en: String? = nil) -> NewsItem {
+        NewsItem(id: title, title: title, titleKo: nil, link: "https://x.com/" + title.prefix(8), date: nil, summary: "",
+                 sourceId: UUID().uuidString, sourceName: "S", tier: "press", titleEn: en)
+    }
+    @Test func unrelatedKoreanTranslationsStayApart() {
+        #expect(!StoryMatch.same(item("Epic Games reportedly pivoting to \"AI first\" game development model"),
+                                 item("[AI리더의 서가] Physical AI 데이터의 새로운 법칙", en: "[AI Leader's Bookshelf] New Rules of Physical AI Data")))
+        #expect(!StoryMatch.same(item("Amazon has over 1 million robot workers. What’s next for human employees?"),
+                                 item("포스코DX, AI 스타트업 인핸스에 20억 투자", en: "POSCO DX invests 2 billion won in AI startup Enhance")))
+    }
+}

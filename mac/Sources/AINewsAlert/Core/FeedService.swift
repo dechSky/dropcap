@@ -42,8 +42,8 @@ actor FeedService {
         return (Gzip.inflateIfNeeded(data), resp.textEncodingName)
     }
 
-    func items(for source: Source) async throws -> [NewsItem]? {
-        guard let data = try await fetch(source.url, conditional: true) else { return nil }
+    func items(for source: Source, conditional: Bool = true) async throws -> [NewsItem]? {
+        guard let data = try await fetch(source.url, conditional: conditional) else { return nil }
         let entries: [FeedParser.Entry]
         if source.type == "sitemap", let m = source.match, let re = try? NSRegularExpression(pattern: m) {
             entries = try FeedParser.parseSitemap(data, match: re)

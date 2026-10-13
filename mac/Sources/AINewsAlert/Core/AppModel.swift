@@ -1,3 +1,4 @@
+import NaturalLanguage
 import AppKit
 import Foundation
 import ServiceManagement
@@ -30,12 +31,16 @@ final class AppModel: ObservableObject {
                 await AppModel.shared.checkAll()
             }
         }
+        Magazine.shared.migrateIfNeeded(from: state)
+        Magazine.shared.publishDue()
+        if !state.magazineBackfilled { Task { await backfillMagazine() } }
         restartLoop()
         // 1분마다: 아침 브리핑 시각인지, 잠시 끄기가 끝났는지
         let t = Timer(timeInterval: 60, repeats: true) { _ in MainActor.assumeIsolated { AppModel.shared.minuteTick() } }
         RunLoop.main.add(t, forMode: .common)
         minuteTimer = t
-        HotKey.register { AppModel.shared.openLatestUnread() } // ⌥⌘N
+        HotKey.register(key: .n) { AppModel.shared.openLatestUnread() } // ⌥⌘N
+        HotKey.register(key: .m) { MagazineController.open() }          // ⌥⌘M
         if firstRun {
             ToastCenter.shared.showWelcome()
         }
@@ -85,6 +90,8 @@ final class AppModel: ObservableObject {
             for i in found.indices where titles[i] != found[i].title { found[i].titleKo = titles[i] }
         }
         found = applyKeywords(found) // 번역 뒤에: 한국어 낱말도 영어 기사에 걸리게
+        await addEnglishTitles(&found)
+        Magazine.shared.ingest(found) // 매거진에는 묶이기 전 전부(여러 시각 비교용)
         found = groupSameStory(found)
         state.recent = Array((found + state.recent).prefix(recentLimit))
         state.unread += found.count
@@ -124,13 +131,14 @@ final class AppModel: ObservableObject {
         var kept: [NewsItem] = []
         for it in sorted {
             let words = StoryMatch.tokens(it.title)
-            if let i = kept.firstIndex(where: { StoryMatch.similar(words, StoryMatch.tokens($0.title)) }) {
+            if let i = kept.firstIndex(where: { StoryMatch.same(it, $0) }) {
                 kept[i].related = (kept[i].related ?? []) + [it.sourceName]
                 continue
             }
             // 하루 반 안에 이미 알린 소식과 같으면 알리지 않고 그 소식에 출처만 더한다
             let cutoff = Date().addingTimeInterval(-36 * 3600)
-            if let j = state.recent.firstIndex(where: { ($0.date ?? .distantPast) > cutoff && StoryMatch.similar(words, StoryMatch.tokens($0.title)) }) {
+            _ = words
+            if let j = state.recent.firstIndex(where: { ($0.date ?? .distantPast) > cutoff && StoryMatch.same(it, $0) }) {
                 if !(state.recent[j].related ?? []).contains(it.sourceName), state.recent[j].sourceName != it.sourceName {
                     state.recent[j].related = (state.recent[j].related ?? []) + [it.sourceName]
                 }
@@ -196,7 +204,65 @@ final class AppModel: ObservableObject {
         guard item.id != Self.previewID else { return }
         markRead()
         setRead(item, true)
+        noteInterest(item)
         ReaderController.open(item)
+    }
+
+    // 처음 한 번: 켜진 출처에서 최근 3일 기사를 받아 매거진 첫 호를 채운다(알림 없음)
+    private func backfillMagazine() async {
+        let cutoff = Date().addingTimeInterval(-3 * 24 * 3600)
+        var all: [NewsItem] = []
+        for src in allSources where state.enabled[src.id] == true {
+            guard var items = try? await FeedService.shared.items(for: src, conditional: false) else { continue }
+            items = items.filter { ($0.date ?? .distantPast) > cutoff }
+            if src.type == "sitemap" {
+                for i in items.indices.prefix(10) { await FeedService.shared.fillTitle(&items[i]) }
+                items = Array(items.prefix(10))
+            }
+            if src.aiOnly {
+                items = items.filter { let t = "\($0.title) \($0.summary)"; return Resources.aiRegex.firstMatch(in: t, range: NSRange(t.startIndex..., in: t)) != nil }
+            }
+            all += items.prefix(25)
+        }
+        let titles = await Translator.shared.translateMany(all.map(\.title))
+        for i in all.indices where titles[i] != all[i].title { all[i].titleKo = titles[i] }
+        await addEnglishTitles(&all)
+        Magazine.shared.ingest(applyKeywords(all).sorted { ($0.date ?? .distantPast) < ($1.date ?? .distantPast) })
+        Magazine.shared.publishDue()
+        state.magazineBackfilled = true
+        Store.save(state)
+        NSLog("[매거진] 첫 호를 %d건으로 채웠습니다", all.count)
+    }
+
+    // 한국어 제목 기사에 영어 제목을 붙인다(외국 기사와 같은 소식인지 비교하려고)
+    private func addEnglishTitles(_ items: inout [NewsItem]) async {
+        let idx = items.indices.filter { !Translator.looksForeign(items[$0].title) && items[$0].titleEn == nil }
+        guard !idx.isEmpty else { return }
+        let en = await Translator.shared.toEnglish(idx.map { items[$0].title })
+        for (k, i) in idx.enumerated() { items[i].titleEn = en[k] }
+    }
+
+    // 매거진에서 연 기사(읽기 창은 부르는 쪽이 연다)
+    func markOpened(_ item: NewsItem) {
+        guard item.id != Self.previewID else { return }
+        setRead(item, true)
+        noteInterest(item)
+    }
+
+    // MARK: 관심사: 연 기사의 분야·출처를 세어 지면 순서와 점수에 반영
+    private func noteInterest(_ item: NewsItem) {
+        state.interestCategory[item.category.rawValue, default: 0] += 1
+        state.interestSource[item.sourceId, default: 0] += 1
+        Store.save(state)
+    }
+
+    // 0 ~ 1.5 사이. 많이 본 분야·출처일수록 크다
+    func interestWeight(category: NewsCategory, source: String?) -> Double {
+        let cats = state.interestCategory, srcs = state.interestSource
+        let cmax = max(cats.values.max() ?? 0, 1), smax = max(srcs.values.max() ?? 0, 1)
+        let c = log(1 + (cats[category.rawValue] ?? 0)) / log(1 + cmax)
+        let s = source.map { log(1 + (srcs[$0] ?? 0)) / log(1 + smax) } ?? 0
+        return 1.0 * c + 0.5 * s
     }
 
     // MARK: 잠시 끄기·브리핑·단축키
@@ -215,6 +281,7 @@ final class AppModel: ObservableObject {
 
     private func minuteTick() {
         if let s = state.snoozeUntil, s <= Date() { state.snoozeUntil = nil; Store.save(state) }
+        if Calendar.current.component(.minute, from: Date()) % 30 == 0 { Magazine.shared.publishDue() } // 지난 호 발행
         let st = state.settings
         guard st.digestEnabled else { return }
         let cal = Calendar.current
@@ -258,7 +325,10 @@ final class AppModel: ObservableObject {
     }
 
     func toggleSaved(_ item: NewsItem) {
-        if isSaved(item) { state.saved.removeAll { $0.key == item.key } } else { state.saved.insert(item, at: 0) }
+        if isSaved(item) { state.saved.removeAll { $0.key == item.key } } else {
+            state.saved.insert(item, at: 0)
+            Task { await ArticleService.shared.prepare(item) } // 오프라인으로 읽을 수 있게 번역까지 보관
+        }
         Store.save(state)
     }
 
@@ -383,6 +453,37 @@ enum StoryMatch {
         let lowered = title.lowercased()
         let parts = lowered.components(separatedBy: CharacterSet.alphanumerics.inverted)
         return Set(parts.filter { $0.count >= 3 && !stop.contains($0) || ($0.count >= 2 && $0.unicodeScalars.contains { (0xAC00...0xD7A3).contains($0.value) }) })
+    }
+
+    // 같은 소식인가: 낱말이 많이 겹치거나, 영어 제목의 '뜻'이 가깝거나(기기 내 문장 임베딩),
+    // 뜻이 꽤 가깝고 고유명사(Meta·Trump 등)를 함께 쓰면 같다고 본다. 한국어 기사는 영어 제목(titleEn)으로 비교.
+    static func same(_ a: NewsItem, _ b: NewsItem) -> Bool {
+        guard a.sourceId != b.sourceId else { return false } // 한 곳이 같은 소식을 두 번 내는 일은 드물다
+        if similar(tokens(a.title), tokens(b.title)) { return true }
+        if similar(tokens(a.titleKo ?? a.title), tokens(b.titleKo ?? b.title)) { return true }
+        let ea = a.titleEn ?? (Translator.looksForeign(a.title) ? a.title : nil)
+        let eb = b.titleEn ?? (Translator.looksForeign(b.title) ? b.title : nil)
+        guard let ea, let eb, let d = meaningDistance(ea, eb) else { return false }
+        if d < 0.88 { return true } // 뜻만으로 같다고 볼 때는 엄격하게
+        return d < 1.07 && !entities(ea).isDisjoint(with: entities(eb))
+    }
+
+    // 문장 임베딩은 동시에 부르면 안전하지 않아 자물쇠로 한 번에 하나씩
+    nonisolated(unsafe) private static let embedding = NLEmbedding.sentenceEmbedding(for: .english)
+    private static let embeddingLock = NSLock()
+    static func meaningDistance(_ a: String, _ b: String) -> Double? {
+        embeddingLock.lock(); defer { embeddingLock.unlock() }
+        guard let e = embedding else { return nil }
+        let d = e.distance(between: a, and: b)
+        return d.isFinite ? d : nil
+    }
+
+    // 대문자로 시작하는 고유명사(문장 첫 낱말·흔한 말 제외)
+    static func entities(_ s: String) -> Set<String> {
+        let common: Set<String> = ["The", "A", "An", "AI", "New", "How", "Why", "What", "Its", "It", "This", "That", "In", "On", "For", "With", "And", "Is", "Are", "To", "Of", "By", "Use"]
+        let words = s.components(separatedBy: CharacterSet.letters.union(.decimalDigits).inverted).filter { !$0.isEmpty }
+        return Set(words.dropFirst().filter { $0.count >= 3 && $0.first!.isUppercase && !common.contains($0) }.map { $0.lowercased() })
+            .union(words.first.map { w in w.count >= 3 && w.first!.isUppercase && !common.contains(w) ? [w.lowercased()] : [] } ?? [])
     }
 
     static func similar(_ a: Set<String>, _ b: Set<String>) -> Bool {

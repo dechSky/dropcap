@@ -159,10 +159,11 @@ extension SettingsView {
                     ForEach(5..<13, id: \.self) { Text("오전 \($0)시").tag($0) }
                 }
                 .disabled(!model.state.settings.digestEnabled)
-                Button("지금 브리핑 보기") { DigestController.open() }
+                Button("매거진 열기") { MagazineController.open() }
             }
             Section("단축키") {
                 LabeledContent("가장 최근 안 읽은 소식 열기") { Text("⌥⌘N").monospaced().foregroundStyle(.secondary) }
+                LabeledContent("AI 매거진 열기") { Text("⌥⌘M").monospaced().foregroundStyle(.secondary) }
             }
             Section("같은 소식 묶기") {
                 Text("여러 곳이 같은 소식을 다루면 한 번만 알리고 \"외 N곳\"으로 표시합니다. 공식 발표를 먼저 고릅니다.")

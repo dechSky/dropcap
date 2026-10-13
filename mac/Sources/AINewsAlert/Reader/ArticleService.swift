@@ -161,6 +161,8 @@ final class ArticleService {
             ((try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast)
                 < ((try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast)
         }
-        sorted.prefix(files.count - diskLimit).forEach { try? fm.removeItem(at: $0) }
+        // 저장한 기사는 오프라인으로 읽을 수 있게 지우지 않는다
+        let pinned = Set(AppModel.shared.state.saved.map { file($0.link).lastPathComponent })
+        sorted.filter { !pinned.contains($0.lastPathComponent) }.prefix(files.count - diskLimit).forEach { try? fm.removeItem(at: $0) }
     }
 }

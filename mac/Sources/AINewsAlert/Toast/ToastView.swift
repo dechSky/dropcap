@@ -65,7 +65,9 @@ struct ToastView: View {
     // 사라짐 시계
     @State private var hovering = false
     @State private var remaining: Double = 1
-    @State private var calm = false            // 물이 다 차고 잔잔해짐: 다시 그리는 횟수를 줄인다
+    @State private var calm = false
+    @State private var thumb: String?            // 카드의 사진(피드에 없으면 기사 머리에서 찾아 옴)
+    @State private var developed: Double = 0     // 사진 인화 정도 0~1            // 물이 다 차고 잔잔해짐: 다시 그리는 횟수를 줄인다
     @State private var leaving = false
     private let lifetime: Double = 9
 
@@ -233,6 +235,18 @@ struct ToastView: View {
                             .rise(reveal, 3)
                     }
                 }
+                if let thumb {
+                    // 인화: 물에 잠긴 사진이 회색·흐림에서 점점 또렷한 색으로 떠오른다
+                    RemoteImage(url: thumb, category: item.category, accent: item.accent)
+                        .frame(width: 58, height: 58)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(.white.opacity(0.25), lineWidth: 0.5))
+                        .saturation(developed)
+                        .blur(radius: (1 - developed) * 5)
+                        .brightness((1 - developed) * 0.22)
+                        .opacity(0.25 + 0.75 * developed)
+                        .scaleEffect(0.94 + 0.06 * developed)
+                }
             }
             .padding(EdgeInsets(top: 14, leading: 14, bottom: 15, trailing: 16))
         case .info(let title, let sub):
@@ -259,7 +273,7 @@ struct ToastView: View {
                     .rise(reveal, 0)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("오늘의 AI 브리핑").font(.system(size: 13.5, weight: .semibold)).rise(reveal, 1)
-                    Text("지난 하루 소식 \(n)건을 분야별로 정리했어요").font(.system(size: 12)).foregroundStyle(.secondary).rise(reveal, 2)
+                    Text("지난 하루 소식 \(n)건 — 매거진에서 보기").font(.system(size: 12)).foregroundStyle(.secondary).rise(reveal, 2)
                 }
             }
             .padding(EdgeInsets(top: 12, leading: 13, bottom: 12, trailing: 16))
@@ -278,7 +292,14 @@ struct ToastView: View {
 
     // MARK: 움직임
     private func run() async {
+        if case .news(let item) = toast.kind, item.id != AppModel.previewID {
+            thumb = item.image
+            if thumb == nil, !item.link.isEmpty {
+                Task { if let u = await FeedService.shared.ogImage(item.link) { withAnimation(.easeOut(duration: 0.3)) { thumb = u } } }
+            }
+        }
         if reduceMotion {
+            developed = 1
             t = 1; dropY = 0; sx = 1; sy = 1; tint = 0
             withAnimation(.easeOut(duration: 0.2)) { alpha = 1; shadow = 1; reveal = true }
             if toast.playSound { DropSound.play() }
@@ -293,6 +314,7 @@ struct ToastView: View {
             // 2) 바닥에 "퐁" 하고 닿으면 물이 찰랑찰랑 차오른다
             if toast.playSound { DropSound.play() }
             fillStart = Date()
+            withAnimation(.easeInOut(duration: 2.0)) { developed = 1 }
             withAnimation(.spring(response: 0.35, dampingFraction: 0.45)) { sy = 0.985 } // 닿는 순간 잔이 살짝 눌렸다가
             Task {
                 try? await Task.sleep(for: .milliseconds(90))

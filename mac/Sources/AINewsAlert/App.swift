@@ -51,6 +51,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     }
                 }
             }
+            if env["AINEWS_TEST_MAGAZINE"] != nil {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { MagazineController.open() }
+                if let dir = env["AINEWS_TEST_SHOT_DIR"] {
+                    for sec in [4, 12, 40] {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(sec)) {
+                            guard let v = NSApp.windows.first(where: { $0.isVisible && $0.title == "AI 매거진" })?.contentView,
+                                  let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return }
+                            v.cacheDisplay(in: v.bounds, to: rep)
+                            try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "\(dir)/mag-\(sec).png"))
+                        }
+                    }
+                }
+            }
             if env["AINEWS_TEST_TOAST"] != nil {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1) { AppModel.shared.preview() }
                 if let dir = env["AINEWS_TEST_SHOT_DIR"] {

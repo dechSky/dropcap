@@ -34,6 +34,7 @@ struct NewsItem: Codable, Identifiable, Hashable {
 
     var related: [String]? = nil   // 같은 소식을 다룬 다른 출처
     var image: String? = nil       // 대표 사진 주소
+    var titleEn: String? = nil     // 영어 제목(한국어 기사를 다른 기사와 같은 소식인지 비교할 때)
     var important: Bool? = nil      // '꼭 알림' 낱말에 걸림
 
     var key: String { "\(sourceId)|\(id)" }

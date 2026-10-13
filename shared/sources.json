@@ -134,7 +134,7 @@
       "tier": "kr",
       "type": "feed",
       "url": "https://www.aitimes.com/rss/allArticle.xml",
-      "aiOnly": false,
+      "aiOnly": true,
       "defaultOn": true,
       "color": "#0057B8"
     },

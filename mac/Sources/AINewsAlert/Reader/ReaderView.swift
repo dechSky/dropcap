@@ -300,7 +300,8 @@ struct Skeleton: View {
 enum ReaderController {
     private static var windows: [NSWindow] = []
 
-    static func open(_ item: NewsItem) {
+    // from: 누른 카드의 화면 위치. 주면 읽기 창이 그 자리에서 커져 나온다.
+    static func open(_ item: NewsItem, from: CGRect = .zero) {
         let model = ReaderModel(item: item)
         let host = NSHostingController(rootView: ReaderView(model: model))
         host.sceneBridgingOptions = [.toolbars]
@@ -327,6 +328,20 @@ enum ReaderController {
             }
         }
         NSApp.activate(ignoringOtherApps: true)
+        guard from.width > 10, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            w.makeKeyAndOrderFront(nil)
+            return
+        }
+        // 카드 자리에서 시작해 제자리로 커진다
+        let target = w.frame
+        w.alphaValue = 0.2
+        w.setFrame(from, display: false)
         w.makeKeyAndOrderFront(nil)
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.38
+            ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.25, 1)
+            w.animator().setFrame(target, display: true)
+            w.animator().alphaValue = 1
+        }
     }
 }

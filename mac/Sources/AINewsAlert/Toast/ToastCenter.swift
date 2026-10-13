@@ -86,7 +86,7 @@ final class ToastCenter: ObservableObject {
     func open(_ t: Toast) {
         switch t.kind {
         case .news(let item): AppModel.shared.open(item)
-        case .digest: DigestController.open()
+        case .digest: MagazineController.open()
         default: break
         }
     }

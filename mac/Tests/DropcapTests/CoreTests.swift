@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import SwiftUI
 @testable import Dropcap
 
 @Suite struct StoryMatchTests {
@@ -317,5 +318,34 @@ struct URLSafetyDNSTests {
         #expect(NewsCategory.classify("EU passes the AI Act") == .policy)
         #expect(NewsCategory.classify("OpenAI raises funding at new valuation") == .business)
         #expect(NewsCategory.classify("새 모델 출시") == .model)
+    }
+}
+
+
+@Suite struct BodyCleanupTests {
+    @Test func bylines() {
+        #expect(BodyCleanup.byline("김가람 기자 reporter@example.com") == "김가람 기자")
+        #expect(BodyCleanup.byline("이나래 기자 desk@example.com Powered by AI") == "이나래 기자")
+        #expect(BodyCleanup.byline("이나래 기자 desk@example.com Powered by AItimes AI Solution") == "이나래 기자")
+        #expect(BodyCleanup.byline("By Jane Doe") == "By Jane Doe")
+        #expect(BodyCleanup.byline("김가람 기자는 이날 현장에서 다음과 같이 말했다.") == nil)
+    }
+    @Test func orphanCaptions() {
+        #expect(BodyCleanup.isOrphanCaption("AI 생성 영상", nextIsImage: false))
+        #expect(BodyCleanup.isOrphanCaption("사진=연합뉴스", nextIsImage: false))
+        #expect(!BodyCleanup.isOrphanCaption("사진=연합뉴스", nextIsImage: true))
+        #expect(!BodyCleanup.isOrphanCaption("여수시 여문문화의거리가 정원과 공연을 결합한 축제 공간으로 활용되고 있다.", nextIsImage: false))
+    }
+}
+
+
+@Suite struct BalancedGridTests {
+    @Test func noLonelyLastCard() {
+        for fit in 2...4 { for n in 1...12 {
+            let c = BalancedGrid<EmptyView>.columns(fit: fit, count: n)
+            #expect(c >= 1 && c <= 4)
+            if n > c && n % c == 1 && fit >= 3 { Issue.record("fit \(fit) count \(n) → \(c) 칸에 한 장 남음") }
+        } }
+        #expect(BalancedGrid<EmptyView>.columns(fit: 3, count: 4) == 4 || BalancedGrid<EmptyView>.columns(fit: 3, count: 4) == 2)
     }
 }

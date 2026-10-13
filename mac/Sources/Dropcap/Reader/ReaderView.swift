@@ -328,6 +328,9 @@ struct ReaderView: View {
             if !model.showOriginal, model.originalTitle != model.title {
                 Text(model.originalTitle).font(.app(14)).foregroundStyle(.secondary)
             }
+            if let by = BodyCleanup.analyze(model.blocks).byline {
+                Text(by).font(.app(12.5, .medium)).foregroundStyle(.secondary)
+            }
             if model.translated, !model.engine.isEmpty {
                 Label(model.engine, systemImage: "character.bubble")
                     .font(.app(11)).foregroundStyle(.tertiary)
@@ -338,11 +341,12 @@ struct ReaderView: View {
     private func articleBody(_ blocks: [Block]) -> some View {
         // 표지와 같은 사진(주소가 같거나 크기 표기만 다른 것)은 본문에서 처음 한 번 뺀다
         let dup = coverURL.flatMap { c in blocks.firstIndex { $0.type == .img && ImageKey.same($0.src, c) } }
+        let skip = BodyCleanup.analyze(blocks).skip // 기자 줄·짝 잃은 설명 문구
         return VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(blocks.enumerated()), id: \.offset) { i, b in
                 let text = (model.showOriginal ? b.original : nil) ?? b.text ?? ""
                 let prevIsLi = i > 0 && blocks[i - 1].type == .li
-                if i != dup, !(b.type == .img && ImageKey.isJunk(b.src)) { // 기자 프로필·로고 같은 잡그림은 싣지 않음
+                if i != dup, !skip.contains(i), !(b.type == .img && ImageKey.isJunk(b.src)) { // 기자 프로필·로고 같은 잡그림은 싣지 않음
                 blockView(b, text: text, prevIsLi: prevIsLi)
                     .modifier(ScrapHover(item: model.item, text: text,
                                          original: model.showOriginal ? nil : b.original,

@@ -385,9 +385,11 @@ private struct SectionBlock: View {
                 Rectangle().fill(.primary.opacity(0.12)).frame(height: 1).padding(.leading, 6)
             }
             .padding(.horizontal, 36)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 230, maximum: 360), spacing: 18)], alignment: .leading, spacing: 22) {
-                ForEach(Array(items.enumerated()), id: \.element.key) { i, it in
-                    StoryCard(item: it, issue: issue, order: i, onStory: onStory, clusterID: clusters[it.key])
+            BalancedGrid(count: items.count) { cols in
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 200, maximum: 360), spacing: 18), count: cols), alignment: .leading, spacing: 22) {
+                    ForEach(Array(items.enumerated()), id: \.element.key) { i, it in
+                        StoryCard(item: it, issue: issue, order: i, onStory: onStory, clusterID: clusters[it.key])
+                    }
                 }
             }
             .padding(.horizontal, 28)
@@ -1112,3 +1114,25 @@ private struct StaggerIn: ViewModifier {
 
 
 extension Notification.Name { static let magazineGo = Notification.Name("dropcap.magazineGo") }
+
+// 마지막 줄에 카드 한 장만 남지 않게 칸 수를 고른다(4장이면 2×2, 7장이면 4+3 …). 폭에 들어가는 칸 수가 기준
+struct BalancedGrid<Content: View>: View {
+    let count: Int
+    var minWidth: CGFloat = 230
+    var spacing: CGFloat = 18
+    @ViewBuilder let content: (Int) -> Content
+    @State private var width: CGFloat = 900
+
+    static func columns(fit: Int, count: Int) -> Int {
+        let fit = max(1, fit)
+        guard count > fit, count % fit == 1 else { return min(fit, max(count, 1)) }
+        if fit + 1 <= 4, count % (fit + 1) != 1, count >= fit + 1 { return fit + 1 } // 한 칸 더 넣어도 좁지 않으면
+        if fit > 2, count % (fit - 1) != 1 { return fit - 1 }
+        return fit
+    }
+
+    var body: some View {
+        content(Self.columns(fit: Int((width + spacing) / (minWidth + spacing)), count: count))
+            .background(GeometryReader { g in Color.clear.onAppear { width = g.size.width }.onChange(of: g.size.width) { _, w in width = w } })
+    }
+}

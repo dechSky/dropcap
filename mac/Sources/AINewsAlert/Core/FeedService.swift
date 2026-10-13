@@ -175,28 +175,36 @@ final class RequestGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable 
         w?.resume()
     }
 
+    // 잠금은 동기 함수 안에서만(비동기 문맥에서 직접 잠그지 않는다)
+    private func currentVerdict() -> Bool? { lock.lock(); defer { lock.unlock() }; return verdict }
+    private func park(_ c: CheckedContinuation<Void, Never>) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if verdict != nil { return false }
+        waiter = c
+        return true
+    }
+    private func takeWaiter() -> CheckedContinuation<Void, Never>? {
+        lock.lock(); defer { lock.unlock() }
+        let w = waiter
+        waiter = nil
+        return w
+    }
+
     // 응답을 쓰기 전에 측정값을 기다린다(최대 2초). 끝내 안 오면 막는다.
     func isSafe() async -> Bool {
-        lock.lock()
-        if let v = verdict { lock.unlock(); return v }
-        lock.unlock()
+        if let v = currentVerdict() { return v }
         await withTaskGroup(of: Void.self) { g in
             g.addTask {
                 await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
-                    self.lock.lock()
-                    if self.verdict != nil { self.lock.unlock(); c.resume(); return }
-                    self.waiter = c
-                    self.lock.unlock()
+                    if !self.park(c) { c.resume() }
                 }
             }
             g.addTask { try? await Task.sleep(for: .seconds(2)) }
             await g.next()
             g.cancelAll()
-            self.lock.lock(); let w = self.waiter; self.waiter = nil; self.lock.unlock()
-            w?.resume()
+            self.takeWaiter()?.resume()
         }
-        lock.lock(); defer { lock.unlock() }
-        return verdict ?? false
+        return currentVerdict() ?? false
     }
 }
 

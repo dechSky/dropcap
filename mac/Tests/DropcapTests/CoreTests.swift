@@ -197,6 +197,12 @@ struct URLSafetyDNSTests {
 }
 
 @Suite struct SameStoryMeaningTests {
+    @Test func entitiesSkipTitleCaseWords() {
+        let e = StoryMatch.entities("OCP Global Summit: Amid Ecosystem Adoption, NVIDIA Opens Vera Rubin Architecture")
+        #expect(e.contains("nvidia") && e.contains("ocp") && !e.contains("global") && !e.contains("summit"))
+        #expect(StoryMatch.entities("OpenAI launches GPT-6 for iPhone").isSuperset(of: ["openai", "gpt-6", "iphone"]))
+    }
+
     private func item(_ title: String, en: String? = nil, source: String? = nil) -> NewsItem {
         NewsItem(id: title, title: title, titleKo: nil, link: "https://x.com/" + title.prefix(8), date: nil, summary: "",
                  sourceId: source ?? UUID().uuidString, sourceName: "S", tier: "press", titleEn: en)
@@ -215,6 +221,9 @@ struct URLSafetyDNSTests {
     }
 
     @Test func keepsDifferentStoriesApart() {
+        // Title Case 의 흔한 말('Global')을 고유명사로 오인해 묶이던 사례
+        #expect(!StoryMatch.same(item("OCP Global Summit: Amid Ecosystem Adoption, NVIDIA Opens Vera Rubin Architecture to Help Scale AI Factories Worldwide"),
+                                 item("AI 업무 플랫폼 '팔레트 에이전트' 글로벌 출시", en: "Global launch of AI business platform ‘Palette Agent’… “Integrated support from planning to app production”")))
         #expect(!StoryMatch.same(item("Microsoft’s new AI chip makes it less reliant on Nvidia’s GPUs"), item("Meta has some Wonder Full new AI models")))
         #expect(!StoryMatch.same(item("Anthropic is cutting off its internal evaluations from the internet"),
                                  item("Anthropic's Claude AI submitted false murder tip to Philadelphia police")))

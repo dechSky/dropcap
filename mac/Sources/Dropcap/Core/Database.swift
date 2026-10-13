@@ -242,6 +242,17 @@ final class Database: @unchecked Sendable {
         return out
     }
 
+    // 다시 묶기: 이 시각 뒤의 기사들의 스토리를 비우고 그 스토리들을 지운다
+    func resetClusters(since: Date) {
+        queue.sync {
+            run("DELETE FROM clusters WHERE id IN (SELECT DISTINCT cluster FROM items WHERE cluster IS NOT NULL AND COALESCE(date, first_seen) >= ?)", [.real(since.timeIntervalSince1970)])
+            run("UPDATE items SET cluster=NULL WHERE COALESCE(date, first_seen) >= ?", [.real(since.timeIntervalSince1970)])
+        }
+    }
+    func setCluster(_ key: String, _ cluster: String?) {
+        queue.sync { run("UPDATE items SET cluster=? WHERE key=?", [.text(cluster), .text(key)]) }
+    }
+
     func saveCluster(_ c: Cluster) {
         queue.sync {
             run("""

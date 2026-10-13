@@ -19,6 +19,8 @@ struct AppState: Codable {
     var interestSource: [String: Double] = [:]
     var magazineBackfilled = false      // 처음 매거진을 채웠는지
     var notify: [String: Bool] = [:]    // 출처별 알림(없으면 출처 기본값)
+    var followedStories: [String] = []  // 팔로우한 스토리(새 보도가 붙으면 알림)
+    var storySeen: [String: Int] = [:]  // 스토리를 마지막으로 봤을 때의 보도 수('새 보도 N')
     var settings = Settings()
 
     struct Settings: Codable, Equatable {
@@ -77,6 +79,8 @@ struct AppState: Codable {
         interestSource = (try? c.decodeIfPresent([String: Double].self, forKey: .interestSource)) ?? [:]
         magazineBackfilled = (try? c.decodeIfPresent(Bool.self, forKey: .magazineBackfilled)) ?? false
         notify = (try? c.decodeIfPresent([String: Bool].self, forKey: .notify)) ?? [:]
+        followedStories = (try? c.decodeIfPresent([String].self, forKey: .followedStories)) ?? []
+        storySeen = (try? c.decodeIfPresent([String: Int].self, forKey: .storySeen)) ?? [:]
         settings = (try? c.decodeIfPresent(Settings.self, forKey: .settings)) ?? Settings()
     }
 }

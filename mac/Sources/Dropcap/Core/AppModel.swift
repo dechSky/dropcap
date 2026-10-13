@@ -32,6 +32,7 @@ final class AppModel: ObservableObject {
             }
         }
         Magazine.shared.migrateIfNeeded(from: state)
+        Task { try? await Task.sleep(for: .seconds(2)); Magazine.shared.reclusterIfNeeded() }
         if !state.magazineBackfilled { Task { await backfillMagazine() } }
         restartLoop()
         // 1분마다: 아침 브리핑 시각인지, 잠시 끄기가 끝났는지
@@ -93,6 +94,7 @@ final class AppModel: ObservableObject {
         found = applyKeywords(found) // 번역 뒤에: 한국어 낱말도 영어 기사에 걸리게
         await addEnglishTitles(&found)
         Magazine.shared.ingest(found) // 매거진에는 묶이기 전 전부(여러 시각 비교용)
+        notifyGrownStories()
         // 알림을 끈 채널(논문·커뮤니티 등 양 많은 곳)은 매거진에만 싣고, 목록·알림에는 넣지 않는다
         found = found.filter { notifies($0.sourceId) }
         found = groupSameStory(found)
@@ -253,6 +255,31 @@ final class AppModel: ObservableObject {
         guard item.id != Self.previewID else { return }
         setRead(item, true)
         noteInterest(item)
+    }
+
+    // MARK: 스토리 팔로우
+    func isFollowing(_ story: String) -> Bool { state.followedStories.contains(story) }
+    func setFollowing(_ story: String, _ on: Bool, size: Int) {
+        state.followedStories.removeAll { $0 == story }
+        if on { state.followedStories.append(story) }
+        state.storySeen[story] = size
+        Store.save(state)
+    }
+    func markStorySeen(_ story: String, size: Int) {
+        guard state.storySeen[story] != size else { return }
+        state.storySeen[story] = size
+        Store.save(state)
+    }
+    func unseenReports(_ c: Database.Cluster) -> Int { max(0, c.size - (state.storySeen[c.id] ?? c.size)) }
+
+    // 팔로우한 스토리에 새 보도가 붙으면 알림(그 출처의 알림을 꺼 두었어도)
+    private func notifyGrownStories() {
+        let grown = Magazine.shared.grown
+        Magazine.shared.grown = []
+        guard !grown.isEmpty, !isQuietTime, !isSnoozed else { return }
+        for (c, it) in grown.prefix(2) {
+            ToastCenter.shared.showInfo("팔로우한 스토리에 새 보도 · \(it.sourceName)", sub: c.title)
+        }
     }
 
     // MARK: 관심사: 연 기사의 분야·출처를 세어 지면 순서와 점수에 반영
@@ -545,12 +572,44 @@ enum StoryMatch {
         return embedding.map { $0.distance(between: a, and: b) }
     }
 
-    // 대문자로 시작하는 고유명사(문장 첫 낱말·흔한 말 제외)
+    // 고유명사: 영어 제목은 낱말마다 첫 글자를 대문자로 쓰는 일이 많아(Title Case) '대문자로 시작'만으로는 'Global' 같은
+    // 흔한 말까지 잡혀 다른 소식이 묶였다. 그래서 ① 문장 분석기가 사람·조직·장소로 본 이름 ② NVIDIA·OpenAI·GPT-6 처럼
+    // 대문자 약어·대소문자 섞임·숫자가 든 낱말 ③ Title Case 가 아닌 제목에서 문장 중간의 대문자 낱말만 고유명사로 본다.
+    nonisolated(unsafe) private static var entityCache: [String: Set<String>] = [:]
+    private static let entityLock = NSLock()
     static func entities(_ s: String) -> Set<String> {
-        let common: Set<String> = ["The", "A", "An", "AI", "New", "How", "Why", "What", "Its", "It", "This", "That", "In", "On", "For", "With", "And", "Is", "Are", "To", "Of", "By", "Use"]
-        let words = s.components(separatedBy: CharacterSet.letters.union(.decimalDigits).inverted).filter { !$0.isEmpty }
-        return Set(words.dropFirst().filter { $0.count >= 3 && $0.first!.isUppercase && !common.contains($0) }.map { $0.lowercased() })
-            .union(words.first.map { w in w.count >= 3 && w.first!.isUppercase && !common.contains(w) ? [w.lowercased()] : [] } ?? [])
+        entityLock.lock(); defer { entityLock.unlock() }
+        if let e = entityCache[s] { return e }
+        let e = findEntities(s)
+        if entityCache.count > 5000 { entityCache.removeAll(keepingCapacity: true) }
+        entityCache[s] = e
+        return e
+    }
+    private static func findEntities(_ s: String) -> Set<String> {
+        let common: Set<String> = ["ai", "si", "the", "a", "an", "new", "how", "why", "what", "its", "it", "this", "that", "in", "on", "for", "with", "and", "is", "are", "to", "of", "by", "use", "ceo", "us", "uk", "eu"]
+        var out = Set<String>()
+        let tagger = NLTagger(tagSchemes: [.nameType]); tagger.string = s
+        tagger.enumerateTags(in: s.startIndex..<s.endIndex, unit: .word, scheme: .nameType, options: [.omitWhitespace, .omitPunctuation, .joinNames]) { tag, r in
+            if let tag, [.personalName, .placeName, .organizationName].contains(tag) {
+                for w in s[r].lowercased().split(separator: " ") where w.count >= 2 { out.insert(String(w)) }
+            }
+            return true
+        }
+        let words = s.components(separatedBy: CharacterSet.letters.union(.decimalDigits).union(CharacterSet(charactersIn: "-")).inverted).filter { !$0.isEmpty }
+        for w in words {
+            let letters = w.filter(\.isLetter)
+            let caps = letters.filter(\.isUppercase).count
+            let acronym = letters.count >= 2 && caps == letters.count
+            let mixed = caps >= 2 && caps < letters.count && w.first!.isUppercase || (w.first!.isLowercase && caps >= 1)
+            let digits = w.contains(where: \.isNumber) && w.contains(where: \.isLetter)
+            if acronym || mixed || digits { out.insert(w.lowercased()) }
+        }
+        let long = words.filter { $0.count >= 3 && $0.first!.isLetter }
+        let titleCase = !long.isEmpty && Double(long.filter { $0.first!.isUppercase }.count) / Double(long.count) > 0.6
+        if !titleCase {
+            for w in words.dropFirst() where w.count >= 3 && w.first!.isUppercase { out.insert(w.lowercased()) }
+        }
+        return out.subtracting(common)
     }
 
     static func similar(_ a: Set<String>, _ b: Set<String>) -> Bool {

@@ -56,6 +56,7 @@ final class Magazine: ObservableObject {
     @Published private(set) var imageRevision = 0 // 사진만 채워졌을 때(조용히 다시 그림)
     @Published private(set) var archive: [Issue] = []
     @Published var preparing = false             // 첫 호를 엮는 중
+    var grown: [(Database.Cluster, NewsItem)] = [] // 이번에 팔로우한 스토리에 붙은 새 보도(알림 뒤 비움)
     private var enriching = false
 
     private init() {
@@ -71,6 +72,43 @@ final class Magazine: ObservableObject {
         ingest(items.sorted { ($0.date ?? .distantPast) < ($1.date ?? .distantPast) })
         backfillIssues()
         NSLog("[매거진] 예전 기록 %d건을 옮겼습니다", items.count)
+    }
+
+    // 기사 하나를 스토리에 넣는다: 대표 기사와 같은 소식이면 그 스토리에, 아니면 새 스토리. (스토리 id, 기존 스토리에 붙었는지)
+    private func assign(_ it: NewsItem, tokens: Set<String>, when: Date, clusters: inout [Database.Cluster], representatives: inout [String: NewsItem]) -> (String, Bool) {
+        if let i = clusters.firstIndex(where: { c in representatives[c.id].map { StoryMatch.same(it, $0) } ?? false }) {
+            clusters[i].size += 1
+            clusters[i].last = max(clusters[i].last, when)
+            clusters[i].first = min(clusters[i].first, when)
+            if it.tier == "lab" { clusters[i].title = it.displayTitle } // 공식 발표 제목을 스토리 이름으로
+            db.saveCluster(clusters[i])
+            return (clusters[i].id, true)
+        }
+        let c = Database.Cluster(id: UUID().uuidString, title: it.displayTitle, tokens: tokens, first: when, last: when, size: 1)
+        clusters.append(c)
+        db.saveCluster(c)
+        representatives[c.id] = it
+        return (c.id, false)
+    }
+
+    // 같은 소식 판정 기준이 바뀌면 최근 2주 스토리를 새 기준으로 다시 묶는다(한 번만)
+    static let storyRuleVersion = 2
+    func reclusterIfNeeded() {
+        let key = "storyRuleVersion"
+        guard UserDefaults.standard.integer(forKey: key) < Self.storyRuleVersion else { return }
+        UserDefaults.standard.set(Self.storyRuleVersion, forKey: key)
+        let since = Date().addingTimeInterval(-14 * 24 * 3600)
+        let stored: [Database.StoredItem] = db.items(from: since, limit: 5000)
+        var items: [NewsItem] = stored.map { $0.item }.filter { $0.itemKind == .article || $0.itemKind == .video }
+        items.sort { ($0.date ?? .distantPast) < ($1.date ?? .distantPast) }
+        db.resetClusters(since: since)
+        var clusters: [Database.Cluster] = [], reps: [String: NewsItem] = [:]
+        for it in items {
+            let (id, _) = assign(it, tokens: StoryMatch.tokens(it.title), when: it.date ?? Date(), clusters: &clusters, representatives: &reps)
+            db.setCluster(it.key, id)
+        }
+        NSLog("[스토리] 새 기준으로 %d건을 다시 묶음 → 여러 곳 스토리 %d개", items.count, clusters.filter { $0.size >= 2 }.count)
+        revision += 1
     }
 
     // 새로 들어온 기사 전부(같은 소식으로 묶여 알림에서 빠진 것도 포함)
@@ -96,21 +134,9 @@ final class Magazine: ObservableObject {
                 db.upsert(it, cluster: nil)
                 continue
             }
-            if let i = clusters.firstIndex(where: { c in representatives[c.id].map { StoryMatch.same(it, $0) } ?? false }) {
-                clusters[i].size += 1
-                clusters[i].last = max(clusters[i].last, when)
-                clusters[i].first = min(clusters[i].first, when)
-                // 공식 발표 제목을 스토리 이름으로
-                if it.tier == "lab" { clusters[i].title = it.displayTitle }
-                cid = clusters[i].id
-                db.saveCluster(clusters[i])
-            } else {
-                let c = Database.Cluster(id: UUID().uuidString, title: it.displayTitle, tokens: tokens, first: when, last: when, size: 1)
-                clusters.append(c)
-                db.saveCluster(c)
-                cid = c.id
-                representatives[c.id] = it
-            }
+            let (id, joined) = assign(it, tokens: tokens, when: when, clusters: &clusters, representatives: &representatives)
+            cid = id
+            if joined, AppModel.shared.state.followedStories.contains(id) , let c = clusters.first(where: { $0.id == id }) { grown.append((c, it)) }
             db.upsert(it, cluster: cid)
         }
         revision += 1
@@ -276,6 +302,27 @@ final class Magazine: ObservableObject {
     func stored(_ key: String, near issue: Issue) -> Database.StoredItem? { db.items(keys: [key]).first }
 
     func storyItems(_ cluster: String) -> [NewsItem] { db.items(inCluster: cluster).map(\.item) }
+    // 스토리 목록: 최근 24시간 안에 보도가 붙은 것(지금 커지는 스토리)과 나머지. 큰 것·최근 것이 앞
+    func storyGroups() -> (live: [Database.Cluster], past: [Database.Cluster]) {
+        let all = stories().sorted { a, b in
+            let sa = Double(a.size) + max(0, 24 - Date().timeIntervalSince(a.last) / 3600) / 6
+            let sb = Double(b.size) + max(0, 24 - Date().timeIntervalSince(b.last) / 3600) / 6
+            return sa != sb ? sa > sb : a.last > b.last
+        }
+        let cut = Date().addingTimeInterval(-24 * 3600)
+        return (all.filter { $0.last >= cut }, all.filter { $0.last < cut })
+    }
+    // 스토리 한눈에 요약(기기 안 모델) — 보도 수가 같으면 다시 만들지 않음
+    private var digestCache: [String: (size: Int, lines: [String])] = [:]
+    func storyDigest(_ c: Database.Cluster) async -> [String]? {
+        if let d = digestCache[c.id], d.size == c.size { return d.lines }
+        let items = storyItems(c.id)
+        guard items.count >= 2 else { return nil }
+        let paras = items.map { "[\($0.sourceName)] \($0.displayTitle). \($0.summary.prefix(400))" }
+        guard let lines = await Summarizer.summarize(title: c.title, paragraphs: paras) else { return nil }
+        digestCache[c.id] = (c.size, lines)
+        return lines
+    }
     func cluster(_ id: String) -> Database.Cluster? { db.cluster(id) }
     func clusterID(of key: String, near issue: Issue) -> String? { db.clusterOf(key) }
 

@@ -12,7 +12,9 @@ struct MagazineView: View {
     @ObservedObject private var mag = Magazine.shared
     @ObservedObject private var app = AppModel.shared
     @ObservedObject private var book = Scrapbook.shared
-    @State private var page: Page = MagazineController.pendingPage ?? (ProcessInfo.processInfo.environment["DROPCAP_TEST_MAG_PAGE"] == "scrapbook" ? .scrapbook : .today)
+    @State private var page: Page = MagazineController.pendingPage ?? (ProcessInfo.processInfo.environment["DROPCAP_TEST_MAG_PAGE"] == "scrapbook" ? .scrapbook
+        : ProcessInfo.processInfo.environment["DROPCAP_TEST_MAG_PAGE"] == "stories" ? .stories
+        : ProcessInfo.processInfo.environment["DROPCAP_TEST_STORY"].map { .story($0) } ?? .today)
     @State private var turn = 0   // 넘긴 방향(+1 다음, -1 이전) — 책장 넘김 방향
 
     var body: some View {
@@ -508,68 +510,160 @@ struct ScreenFrame: NSViewRepresentable {
 struct StoriesView: View {
     let onStory: (String) -> Void
     @ObservedObject private var mag = Magazine.shared
+    @ObservedObject private var app = AppModel.shared
 
     var body: some View {
-        let list = mag.stories()
+        let groups = mag.storyGroups()
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 14) {
                 Text("스토리").font(.display(34, .bold)).padding(.top, 28)
-                Text("최근 2주 동안 여러 곳이 함께 다룬 소식을 한 줄기로 묶었습니다.").foregroundStyle(.secondary)
-                if list.isEmpty {
-                    Text("아직 여러 곳이 함께 다룬 소식이 없습니다.").foregroundStyle(.secondary).padding(.vertical, 40)
+                Text("여러 곳이 함께 다룬 소식을 한 줄기로 묶었습니다. 팔로우하면 새 보도가 붙을 때 알려 드립니다.").foregroundStyle(.secondary)
+                if groups.live.isEmpty && groups.past.isEmpty {
+                    Text("아직 여러 곳이 함께 다룬 소식이 없습니다. 출처를 더 구독하면 스토리가 늘어납니다.").foregroundStyle(.secondary).padding(.vertical, 40)
                 }
-                ForEach(Array(list.enumerated()), id: \.element.id) { i, c in
-                    Button { onStory(c.id) } label: {
-                        HStack(alignment: .top, spacing: 14) {
-                            VStack(spacing: 2) {
-                                Text("\(c.size)").font(.system(size: 22, weight: .bold, design: .rounded))
-                                Text("곳").font(.app(11)).foregroundStyle(.secondary)
-                            }
-                            .frame(width: 46)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(c.title).font(.display(16, .semibold)).multilineTextAlignment(.leading)
-                                Text("\(RelativeTime.string(c.first)) 시작 · 최근 \(RelativeTime.string(c.last))")
-                                    .font(.app(12)).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Image(systemName: "chevron.right").foregroundStyle(.tertiary)
-                        }
-                        .padding(16)
-                        .background(.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        .contentShape(Rectangle())
+                if !groups.live.isEmpty {
+                    sectionTitle("지금 커지는 스토리", "최근 24시간")
+                    ForEach(Array(groups.live.enumerated()), id: \.element.id) { i, c in
+                        StoryListCard(cluster: c, big: i == 0, onOpen: { onStory(c.id) }).modifier(Stagger(index: i))
                     }
-                    .buttonStyle(.plain)
-                    .transition(.opacity)
-                    .modifier(Stagger(index: i))
+                }
+                if !groups.past.isEmpty {
+                    sectionTitle("지난 스토리", "최근 2주")
+                    ForEach(Array(groups.past.enumerated()), id: \.element.id) { i, c in
+                        StoryListCard(cluster: c, big: false, onOpen: { onStory(c.id) }).modifier(Stagger(index: i + groups.live.count))
+                    }
                 }
             }
             .padding(.horizontal, 36).padding(.bottom, 40)
             .frame(maxWidth: 820, alignment: .leading)
         }
     }
+
+    private func sectionTitle(_ t: String, _ sub: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(t).font(.app(15, .bold))
+            Text(sub).font(.app(12)).foregroundStyle(.tertiary)
+        }
+        .padding(.top, 14)
+    }
 }
 
-// 한 스토리의 타임라인: 선이 그려지며 각 보도가 차례로 나타난다
+// 스토리 카드: 대표 사진 · 분야 · 다룬 출처들 · 시작/최근 · 새 보도 · 팔로우 표시
+private struct StoryListCard: View {
+    let cluster: Database.Cluster
+    let big: Bool
+    let onOpen: () -> Void
+    @ObservedObject private var app = AppModel.shared
+    @State private var hover = false
+
+    var body: some View {
+        let items = Magazine.shared.storyItems(cluster.id)
+        let photo = items.compactMap(\.image).first { !ImageKey.isJunk($0) }
+        let lead = items.first { $0.tier == "lab" } ?? items.first
+        let sources = Array(NSOrderedSet(array: items.map(\.sourceName)).array as? [String] ?? []).prefix(6)
+        let fresh = app.unseenReports(cluster)
+        Button(action: onOpen) {
+            HStack(alignment: .top, spacing: 16) {
+                if let photo {
+                    RemoteImage(url: photo, category: lead?.category ?? .other, accent: lead?.accent ?? .accentColor)
+                        .frame(width: big ? 210 : 120, height: big ? 140 : 80)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 6) {
+                        if let lead { Label(lead.category.label, systemImage: lead.category.symbol).font(.app(11.5, .semibold)).foregroundStyle(lead.category.color) }
+                        Text("\(cluster.size)곳 보도").font(.app(11.5, .semibold)).foregroundStyle(.secondary)
+                        if fresh > 0 {
+                            Text("새 보도 \(fresh)").font(.app(10.5, .bold)).foregroundStyle(.white)
+                                .padding(.horizontal, 6).padding(.vertical, 2).background(Color.red, in: Capsule())
+                        }
+                        if app.isFollowing(cluster.id) { Image(systemName: "bell.fill").font(.app(10.5)).foregroundStyle(.orange).help("팔로우 중") }
+                    }
+                    Text(cluster.title).font(.display(big ? 21 : 16, .semibold)).multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: -5) {
+                        ForEach(Array(sources.enumerated()), id: \.offset) { _, name in
+                            let it = items.first { $0.sourceName == name }
+                            Monogram(letter: it?.initial ?? String(name.prefix(1)), color: it?.accent ?? .gray, size: 20)
+                                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: .textBackgroundColor), lineWidth: 1.5))
+                                .help(name)
+                        }
+                        Text("  \(sources.joined(separator: " · "))").font(.app(11.5)).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Text("첫 보도 \(RelativeTime.string(cluster.first)) · 최근 \(RelativeTime.string(cluster.last))")
+                        .font(.app(11.5)).foregroundStyle(.tertiary)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(14)
+            .background(.primary.opacity(hover ? 0.07 : 0.04), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+    }
+}
+
+// 한 스토리: 한눈에 요약 → 보도 줄기(간격·날짜·첫 문장) · 팔로우
 struct StoryView: View {
     let clusterID: String
     let back: () -> Void
+    @ObservedObject private var app = AppModel.shared
     @State private var progress: CGFloat = 0
+    @State private var digest: [String]?
+    @State private var digesting = false
 
     var body: some View {
         let items = Magazine.shared.storyItems(clusterID)
         let cluster = Magazine.shared.cluster(clusterID)
+        let following = app.isFollowing(clusterID)
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Button(action: back) { Label("스토리", systemImage: "chevron.left") }.buttonStyle(.borderless).padding(.top, 24)
                 Text(cluster?.title ?? "스토리").font(.display(30, .bold)).padding(.top, 10)
-                Text("\(items.count)곳 보도 · 같은 소식, 여러 시각").foregroundStyle(.secondary).padding(.top, 4).padding(.bottom, 26)
+                HStack(spacing: 10) {
+                    Text("\(items.count)곳 보도 · \(Self.span(items))").foregroundStyle(.secondary)
+                    Spacer()
+                    Button {
+                        app.setFollowing(clusterID, !following, size: items.count)
+                    } label: {
+                        Label(following ? "팔로우 중" : "이 스토리 팔로우", systemImage: following ? "bell.fill" : "bell")
+                            .font(.app(12.5, .semibold))
+                    }
+                    .buttonStyle(.bordered).tint(following ? .orange : .accentColor)
+                    .help("새 보도가 이 스토리에 붙으면 알림")
+                }
+                .padding(.top, 6).padding(.bottom, 22)
+                if digest != nil || digesting {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("한눈에", systemImage: "text.alignleft").font(.app(12.5, .bold)).foregroundStyle(.secondary)
+                        if let digest {
+                            ForEach(Array(digest.enumerated()), id: \.offset) { _, l in
+                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                    Circle().fill(.secondary).frame(width: 4, height: 4).offset(y: -3)
+                                    Text(l).font(.app(15)).lineSpacing(4).fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                            Text("여러 보도를 이 Mac 의 Apple Intelligence 로 합쳐 요약했습니다.").font(.app(11)).foregroundStyle(.tertiary)
+                        } else {
+                            HStack(spacing: 8) { ProgressView().controlSize(.small); Text("여러 보도를 합쳐 요약하는 중…").font(.app(13)).foregroundStyle(.secondary) }
+                        }
+                    }
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .padding(.bottom, 26)
+                }
                 ZStack(alignment: .topLeading) {
                     Rectangle().fill(.primary.opacity(0.15)).frame(width: 2)
                         .frame(maxHeight: .infinity)
                         .scaleEffect(x: 1, y: progress, anchor: .top)
                         .padding(.leading, 9)
-                    VStack(alignment: .leading, spacing: 22) {
+                    VStack(alignment: .leading, spacing: 18) {
                         ForEach(Array(items.enumerated()), id: \.element.key) { i, it in
+                            if let gap = Self.gap(items, i) {
+                                Text(gap).font(.app(11, .semibold)).foregroundStyle(.tertiary).padding(.leading, 36).padding(.top, -6)
+                            }
                             TimelineRow(item: it, first: i == 0)
                                 .opacity(progress >= CGFloat(i + 1) / CGFloat(max(items.count, 1)) * 0.9 ? 1 : 0)
                                 .offset(x: progress >= CGFloat(i + 1) / CGFloat(max(items.count, 1)) * 0.9 ? 0 : 12)
@@ -581,7 +675,32 @@ struct StoryView: View {
             .padding(.horizontal, 36).padding(.bottom, 40)
             .frame(maxWidth: 820, alignment: .leading)
         }
-        .onAppear { withAnimation(.easeInOut(duration: 0.4 + 0.18 * Double(items.count))) { progress = 1 } }
+        .onAppear {
+            withAnimation(.easeInOut(duration: 0.4 + 0.18 * Double(items.count))) { progress = 1 }
+            app.markStorySeen(clusterID, size: items.count)
+        }
+        .task(id: clusterID) {
+            guard Summarizer.available, let c = cluster else { return }
+            digesting = true
+            let d = await Magazine.shared.storyDigest(c)
+            withAnimation(.easeOut(duration: 0.3)) { digest = d; digesting = false }
+        }
+    }
+
+    static func span(_ items: [NewsItem]) -> String {
+        let ds = items.compactMap(\.date)
+        guard let a = ds.min(), let b = ds.max() else { return "" }
+        let h = b.timeIntervalSince(a) / 3600
+        return h < 1 ? "한 시간 안에 이어진 보도" : h < 48 ? "\(Int(h.rounded()))시간에 걸친 보도" : "\(Int((h / 24).rounded()))일에 걸친 보도"
+    }
+
+    // 앞 보도와의 간격: 날이 바뀌면 날짜, 아니면 'N시간 뒤'(30분 안이면 표시 안 함)
+    static func gap(_ items: [NewsItem], _ i: Int) -> String? {
+        guard i > 0, let a = items[i - 1].date, let b = items[i].date else { return nil }
+        if !Calendar.current.isDate(a, inSameDayAs: b) { return b.formatted(.dateTime.locale(Locale(identifier: "ko_KR")).month().day().weekday()) }
+        let m = b.timeIntervalSince(a) / 60
+        if m < 30 { return nil }
+        return m < 90 ? "\(Int(m.rounded()))분 뒤" : "\(Int((m / 60).rounded()))시간 뒤"
     }
 }
 
@@ -600,7 +719,7 @@ private struct TimelineRow: View {
                     Monogram(letter: item.initial, color: item.accent, size: 18)
                     Text(item.sourceName).font(.app(12.5, .semibold))
                     Text(Resources.tierLabel(item.tier)).font(.app(11)).foregroundStyle(.secondary)
-                    Text("· " + (item.date?.formatted(.dateTime.locale(Locale(identifier: "ko_KR")).month().day().hour().minute()) ?? ""))
+                    Text("· " + (item.date?.formatted(.dateTime.locale(Locale(identifier: "ko_KR")).hour().minute()) ?? ""))
                         .font(.app(11.5)).foregroundStyle(.secondary)
                     if first { Text("첫 보도").font(.app(10.5, .bold)).foregroundStyle(item.accent) }
                 }
@@ -609,10 +728,16 @@ private struct TimelineRow: View {
                     ReaderController.open(item, from: frame)
                 } label: {
                     HStack(alignment: .top, spacing: 12) {
-                        Text(item.displayTitle).font(.display(16, .semibold))
-                            .multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(item.displayTitle).font(.display(16, .semibold))
+                                .multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
+                            if let lede = Self.lede(item) {
+                                Text(lede).font(.app(13)).foregroundStyle(.secondary).lineLimit(2)
+                                    .multilineTextAlignment(.leading)
+                            }
+                        }
                         Spacer(minLength: 0)
-                        if item.image != nil {
+                        if item.image != nil && !ImageKey.isJunk(item.image) {
                             RemoteImage(url: item.image, category: item.category, accent: item.accent)
                                 .frame(width: 92, height: 62).clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                         }
@@ -625,6 +750,14 @@ private struct TimelineRow: View {
                 .background(ScreenFrame(frame: $frame))
             }
         }
+    }
+
+    // 요약의 첫 문장(HTML 꼬리표 제거, 제목과 같으면 생략)
+    static func lede(_ it: NewsItem) -> String? {
+        let t = it.summary.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces)
+        guard t.count > 20, !t.hasPrefix(it.title.prefix(20)) else { return nil }
+        return String(t.prefix(220))
     }
 }
 

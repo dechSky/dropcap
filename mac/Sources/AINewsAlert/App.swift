@@ -55,6 +55,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             if let subs = env["AINEWS_TEST_SUBSCRIBE"] { // 시험용: 추천 채널 구독
                 Task { for id in subs.split(separator: ",") { if let s = ChannelCatalog.all.first(where: { $0.id == id }) { _ = await AppModel.shared.subscribe(s) } } }
             }
+            if env["AINEWS_TEST_SCRAP"] != nil { // 시험용: 견본 스크랩
+                DispatchQueue.main.asyncAfter(deadline: .now() + 25) {
+                    let items = Magazine.shared.liveDaily().sections.flatMap(\.keys).prefix(3)
+                    let resolved = Magazine.shared.resolve(Magazine.shared.liveDaily()).sections.flatMap(\.items)
+                    for it in resolved.prefix(3) where items.contains(it.key) {
+                        Scrapbook.shared.add(it, quote: it.displayTitle + " — 핵심 문단 예시입니다.", original: it.title, memo: "보고서에 인용", to: "GPT 조사")
+                        Scrapbook.shared.add(it, to: "GPT 조사")
+                    }
+                }
+            }
             if env["AINEWS_TEST_SETTINGS"] != nil {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
                     NSApp.activate(ignoringOtherApps: true)

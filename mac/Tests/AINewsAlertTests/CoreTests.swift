@@ -227,3 +227,19 @@ struct URLSafetyDNSTests {
                                  item("포스코DX, AI 스타트업 인핸스에 20억 투자", en: "POSCO DX invests 2 billion won in AI startup Enhance")))
     }
 }
+
+@Suite struct ScrapExportTests {
+    @Test func markdownGroupsByArticle() {
+        let it = NewsItem(id: "1", title: "Meta has new AI models", titleKo: "메타의 새 AI 모델", link: "https://example.com/a",
+                          date: Date(timeIntervalSince1970: 1_791_800_000), summary: "", sourceId: "verge", sourceName: "The Verge", tier: "press")
+        let a = Scrap(item: it, quote: "메타가 새 모델을 공개했다.", quoteOriginal: "Meta released a new model.", memo: "보고서 1장", collection: "조사")
+        let b = Scrap(item: it, quote: nil, memo: "", collection: "조사")
+        let md = Scrapbook.render([b, a], title: "조사")
+        #expect(md.hasPrefix("# 조사"))
+        #expect(md.components(separatedBy: "## [메타의 새 AI 모델](https://example.com/a)").count == 2) // 기사는 한 번만
+        #expect(md.contains("> 메타가 새 모델을 공개했다."))
+        #expect(md.contains("> _Meta released a new model._"))
+        #expect(md.contains("- 메모: 보고서 1장"))
+        #expect(md.contains("원제: Meta has new AI models"))
+    }
+}

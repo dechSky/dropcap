@@ -65,6 +65,10 @@ struct ReaderView: View {
     @Environment(\.openURL) private var openURL
     @AppStorage("readerFontSize") private var fs: Double = 17
     @StateObject private var speaker = Speaker()
+    @ObservedObject private var scrapbook = Scrapbook.shared
+    @State private var scrapFlash = false
+    @State private var newFolder = false
+    @State private var folderName = ""
 
     var body: some View {
         ScrollView {
@@ -124,6 +128,19 @@ struct ReaderView: View {
                 }
                 .disabled(model.phase == .loading || model.phase == .failed)
                 .help(speaker.speaking ? "읽기 멈춤" : "소리 내어 읽기")
+                Menu {
+                    ForEach(scrapbook.collections, id: \.self) { c in
+                        Button(c) { scrapbook.add(model.item, to: c); scrapFlash.toggle() }
+                    }
+                    Divider()
+                    Button("새 폴더에 스크랩…") { newFolder = true }
+                } label: {
+                    Label("스크랩", systemImage: scrapbook.isScrapped(model.item) ? "scissors.circle.fill" : "scissors")
+                } primaryAction: {
+                    scrapbook.add(model.item); scrapFlash.toggle()
+                }
+                .help("기사 스크랩 (누르면 마지막 폴더에, 화살표로 폴더 고르기)")
+                .symbolEffect(.bounce, value: scrapFlash)
                 Button { app.toggleSaved(model.item) } label: {
                     Label(app.isSaved(model.item) ? "저장 취소" : "나중에 읽기", systemImage: app.isSaved(model.item) ? "bookmark.fill" : "bookmark")
                 }
@@ -137,6 +154,15 @@ struct ReaderView: View {
         }
         .task { await model.load() }
         .onDisappear { speaker.stop() }
+        .alert("새 스크랩 폴더", isPresented: $newFolder) {
+            TextField("폴더 이름", text: $folderName)
+            Button("스크랩") {
+                scrapbook.createCollection(folderName)
+                scrapbook.add(model.item, to: folderName.trimmingCharacters(in: .whitespaces))
+                folderName = ""
+            }
+            Button("취소", role: .cancel) { folderName = "" }
+        }
     }
 
     // 읽는 시간: 한국어 분당 약 500자, 영어 분당 약 230낱말
@@ -216,44 +242,45 @@ struct ReaderView: View {
             ForEach(Array(blocks.enumerated()), id: \.offset) { i, b in
                 let text = (model.showOriginal ? b.original : nil) ?? b.text ?? ""
                 let prevIsLi = i > 0 && blocks[i - 1].type == .li
-                switch b.type {
-                case .h:
-                    Text(text).font(.app(fs + 4, .bold)).tracking(-0.2)
-                        .padding(.top, 26).padding(.bottom, 8)
-                case .p:
-                    Text(text).font(.app(fs)).lineSpacing(fs * 0.47).padding(.bottom, fs + 1)
-                case .li:
-                    HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        Circle().fill(model.item.accent.opacity(0.8)).frame(width: 5, height: 5).offset(y: -3)
-                        Text(text).font(.app(fs)).lineSpacing(fs * 0.41)
-                    }
-                    .padding(.top, prevIsLi ? 0 : 2).padding(.bottom, 8).padding(.leading, 4)
-                case .quote:
-                    Text(text).font(.app(fs)).italic().lineSpacing(fs * 0.41).foregroundStyle(.secondary)
-                        .padding(.leading, 16)
-                        .overlay(alignment: .leading) { Capsule().fill(model.item.accent.opacity(0.6)).frame(width: 3) }
-                        .padding(.vertical, 6).padding(.bottom, 14)
-                case .pre:
-                    ScrollView(.horizontal) {
-                        Text(text).font(.system(size: 13, design: .monospaced)).padding(14)
-                    }
-                    .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .padding(.bottom, 18)
-                case .img:
-                    if let s = b.src, let u = URL(string: s) {
-                        AsyncImage(url: u) { phase in
-                            if let img = phase.image {
-                                img.resizable().aspectRatio(contentMode: .fit)
-                                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                                    .padding(.vertical, 6).padding(.bottom, 12)
-                            }
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                case .cap:
-                    Text(text).font(.app(13)).foregroundStyle(.secondary).padding(.top, -8).padding(.bottom, 18)
-                }
+                blockView(b, text: text, prevIsLi: prevIsLi)
+                    .modifier(ScrapHover(item: model.item, text: text,
+                                         original: model.showOriginal ? nil : b.original,
+                                         enabled: [.p, .li, .quote, .h].contains(b.type) && !text.isEmpty))
             }
+        }
+    }
+
+    @ViewBuilder private func blockView(_ b: Block, text: String, prevIsLi: Bool) -> some View {
+        switch b.type {
+        case .h:
+            Text(text).font(.app(fs + 4, .bold)).tracking(-0.2)
+                .padding(.top, 26).padding(.bottom, 8)
+        case .p:
+            Text(text).font(.app(fs)).lineSpacing(fs * 0.47).padding(.bottom, fs + 1)
+        case .li:
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Circle().fill(model.item.accent.opacity(0.8)).frame(width: 5, height: 5).offset(y: -3)
+                Text(text).font(.app(fs)).lineSpacing(fs * 0.41)
+            }
+            .padding(.top, prevIsLi ? 0 : 2).padding(.bottom, 8).padding(.leading, 4)
+        case .quote:
+            Text(text).font(.app(fs)).italic().lineSpacing(fs * 0.41).foregroundStyle(.secondary)
+                .padding(.leading, 16)
+                .overlay(alignment: .leading) { Capsule().fill(model.item.accent.opacity(0.6)).frame(width: 3) }
+                .padding(.vertical, 6).padding(.bottom, 14)
+        case .pre:
+            ScrollView(.horizontal) {
+                Text(text).font(.system(size: 13, design: .monospaced)).padding(14)
+            }
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .padding(.bottom, 18)
+        case .img:
+            // 기사 속 사진 주소도 믿지 않는다: 안전 검사를 거치는 로더로
+            if let src = b.src {
+                ArticleImage(url: src).padding(.vertical, 6).padding(.bottom, 12)
+            }
+        case .cap:
+            Text(text).font(.app(13)).foregroundStyle(.secondary).padding(.top, -8).padding(.bottom, 18)
         }
     }
 
@@ -363,5 +390,67 @@ enum ReaderController {
             w.animator().setFrame(target, display: true)
             w.animator().alphaValue = 1
         }
+    }
+}
+
+
+// 문단에 마우스를 올리면 왼쪽 여백에 가위 단추: 누르면 그 문단을 스크랩(번역문이면 원문도 함께)
+private struct ScrapHover: ViewModifier {
+    let item: NewsItem
+    let text: String
+    let original: String?
+    let enabled: Bool
+    @State private var hover = false
+    @State private var done = false
+    @ObservedObject private var book = Scrapbook.shared
+
+    func body(content: Content) -> some View {
+        let scrapped = book.isScrapped(item, quote: text)
+        content
+            .background(alignment: .leading) {
+                if scrapped {
+                    RoundedRectangle(cornerRadius: 3).fill(Color.yellow.opacity(0.55)).frame(width: 3).offset(x: -14)
+                }
+            }
+            .overlay(alignment: .topLeading) {
+                if enabled && (hover || done) {
+                    Button {
+                        book.add(item, quote: text, original: original)
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) { done = true }
+                        Task { try? await Task.sleep(for: .seconds(1.2)); withAnimation { done = false } }
+                    } label: {
+                        Image(systemName: done || scrapped ? "checkmark" : "scissors")
+                            .font(.app(11, .semibold))
+                            .frame(width: 24, height: 24)
+                            .background(.regularMaterial, in: Circle())
+                            .overlay(Circle().strokeBorder(.primary.opacity(0.1), lineWidth: 0.5))
+                            .foregroundStyle(done || scrapped ? Color.green : Color.secondary)
+                            .scaleEffect(done ? 1.15 : 1)
+                    }
+                    .buttonStyle(.plain)
+                    .help(scrapped ? "스크랩한 문단" : "이 문단 스크랩")
+                    .offset(x: -34, y: 0)
+                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
+                }
+            }
+            .contentShape(Rectangle())
+            .onHover { h in withAnimation(.easeOut(duration: 0.15)) { hover = h } }
+    }
+}
+
+// 기사 본문 속 사진(안전 로더, 원래 비율 유지)
+private struct ArticleImage: View {
+    let url: String
+    @State private var image: NSImage?
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .transition(.opacity)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .task(id: url) { image = await ImageLoader.shared.image(url) }
     }
 }

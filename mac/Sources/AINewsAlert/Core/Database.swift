@@ -37,6 +37,9 @@ final class Database: @unchecked Sendable {
         CREATE INDEX IF NOT EXISTS clusters_last ON clusters(last);
         CREATE TABLE IF NOT EXISTS issues(
           id TEXT PRIMARY KEY, kind TEXT NOT NULL, created REAL NOT NULL, json TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS scraps(
+          id TEXT PRIMARY KEY, collection TEXT NOT NULL, created REAL NOT NULL, json TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS scraps_collection ON scraps(collection, created);
         """)
         exec("PRAGMA user_version=\(Self.schemaVersion);")
     }
@@ -212,6 +215,33 @@ final class Database: @unchecked Sendable {
             }
         }
         return out
+    }
+
+    // MARK: 스크랩
+    func saveScrap(_ s: Scrap) {
+        guard let json = try? Self.encoder.encode(s) else { return }
+        queue.sync {
+            run("INSERT OR REPLACE INTO scraps(id,collection,created,json) VALUES(?,?,?,?)",
+                [.text(s.id), .text(s.collection), .real(s.created.timeIntervalSince1970), .text(String(decoding: json, as: UTF8.self))])
+        }
+    }
+
+    func deleteScrap(_ id: String) { queue.sync { run("DELETE FROM scraps WHERE id=?", [.text(id)]) } }
+
+    func scraps(collection: String? = nil) -> [Scrap] {
+        var out: [Scrap] = []
+        queue.sync {
+            let sql = collection == nil ? "SELECT json FROM scraps ORDER BY created DESC" : "SELECT json FROM scraps WHERE collection=? ORDER BY created DESC"
+            run(sql, collection.map { [.text($0)] } ?? []) { st in
+                if let j = Self.text(st, 0), let s = try? Self.decoder.decode(Scrap.self, from: Data(j.utf8)) { out.append(s) }
+            }
+        }
+        return out
+    }
+
+    func renameCollection(_ from: String, to: String) {
+        let list = scraps(collection: from)
+        for var s in list { s.collection = to; saveScrap(s) }
     }
 
     // MARK: 호

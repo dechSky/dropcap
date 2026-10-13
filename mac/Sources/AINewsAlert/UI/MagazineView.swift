@@ -4,14 +4,15 @@ import SwiftUI
 // AI 매거진: 오늘 호 · 이번 주 · 스토리 · 저장 · 검색 · 지난 호
 struct MagazineView: View {
     enum Page: Hashable {
-        case today, week, stories, saved, search
+        case today, week, stories, saved, search, scrapbook
         case issue(Issue)
         case story(String)
     }
 
     @ObservedObject private var mag = Magazine.shared
     @ObservedObject private var app = AppModel.shared
-    @State private var page: Page = .today
+    @ObservedObject private var book = Scrapbook.shared
+    @State private var page: Page = ProcessInfo.processInfo.environment["AINEWS_TEST_MAG_PAGE"] == "scrapbook" ? .scrapbook : .today
     @State private var turn = 0   // 넘긴 방향(+1 다음, -1 이전) — 책장 넘김 방향
 
     var body: some View {
@@ -24,6 +25,7 @@ struct MagazineView: View {
                 Section("모아 보기") {
                     Label("스토리", systemImage: "point.3.connected.trianglepath.dotted").tag(Page.stories)
                     Label("저장 \(app.state.saved.count)", systemImage: "bookmark").tag(Page.saved)
+                    Label("스크랩북 \(book.scraps.count)", systemImage: "scissors").tag(Page.scrapbook)
                     Label("검색", systemImage: "magnifyingglass").tag(Page.search)
                 }
                 if !mag.archive.isEmpty {
@@ -53,6 +55,7 @@ struct MagazineView: View {
                 Button("") { go(.week) }.keyboardShortcut("2", modifiers: .command)
                 Button("") { go(.stories) }.keyboardShortcut("3", modifiers: .command)
                 Button("") { go(.search) }.keyboardShortcut("f", modifiers: .command)
+                Button("") { go(.scrapbook) }.keyboardShortcut("4", modifiers: .command)
                 Button("") { Task { await AppModel.shared.checkAll(manual: false) } }.keyboardShortcut("r", modifiers: .command)
             }
             .opacity(0).allowsHitTesting(false)
@@ -67,6 +70,7 @@ struct MagazineView: View {
         case .stories: StoriesView(onStory: openStory)
         case .story(let id): StoryView(clusterID: id) { go(.stories) }
         case .saved: SavedView()
+        case .scrapbook: ScrapbookView()
         case .search: SearchView()
         }
     }
@@ -86,7 +90,8 @@ struct MagazineView: View {
         case .stories: return 2
         case .story: return 3
         case .saved: return 4
-        case .search: return 5
+        case .scrapbook: return 5
+        case .search: return 6
         case .issue(let i): return 100 + (mag.archive.firstIndex(of: i) ?? 0)
         }
     }
@@ -734,5 +739,192 @@ enum MagSort: String, CaseIterable {
             }.map(\.element)
         case .source: return items.sorted { ($0.sourceName, $1.date ?? .distantPast) < ($1.sourceName, $0.date ?? .distantPast) }
         }
+    }
+}
+
+
+// MARK: - 스크랩북
+struct ScrapbookView: View {
+    @ObservedObject private var book = Scrapbook.shared
+    @State private var folder = ScrapbookView.initialFolder()
+
+    // 마지막으로 스크랩한 폴더, 없으면 내용이 있는 첫 폴더
+    static func initialFolder() -> String {
+        let book = Scrapbook.shared
+        if let last = UserDefaults.standard.string(forKey: "lastScrapCollection"), book.collections.contains(last) { return last }
+        return book.collections.first { c in book.scraps.contains { $0.collection == c } } ?? Scrapbook.defaultCollection
+    }
+    @State private var renaming = false
+    @State private var newName = ""
+    @State private var creating = false
+    @State private var copied = false
+
+    private var list: [Scrap] { book.scraps.filter { $0.collection == folder } }
+
+    // 기사별로 묶기(최근 스크랩 순)
+    private var groups: [(item: NewsItem, scraps: [Scrap])] {
+        var order: [String] = []
+        var map: [String: [Scrap]] = [:]
+        for s in list {
+            if map[s.item.key] == nil { order.append(s.item.key) }
+            map[s.item.key, default: []].append(s)
+        }
+        return order.compactMap { k in map[k].map { ($0[0].item, $0.sorted { $0.created < $1.created }) } }
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("스크랩북").font(.display(34, .bold))
+                    Spacer()
+                    Button { book.copyMarkdown(collection: folder); copied = true
+                        Task { try? await Task.sleep(for: .seconds(1.5)); copied = false }
+                    } label: { Label(copied ? "복사됨" : "Markdown 복사", systemImage: copied ? "checkmark" : "doc.on.doc") }
+                        .disabled(list.isEmpty)
+                    Button { book.saveMarkdown(collection: folder) } label: { Label("파일로 저장", systemImage: "square.and.arrow.down") }
+                        .disabled(list.isEmpty)
+                }
+                .padding(.top, 28)
+                Text("읽기 창에서 문단에 마우스를 올려 ✂︎ 를 누르거나, 도구막대의 스크랩으로 기사를 모아 두세요. 폴더째 Markdown 으로 내보낼 수 있습니다.")
+                    .font(.app(13)).foregroundStyle(.secondary)
+
+                // 폴더 칩
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(book.collections, id: \.self) { c in
+                            let n = book.scraps.filter { $0.collection == c }.count
+                            Button { withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { folder = c } } label: {
+                                Label("\(c) \(n)", systemImage: c == folder ? "folder.fill" : "folder")
+                                    .font(.app(12.5, c == folder ? .semibold : .regular))
+                                    .padding(.horizontal, 11).padding(.vertical, 6)
+                                    .background(c == folder ? Color.accentColor.opacity(0.16) : Color.primary.opacity(0.05), in: Capsule())
+                                    .foregroundStyle(c == folder ? Color.accentColor : Color.primary)
+                            }
+                            .buttonStyle(.plain)
+                            .contextMenu {
+                                Button("이름 바꾸기") { folder = c; newName = c; renaming = true }
+                            }
+                        }
+                        Button { creating = true } label: { Label("새 폴더", systemImage: "plus").font(.app(12.5)) }
+                            .buttonStyle(.borderless)
+                    }
+                }
+
+                if groups.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Image(systemName: "scissors").font(.app(30, .light)).foregroundStyle(.tertiary)
+                        Text("이 폴더는 비어 있습니다").font(.display(18, .semibold))
+                    }
+                    .padding(.vertical, 40)
+                }
+
+                ForEach(Array(groups.enumerated()), id: \.element.item.key) { i, g in
+                    ScrapGroupCard(item: g.item, scraps: g.scraps)
+                        .modifier(StaggerIn(index: i))
+                }
+            }
+            .padding(.horizontal, 36).padding(.bottom, 40)
+            .frame(maxWidth: 860, alignment: .leading)
+        }
+        .onChange(of: book.scraps.count) { _, _ in
+            // 보고 있는 폴더가 비었고 다른 곳에 새 스크랩이 생기면 그쪽으로
+            if list.isEmpty { folder = ScrapbookView.initialFolder() }
+        }
+        .alert("새 스크랩 폴더", isPresented: $creating) {
+            TextField("폴더 이름", text: $newName)
+            Button("만들기") { book.createCollection(newName); folder = newName.trimmingCharacters(in: .whitespaces); newName = "" }
+            Button("취소", role: .cancel) { newName = "" }
+        }
+        .alert("폴더 이름 바꾸기", isPresented: $renaming) {
+            TextField("폴더 이름", text: $newName)
+            Button("바꾸기") { book.rename(folder, to: newName); folder = newName.trimmingCharacters(in: .whitespaces); newName = "" }
+            Button("취소", role: .cancel) { newName = "" }
+        }
+    }
+}
+
+private struct ScrapGroupCard: View {
+    let item: NewsItem
+    let scraps: [Scrap]
+    @State private var frame: CGRect = .zero
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Button {
+                AppModel.shared.markOpened(item)
+                ReaderController.open(item, from: frame)
+            } label: {
+                HStack(alignment: .top, spacing: 12) {
+                    RemoteImage(url: item.image, category: item.category, accent: item.accent)
+                        .frame(width: 84, height: 56).clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(item.displayTitle).font(.display(16, .semibold)).multilineTextAlignment(.leading)
+                        Text("\(item.sourceName) · \(RelativeTime.string(item.date))").font(.app(12)).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .background(ScreenFrame(frame: $frame))
+
+            ForEach(scraps) { s in ScrapRow(scrap: s) }
+        }
+        .padding(18)
+        .background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(.primary.opacity(0.07), lineWidth: 0.5))
+    }
+}
+
+private struct ScrapRow: View {
+    @State var scrap: Scrap
+    @State private var hover = false
+    @FocusState private var editing: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let q = scrap.quote {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(q).font(.app(14.5)).lineSpacing(5).textSelection(.enabled)
+                    if let o = scrap.quoteOriginal, o != q {
+                        Text(o).font(.app(12.5)).foregroundStyle(.secondary).lineSpacing(3).textSelection(.enabled)
+                    }
+                }
+                .padding(.leading, 14)
+                .overlay(alignment: .leading) { RoundedRectangle(cornerRadius: 2).fill(Color.yellow.opacity(0.7)).frame(width: 3) }
+            } else {
+                Label("기사 전체를 스크랩", systemImage: "doc.text").font(.app(12)).foregroundStyle(.secondary)
+            }
+            HStack(spacing: 8) {
+                Image(systemName: "pencil").font(.app(11)).foregroundStyle(.tertiary)
+                TextField("메모 남기기", text: $scrap.memo, axis: .vertical)
+                    .textFieldStyle(.plain).font(.app(13))
+                    .focused($editing)
+                    .onSubmit { Scrapbook.shared.update(scrap) }
+                    .onChange(of: editing) { _, now in if !now { Scrapbook.shared.update(scrap) } }
+                Spacer()
+                Menu {
+                    ForEach(Scrapbook.shared.collections.filter { $0 != scrap.collection }, id: \.self) { c in
+                        Button("‘\(c)’로 옮기기") { scrap.collection = c; Scrapbook.shared.update(scrap) }
+                    }
+                    Divider()
+                    Button("스크랩 지우기", role: .destructive) { withAnimation { Scrapbook.shared.remove(scrap) } }
+                } label: { Image(systemName: "ellipsis.circle").foregroundStyle(.secondary) }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                    .opacity(hover ? 1 : 0.4)
+            }
+        }
+        .padding(.vertical, 4)
+        .onHover { hover = $0 }
+    }
+}
+
+private struct StaggerIn: ViewModifier {
+    let index: Int
+    @State private var on = false
+    func body(content: Content) -> some View {
+        content.opacity(on ? 1 : 0).offset(y: on ? 0 : 12)
+            .onAppear { withAnimation(.spring(response: 0.5, dampingFraction: 0.86).delay(min(Double(index) * 0.05, 0.4))) { on = true } }
     }
 }

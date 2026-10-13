@@ -1,0 +1,39 @@
+# 공개 저장소: 생성물·개인 파일·비밀은 올리지 않는다
+
+# 의존성·빌드 결과
+mac/.build/
+mac/build/
+*.dmg
+*.blockmap
+*.app/
+windows/**/bin/
+windows/**/obj/
+*.msix
+*.exe
+
+# 앱 상태·기사 캐시(실행 중 생기는 개인 기록)
+native-state.json
+state.json
+articles/
+*.lock
+
+# 비밀·인증서·서명
+.env
+.env.*
+*.p12
+*.pem
+*.key
+*.cer
+*.mobileprovision
+*.provisionprofile
+secrets.*
+
+# 편집기·OS·도구
+.DS_Store
+.vscode/
+.idea/
+*.xcuserstate
+xcuserdata/
+.swiftpm/
+.claude/
+*.log

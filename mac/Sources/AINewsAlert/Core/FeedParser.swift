@@ -1,0 +1,130 @@
+import Foundation
+
+// XMLParser 로 간단한 나무를 만든 뒤 RSS·Atom·RDF·사이트맵을 해석한다.
+final class XNode {
+    let name: String
+    var attrs: [String: String]
+    var children: [XNode] = []
+    var text = ""
+    init(name: String, attrs: [String: String]) { self.name = name; self.attrs = attrs }
+
+    func child(_ n: String) -> XNode? { children.first { $0.name == n } }
+    func all(_ n: String) -> [XNode] { children.filter { $0.name == n } }
+    func value(_ n: String) -> String { child(n)?.text.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
+}
+
+private final class TreeBuilder: NSObject, XMLParserDelegate {
+    let root = XNode(name: "#root", attrs: [:])
+    private var stack: [XNode] = []
+    override init() { super.init(); stack = [root] }
+
+    func parser(_ parser: XMLParser, didStartElement name: String, namespaceURI: String?, qualifiedName: String?, attributes: [String: String] = [:]) {
+        let n = XNode(name: qualifiedName ?? name, attrs: attributes)
+        stack.last?.children.append(n)
+        stack.append(n)
+    }
+    func parser(_ parser: XMLParser, didEndElement name: String, namespaceURI: String?, qualifiedName: String?) { stack.removeLast() }
+    func parser(_ parser: XMLParser, foundCharacters string: String) { stack.last?.text += string }
+    func parser(_ parser: XMLParser, foundCDATA data: Data) { stack.last?.text += String(decoding: data, as: UTF8.self) }
+}
+
+enum FeedError: LocalizedError {
+    case badFormat, http(Int)
+    var errorDescription: String? {
+        switch self {
+        case .badFormat: return "RSS/Atom 형식을 알아볼 수 없음"
+        case .http(let c): return "HTTP \(c)"
+        }
+    }
+}
+
+enum FeedParser {
+    struct Entry { var id: String; var title: String; var link: String; var date: Date?; var summary: String }
+
+    static func tree(_ data: Data) throws -> XNode {
+        let b = TreeBuilder()
+        let p = XMLParser(data: data)
+        p.delegate = b
+        p.shouldProcessNamespaces = false
+        guard p.parse() || !b.root.children.isEmpty else { throw FeedError.badFormat }
+        return b.root
+    }
+
+    static func parseFeed(_ data: Data) throws -> [Entry] {
+        let root = try tree(data)
+        if let channel = root.child("rss")?.child("channel") {
+            return channel.all("item").map { it in
+                let link = it.value("link")
+                return Entry(id: it.value("guid").nonEmpty ?? link, title: Plain.clean(it.value("title")), link: link,
+                             date: Dates.parse(it.value("pubDate").nonEmpty ?? it.value("dc:date")),
+                             summary: String(Plain.clean(it.value("description")).prefix(300)))
+            }
+        }
+        if let feed = root.child("feed") {
+            return feed.all("entry").map { it in
+                let links = it.all("link")
+                let alt = links.first { ($0.attrs["rel"] ?? "alternate") == "alternate" } ?? links.first
+                let link = alt?.attrs["href"] ?? alt?.text ?? ""
+                return Entry(id: it.value("id").nonEmpty ?? link, title: Plain.clean(it.value("title")), link: link,
+                             date: Dates.parse(it.value("published").nonEmpty ?? it.value("updated")),
+                             summary: String(Plain.clean(it.value("summary").nonEmpty ?? it.value("content")).prefix(300)))
+            }
+        }
+        if let rdf = root.child("rdf:RDF") {
+            return rdf.all("item").map { it in
+                Entry(id: it.value("link"), title: Plain.clean(it.value("title")), link: it.value("link"),
+                      date: Dates.parse(it.value("dc:date")), summary: String(Plain.clean(it.value("description")).prefix(300)))
+            }
+        }
+        throw FeedError.badFormat
+    }
+
+    static func parseSitemap(_ data: Data, match: NSRegularExpression) throws -> [Entry] {
+        let root = try tree(data)
+        guard let set = root.child("urlset") else { throw FeedError.badFormat }
+        return set.all("url").compactMap { u in
+            let loc = u.value("loc")
+            guard match.firstMatch(in: loc, range: NSRange(loc.startIndex..., in: loc)) != nil else { return nil }
+            return Entry(id: loc, title: "", link: loc, date: Dates.parse(u.value("lastmod")), summary: "")
+        }
+    }
+}
+
+enum Dates {
+    private static let rfc822: [DateFormatter] = ["EEE, dd MMM yyyy HH:mm:ss Z", "EEE, dd MMM yyyy HH:mm:ss zzz", "dd MMM yyyy HH:mm:ss Z", "EEE, dd MMM yyyy HH:mm Z", "yyyy-MM-dd HH:mm:ss"].map {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = $0
+        return f
+    }
+    private static let iso: ISO8601DateFormatter = { let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime]; return f }()
+    private static let isoFrac: ISO8601DateFormatter = { let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f }()
+
+    static func parse(_ s: String) -> Date? {
+        let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.isEmpty { return nil }
+        if let d = iso.date(from: t) ?? isoFrac.date(from: t) { return d }
+        for f in rfc822 { if let d = f.date(from: t) { return d } }
+        return nil
+    }
+}
+
+enum Plain {
+    private static let entities: [String: String] = ["&nbsp;": " ", "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": "\"", "&#39;": "'", "&#039;": "'", "&apos;": "'", "&#8217;": "’", "&#8216;": "‘", "&#8220;": "“", "&#8221;": "”", "&#8230;": "…", "&#8211;": "–", "&#8212;": "—"]
+
+    static func clean(_ s: String) -> String {
+        var out = s.replacingOccurrences(of: "<[^>]*>", with: " ", options: .regularExpression)
+        for (k, v) in entities { out = out.replacingOccurrences(of: k, with: v) }
+        return out.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces)
+    }
+
+    static func titleFromSlug(_ url: String) -> String {
+        let slug = url.split(separator: "/").last.map(String.init) ?? url
+        let t = slug.replacingOccurrences(of: "[-_]+", with: " ", options: .regularExpression)
+        return t.prefix(1).uppercased() + t.dropFirst()
+    }
+}
+
+extension String {
+    var nonEmpty: String? { isEmpty ? nil : self }
+}

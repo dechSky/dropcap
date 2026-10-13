@@ -1,0 +1,152 @@
+{
+  "version": 1,
+  "tiers": {
+    "lab": "공식 발표",
+    "press": "언론",
+    "kr": "국내"
+  },
+  "aiPattern": "\\b(AI|A\\.I\\.|LLMs?|GPT[-\\w]*|Gemini|Claude|Llama|agents?|agentic|machine learning|neural|generative|chatbots?|OpenAI|Anthropic|DeepMind|transformer|inference|GPU|robotics?)\\b|인공지능|생성형|에이아이|챗봇|거대언어모델|언어모델|머신러닝|딥러닝|AI",
+  "sources": [
+    {
+      "id": "openai",
+      "name": "OpenAI",
+      "tier": "lab",
+      "type": "feed",
+      "url": "https://openai.com/news/rss.xml",
+      "aiOnly": false,
+      "defaultOn": true,
+      "color": "#10A37F"
+    },
+    {
+      "id": "anthropic",
+      "name": "Anthropic",
+      "tier": "lab",
+      "type": "sitemap",
+      "url": "https://www.anthropic.com/sitemap.xml",
+      "match": "^https:\\/\\/www\\.anthropic\\.com\\/news\\/[^/]+$",
+      "aiOnly": false,
+      "defaultOn": true,
+      "color": "#D97757"
+    },
+    {
+      "id": "deepmind",
+      "name": "Google DeepMind",
+      "tier": "lab",
+      "type": "feed",
+      "url": "https://deepmind.google/blog/rss.xml",
+      "aiOnly": false,
+      "defaultOn": true,
+      "color": "#4285F4"
+    },
+    {
+      "id": "google-ai",
+      "name": "Google AI",
+      "tier": "lab",
+      "type": "feed",
+      "url": "https://blog.google/technology/ai/rss/",
+      "aiOnly": false,
+      "defaultOn": true,
+      "color": "#34A853"
+    },
+    {
+      "id": "nvidia",
+      "name": "NVIDIA",
+      "tier": "lab",
+      "type": "feed",
+      "url": "https://blogs.nvidia.com/feed/",
+      "aiOnly": true,
+      "defaultOn": true,
+      "color": "#76B900"
+    },
+    {
+      "id": "huggingface",
+      "name": "Hugging Face",
+      "tier": "lab",
+      "type": "feed",
+      "url": "https://huggingface.co/blog/feed.xml",
+      "aiOnly": false,
+      "defaultOn": false,
+      "color": "#FFB000"
+    },
+    {
+      "id": "aws-ml",
+      "name": "AWS Machine Learning",
+      "tier": "lab",
+      "type": "feed",
+      "url": "https://aws.amazon.com/blogs/machine-learning/feed/",
+      "aiOnly": false,
+      "defaultOn": false,
+      "color": "#FF9900"
+    },
+    {
+      "id": "mit-tr",
+      "name": "MIT Technology Review",
+      "tier": "press",
+      "type": "feed",
+      "url": "https://www.technologyreview.com/topic/artificial-intelligence/feed",
+      "aiOnly": false,
+      "defaultOn": true,
+      "color": "#A31F34"
+    },
+    {
+      "id": "ars",
+      "name": "Ars Technica",
+      "tier": "press",
+      "type": "feed",
+      "url": "https://arstechnica.com/ai/feed/",
+      "aiOnly": false,
+      "defaultOn": true,
+      "color": "#FF4E00"
+    },
+    {
+      "id": "verge",
+      "name": "The Verge",
+      "tier": "press",
+      "type": "feed",
+      "url": "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml",
+      "aiOnly": false,
+      "defaultOn": true,
+      "color": "#5200FF"
+    },
+    {
+      "id": "techcrunch",
+      "name": "TechCrunch",
+      "tier": "press",
+      "type": "feed",
+      "url": "https://techcrunch.com/category/artificial-intelligence/feed/",
+      "aiOnly": false,
+      "defaultOn": false,
+      "color": "#0A9E01"
+    },
+    {
+      "id": "wired",
+      "name": "WIRED",
+      "tier": "press",
+      "type": "feed",
+      "url": "https://www.wired.com/feed/tag/ai/latest/rss",
+      "aiOnly": false,
+      "defaultOn": false,
+      "color": "#3A3A3C"
+    },
+    {
+      "id": "aitimes",
+      "name": "AI타임스",
+      "tier": "kr",
+      "type": "feed",
+      "url": "https://www.aitimes.com/rss/allArticle.xml",
+      "aiOnly": false,
+      "defaultOn": true,
+      "color": "#0057B8"
+    },
+    {
+      "id": "etnews",
+      "name": "전자신문",
+      "tier": "kr",
+      "type": "feed",
+      "url": "https://www.etnews.com/rss/Section902.xml",
+      "aiOnly": true,
+      "defaultOn": false,
+      "color": "#E60012"
+    }
+  ]
+}

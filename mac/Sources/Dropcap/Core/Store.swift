@@ -128,6 +128,7 @@ enum Store {
     private static var backedUp = false
 
     static func save(_ state: AppState) {
+        var state = state
         // 실행마다 첫 저장 전에 이전 파일을 .bak 으로 남긴다(형식이 바뀌어 일부를 못 읽었을 때 되살릴 수 있게)
         if !backedUp, exists {
             backedUp = true

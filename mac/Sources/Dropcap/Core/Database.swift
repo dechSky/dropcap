@@ -94,7 +94,7 @@ final class Database: @unchecked Sendable {
         queue.sync {
             run("""
             INSERT INTO items(key,json,date,first_seen,category,source,tier,cluster,image) VALUES(?,?,?,?,?,?,?,?,?)
-            ON CONFLICT(key) DO UPDATE SET json=excluded.json, date=COALESCE(excluded.date, items.date),
+            ON CONFLICT(key) DO UPDATE SET json=excluded.json, date=COALESCE(items.date, excluded.date),
               category=excluded.category, cluster=COALESCE(excluded.cluster, items.cluster), image=COALESCE(excluded.image, items.image)
             """, [.text(item.key), .text(String(decoding: json, as: UTF8.self)), .real(when?.timeIntervalSince1970),
                   .real(firstSeen.timeIntervalSince1970), .text(item.category.rawValue), .text(item.sourceId), .text(item.tier),
@@ -114,19 +114,63 @@ final class Database: @unchecked Sendable {
         return found
     }
 
-    // 기사 날짜(없으면 처음 본 때)가 [from, to) 안인 것
-    func items(from: Date, to: Date = .distantFuture, limit: Int = 2000) -> [StoredItem] {
+    // 기사 날짜(없으면 처음 본 때)가 [from, to) 안인 것. articlesOnly 면 기사만(논문·릴리스 등 구독 채널 글 제외), channelsOnly 면 그 반대
+    func items(from: Date, to: Date = .distantFuture, limit: Int = 2000, articlesOnly: Bool = false, channelsOnly: Bool = false) -> [StoredItem] {
         var out: [StoredItem] = []
+        let kind = articlesOnly ? "AND COALESCE(json_extract(json,'$.kind'),'article') = 'article'"
+            : channelsOnly ? "AND COALESCE(json_extract(json,'$.kind'),'article') != 'article'" : ""
         queue.sync {
             run("""
             SELECT json, first_seen, cluster FROM items
-            WHERE COALESCE(date, first_seen) >= ? AND COALESCE(date, first_seen) < ?
+            WHERE COALESCE(date, first_seen) >= ? AND COALESCE(date, first_seen) < ? \(kind)
             ORDER BY COALESCE(date, first_seen) DESC LIMIT ?
             """, [.real(from.timeIntervalSince1970), .real(min(to.timeIntervalSince1970, 4e10)), .int(limit)]) { st in
                 guard let j = Self.text(st, 0), let it = try? Self.decoder.decode(NewsItem.self, from: Data(j.utf8)) else { return }
                 out.append(StoredItem(item: it, firstSeen: Date(timeIntervalSince1970: sqlite3_column_double(st, 1)), cluster: Self.text(st, 2)))
             }
         }
+        return out
+    }
+
+    // key 로 바로 꺼내기(호 그리기·표지 찾기)
+    func items(keys: [String]) -> [StoredItem] {
+        guard !keys.isEmpty else { return [] }
+        var out: [StoredItem] = []
+        for chunk in stride(from: 0, to: keys.count, by: 400).map({ Array(keys[$0..<min($0 + 400, keys.count)]) }) {
+            queue.sync {
+                run("SELECT json, first_seen, cluster FROM items WHERE key IN (\(Array(repeating: "?", count: chunk.count).joined(separator: ",")))",
+                    chunk.map { .text($0) }) { st in
+                    guard let j = Self.text(st, 0), let it = try? Self.decoder.decode(NewsItem.self, from: Data(j.utf8)) else { return }
+                    out.append(StoredItem(item: it, firstSeen: Date(timeIntervalSince1970: sqlite3_column_double(st, 1)), cluster: Self.text(st, 2)))
+                }
+            }
+        }
+        return out
+    }
+
+    func clusterOf(_ key: String) -> String? {
+        var c: String?
+        queue.sync { run("SELECT cluster FROM items WHERE key=?", [.text(key)]) { st in c = Self.text(st, 0) } }
+        return c
+    }
+
+    // 기사마다 '같은 소식을 다룬 출처 수'(스토리 크기). 스토리에 묶이지 않았으면 빠짐
+    func coverage(_ keys: [String]) -> [String: Int] {
+        var out: [String: Int] = [:]
+        guard !keys.isEmpty else { return out }
+        let marks = Array(repeating: "?", count: keys.count).joined(separator: ",")
+        queue.sync {
+            run("SELECT i.key, c.size FROM items i JOIN clusters c ON c.id = i.cluster WHERE i.key IN (\(marks))", keys.map { .text($0) }) { st in
+                if let k = Self.text(st, 0) { out[k] = Int(sqlite3_column_int64(st, 1)) }
+            }
+        }
+        return out
+    }
+
+    // 매거진이 받아 둔 기사 대표 사진(피드에 없어 기사 머리에서 찾은 것 포함)
+    func image(_ key: String) -> String? {
+        var out: String?
+        queue.sync { run("SELECT image FROM items WHERE key=?", [.text(key)]) { st in out = Self.text(st, 0) } }
         return out
     }
 
@@ -144,8 +188,14 @@ final class Database: @unchecked Sendable {
     func search(_ q: String, limit: Int = 200) -> [NewsItem] {
         var out: [NewsItem] = []
         queue.sync {
-            run("SELECT json FROM items WHERE json LIKE ? ESCAPE '\\' ORDER BY COALESCE(date, first_seen) DESC LIMIT ?",
-                [.text("%" + q.replacingOccurrences(of: "%", with: "\\%").replacingOccurrences(of: "_", with: "\\_") + "%"), .int(limit)]) { st in
+            // 제목·한국어 제목·출처·요약에서만(JSON 의 필드 이름이나 주소에 걸리지 않게)
+            let pat = "%" + q.replacingOccurrences(of: "%", with: "\\%").replacingOccurrences(of: "_", with: "\\_") + "%"
+            run("""
+            SELECT json FROM items WHERE
+              json_extract(json,'$.title') LIKE ?1 ESCAPE '\\' OR json_extract(json,'$.titleKo') LIKE ?1 ESCAPE '\\'
+              OR json_extract(json,'$.sourceName') LIKE ?1 ESCAPE '\\' OR json_extract(json,'$.summary') LIKE ?1 ESCAPE '\\'
+            ORDER BY COALESCE(date, first_seen) DESC LIMIT ?2
+            """, [.text(pat), .int(limit)]) { st in
                 if let j = Self.text(st, 0), let it = try? Self.decoder.decode(NewsItem.self, from: Data(j.utf8)) { out.append(it) }
             }
         }
@@ -249,7 +299,7 @@ final class Database: @unchecked Sendable {
         guard let json = try? Self.encoder.encode(issue) else { return }
         queue.sync {
             run("INSERT OR REPLACE INTO issues(id,kind,created,json) VALUES(?,?,?,?)",
-                [.text(issue.id), .text(issue.kind.rawValue), .real(issue.date.timeIntervalSince1970), .text(String(decoding: json, as: UTF8.self))])
+                [.text(issue.id), .text(issue.kind.rawValue), .real(issue.to.timeIntervalSince1970), .text(String(decoding: json, as: UTF8.self))]) // 정렬은 호의 끝 시각
         }
     }
 

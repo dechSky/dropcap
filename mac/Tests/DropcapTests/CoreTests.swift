@@ -3,6 +3,14 @@ import Testing
 @testable import Dropcap
 
 @Suite struct StoryMatchTests {
+    @Test func cachedMeaningDistanceMatchesEmbedding() { // 기억해 둔 벡터로 잰 거리가 NLEmbedding 과 같아야 판정이 그대로다
+        let pairs = [("OpenAI releases GPT-6 model", "OpenAI unveils its GPT-6 model"),
+                     ("Nvidia earnings beat expectations", "EU passes new AI safety law")]
+        for (a, b) in pairs {
+            guard let raw = StoryMatch.rawDistance(a, b), let cached = StoryMatch.meaningDistance(a, b) else { continue }
+            #expect(abs(raw - cached) < 0.01)
+        }
+    }
     @Test func sameStoryDifferentOutlets() {
         let a = StoryMatch.tokens("OpenAI launches GPT-6 with new reasoning features")
         let b = StoryMatch.tokens("GPT-6 launches: OpenAI reveals reasoning features")
@@ -241,5 +249,53 @@ struct URLSafetyDNSTests {
         #expect(md.contains("> _Meta released a new model._"))
         #expect(md.contains("- 메모: 보고서 1장"))
         #expect(md.contains("원제: Meta has new AI models"))
+    }
+}
+
+
+@Suite struct ImageKeyTests {
+    @Test func junkImages() {
+        #expect(ImageKey.isJunk("https://cdn.aitimes.com/image/newsroom/default-user.png"))
+        #expect(ImageKey.isJunk("https://x.com/assets/logo.svg"))
+        #expect(ImageKey.isJunk("https://secure.gravatar.com/avatar/abc?s=96"))
+        #expect(!ImageKey.isJunk("https://cdn.aitimes.com/news/photo/202610/216198_220220_302.jpg"))
+        #expect(!ImageKey.isJunk("https://x.com/wp-content/uploads/2026/10/catalog-hero.jpg"))
+    }
+    @Test func sameImageDifferentSizes() {
+        #expect(ImageKey.same("https://cdn.aitimes.com/news/photo/202610/216199_220221_5549.jpg", "https://cdn.aitimes.com/news/thumbnail/202610/216199_220221_5549_v150.jpg"))
+        #expect(ImageKey.same("https://x.com/wp-content/uploads/2026/10/gpt6-hero-1024x576.png", "https://x.com/wp-content/uploads/2026/10/gpt6-hero.png?w=1200"))
+        #expect(ImageKey.same("https://x.com/a/launch-photo-scaled.jpg", "https://x.com/a/launch-photo.jpg"))
+    }
+    @Test func differentImages() {
+        #expect(!ImageKey.same("https://cdn.aitimes.com/news/photo/202610/216199_220221_5549.jpg", "https://cdn.aitimes.com/news/photo/202610/216199_220222_5550.jpg"))
+        #expect(!ImageKey.same("https://x.com/img/1.jpg", "https://y.com/img/1.jpg")) // 짧은 이름은 주소가 같을 때만 같은 사진
+        #expect(!ImageKey.same("https://x.com/img/a.jpg", "https://x.com/other/a.jpg"))
+    }
+}
+
+
+@Suite struct SiteNameTests {
+    @Test func strips() {
+        #expect(ArticleService.stripSiteName("AI 업무 플랫폼 '팔레트 에이전트' 글로벌 출시 - AI타임스", source: "AI타임스", feedTitle: "x") == "AI 업무 플랫폼 '팔레트 에이전트' 글로벌 출시")
+        #expect(ArticleService.stripSiteName("OpenAI ships GPT-6 | The Verge", source: "The Verge", feedTitle: "x") == "OpenAI ships GPT-6")
+    }
+    @Test func keepsRealDashes() {
+        #expect(ArticleService.stripSiteName("GPT-6 - what changed", source: "The Verge", feedTitle: "x") == "GPT-6 - what changed")
+    }
+}
+
+@Suite struct ImportanceSortTests {
+    private func item(_ id: String, hoursAgo: Double, tier: String = "press") -> NewsItem {
+        NewsItem(id: id, title: id, titleKo: nil, link: "https://x.com/" + id, date: Date().addingTimeInterval(-hoursAgo * 3600), summary: "",
+                 sourceId: "s", sourceName: "S", tier: tier)
+    }
+    @Test func coverageBeatsRecency() { // 여러 곳이 다룬 기사가 방금 나온 단독 기사보다 앞
+        let fresh = item("fresh", hoursAgo: 0.1), big = item("big", hoursAgo: 20), lab = item("lab", hoursAgo: 5, tier: "lab")
+        let out = MenuView.byImportance([fresh, big, lab], coverage: [big.key: 4])
+        #expect(out.map(\.id) == ["big", "lab", "fresh"])
+    }
+    @Test func differsFromNewestWithoutStars() { // ★·외 N곳이 없어도 최신순과 다르게 정렬
+        let a = item("a", hoursAgo: 1), b = item("b", hoursAgo: 30, tier: "lab")
+        #expect(MenuView.byImportance([a, b], coverage: [:]).first?.id == "b")
     }
 }

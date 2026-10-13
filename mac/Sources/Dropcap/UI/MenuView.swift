@@ -8,6 +8,8 @@ struct MenuView: View {
     @State private var query = ""
     @State private var category: NewsCategory?
     @AppStorage("listSort") private var sortRaw = "newest"
+    @AppStorage("listStyle2") private var listStyle = "hero" // 기본: 첫 소식 크게(사용자 선택) · compact · cards · timeline 은 시안 비교용으로 남김
+    var snapshot = false // 시험용: 스크롤 없이 그려 화면 없이 찍을 수 있게
 
     enum Tab: String, CaseIterable { case all = "전체", unread = "안 읽음", saved = "저장" }
     static let listHeight: CGFloat = 400
@@ -25,17 +27,27 @@ struct MenuView: View {
             list = list.filter { "\($0.title) \($0.titleKo ?? "") \($0.sourceName) \($0.summary)".lowercased().contains(q) }
         }
         switch sortRaw {
-        case "important": // 중요 표시 → 여러 곳 보도 → 최신
-            return list.sorted { a, b in
-                let ia = a.important == true ? 1 : 0, ib = b.important == true ? 1 : 0
-                if ia != ib { return ia > ib }
-                let ra = a.related?.count ?? 0, rb = b.related?.count ?? 0
-                if ra != rb { return ra > rb }
-                return (a.date ?? .distantPast) > (b.date ?? .distantPast)
-            }
+        case "important": return Self.byImportance(list, coverage: Magazine.shared.coverage(list))
         case "source": return list.sorted { ($0.sourceName, $1.date ?? .distantPast) < ($1.sourceName, $0.date ?? .distantPast) }
         default: return list.sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
         }
+    }
+
+    // 중요도 점수: 꼭 알림 낱말(★) > 여러 곳이 다룬 정도(스토리 크기·외 N곳) > 공식 발표 > 최근일수록 조금 더
+    // (이전에는 ★와 '외 N곳'만 봐서, 둘 다 없는 날엔 최신순과 똑같았다)
+    static func byImportance(_ list: [NewsItem], coverage: [String: Int], now: Date = Date()) -> [NewsItem] {
+        func score(_ it: NewsItem) -> Double {
+            let outlets = max(coverage[it.key] ?? 1, (it.related?.count ?? 0) + 1)
+            let hours = max(0, now.timeIntervalSince(it.date ?? now) / 3600)
+            return (it.important == true ? 100 : 0) + Double(outlets - 1) * 12 + (it.tier == "lab" ? 8 : 0) + 6 * exp(-hours / 12)
+        }
+        return list.map { ($0, score($0)) }.sorted { a, b in
+            a.1 != b.1 ? a.1 > b.1 : (a.0.date ?? .distantPast) > (b.0.date ?? .distantPast)
+        }.map(\.0)
+    }
+
+    private var sortLabel: String? {
+        switch sortRaw { case "important": return "중요순"; case "source": return "출처별"; default: return nil }
     }
 
     var body: some View {
@@ -77,7 +89,15 @@ struct MenuView: View {
                         Label("출처별", systemImage: "building.2").tag("source")
                     }
                     .pickerStyle(.inline)
-                } label: { Image(systemName: "arrow.up.arrow.down").font(.app(11)).foregroundStyle(.secondary) }
+                } label: {
+                    // 지금 정렬이 무엇인지 보이게(최신순이 아닐 때는 이름까지)
+                    HStack(spacing: 3) {
+                        Image(systemName: sortRaw == "important" ? "star" : sortRaw == "source" ? "building.2" : "arrow.up.arrow.down")
+                        if let l = sortLabel { Text(l).lineLimit(1) }
+                    }
+                    .font(.app(11, sortLabel == nil ? .regular : .semibold))
+                    .foregroundStyle(sortLabel == nil ? Color.secondary : Color.accentColor)
+                }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("정렬")
             }
             .padding(.horizontal, 9).padding(.vertical, 5)
@@ -89,14 +109,68 @@ struct MenuView: View {
                 if items.isEmpty {
                     empty.frame(maxHeight: .infinity)
                 } else {
+                    if snapshot {
+                        VStack(spacing: 2) {
+                            let list = items
+                            ForEach(Array(list.enumerated()), id: \.element.id) { i, it in
+                                // 출처별일 때는 출처가 바뀌는 곳에 이름표
+                                if sortRaw == "source", i == 0 || list[i - 1].sourceName != it.sourceName {
+                                    HStack(spacing: 6) {
+                                        Text(it.sourceName).font(.app(11, .bold))
+                                        Text("\(list.filter { $0.sourceName == it.sourceName }.count)").font(.app(10.5)).foregroundStyle(.tertiary)
+                                        Spacer()
+                                    }
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 8).padding(.top, i == 0 ? 2 : 10).padding(.bottom, 2)
+                                }
+                                if listStyle != "compact", sortRaw != "source", let label = MenuStyles.timeSection(it, prev: i > 0 ? list[i - 1] : nil), !(listStyle == "hero" && i == 0) {
+                                    MenuStyles.SectionLabel(text: label, first: i == 0 || (listStyle == "hero" && i == 1))
+                                }
+                                Group {
+                                    switch listStyle {
+                                    case "cards": MenuStyles.CardRow(item: it, read: model.isRead(it), saved: model.isSaved(it)) { model.open(it) }
+                                    case "hero" where i == 0: MenuStyles.HeroCard(item: it, read: model.isRead(it)) { model.open(it) }
+                                    case "hero": MenuStyles.CardRow(item: it, read: model.isRead(it), saved: model.isSaved(it), compact: true) { model.open(it) }
+                                    case "timeline": MenuStyles.TimelineRow(item: it, read: model.isRead(it), last: i == list.count - 1) { model.open(it) }
+                                    default: Row(item: it, read: model.isRead(it), saved: model.isSaved(it)) { model.open(it) }
+                                    }
+                                }
+                                .contextMenu { menu(for: it) }
+                            }
+                        }
+                        .padding(6).frame(height: Self.listHeight, alignment: .top).clipped()
+                    } else {
                     ScrollView {
                         LazyVStack(spacing: 2) {
-                            ForEach(items) { it in
-                                Row(item: it, read: model.isRead(it), saved: model.isSaved(it)) { model.open(it) }
-                                    .contextMenu { menu(for: it) }
+                            let list = items
+                            ForEach(Array(list.enumerated()), id: \.element.id) { i, it in
+                                // 출처별일 때는 출처가 바뀌는 곳에 이름표
+                                if sortRaw == "source", i == 0 || list[i - 1].sourceName != it.sourceName {
+                                    HStack(spacing: 6) {
+                                        Text(it.sourceName).font(.app(11, .bold))
+                                        Text("\(list.filter { $0.sourceName == it.sourceName }.count)").font(.app(10.5)).foregroundStyle(.tertiary)
+                                        Spacer()
+                                    }
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 8).padding(.top, i == 0 ? 2 : 10).padding(.bottom, 2)
+                                }
+                                if listStyle != "compact", sortRaw != "source", let label = MenuStyles.timeSection(it, prev: i > 0 ? list[i - 1] : nil), !(listStyle == "hero" && i == 0) {
+                                    MenuStyles.SectionLabel(text: label, first: i == 0 || (listStyle == "hero" && i == 1))
+                                }
+                                Group {
+                                    switch listStyle {
+                                    case "cards": MenuStyles.CardRow(item: it, read: model.isRead(it), saved: model.isSaved(it)) { model.open(it) }
+                                    case "hero" where i == 0: MenuStyles.HeroCard(item: it, read: model.isRead(it)) { model.open(it) }
+                                    case "hero": MenuStyles.CardRow(item: it, read: model.isRead(it), saved: model.isSaved(it), compact: true) { model.open(it) }
+                                    case "timeline": MenuStyles.TimelineRow(item: it, read: model.isRead(it), last: i == list.count - 1) { model.open(it) }
+                                    default: Row(item: it, read: model.isRead(it), saved: model.isSaved(it)) { model.open(it) }
+                                    }
+                                }
+                                .contextMenu { menu(for: it) }
                             }
                         }
                         .padding(6)
+                    }
                     }
                 }
             }
@@ -125,10 +199,10 @@ struct MenuView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline) {
+        HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    Text("AI 소식").font(.app(15, .bold))
+                    Text("Dropcap").font(.app(16, .heavy)).tracking(-0.3)
                     if model.isQuietTime {
                         Label("방해 금지", systemImage: "moon.fill").labelStyle(.iconOnly)
                             .font(.app(11)).foregroundStyle(.indigo).help("방해 금지 시간이라 알림을 띄우지 않습니다")
@@ -136,8 +210,10 @@ struct MenuView: View {
                 }
                 Text(model.checking ? "확인하는 중…" : "마지막 확인 \(AppModel.clock(model.state.lastCheck))")
                     .font(.app(11)).foregroundStyle(.secondary).monospacedDigit()
+                    .lineLimit(1).fixedSize()
             }
-            Spacer()
+            .layoutPriority(1)
+            Spacer(minLength: 8)
             Menu {
                 if model.isSnoozed {
                     Button("다시 알림 켜기") { model.snooze(nil) }
@@ -241,6 +317,7 @@ private struct Row: View {
                     .font(.app(11)).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
+                RowThumb(item: item).opacity(read ? 0.6 : 1)
                 if !read {
                     Circle().fill(item.accent).frame(width: 7, height: 7).padding(.top, 6)
                 }
@@ -251,6 +328,41 @@ private struct Row: View {
         }
         .buttonStyle(.plain)
         .onHover { hover = $0 }
+    }
+}
+
+// 목록 줄의 작은 사진: 피드 사진, 없으면 매거진이 기사 머리에서 찾아 둔 대표 사진. 사진이 없으면 자리를 차지하지 않는다
+struct RowThumb: View {
+    let item: NewsItem
+    var width: CGFloat = 56
+    var height: CGFloat = 42
+    var radius: CGFloat = 7
+    var placeholder = false     // 사진이 없을 때 분야 색 자리 표시
+    @State private var image: NSImage?
+    @MainActor static var preloaded: [String: NSImage] = [:] // 시험용: 화면 없이 찍을 때 미리 받아 둔 사진
+
+    var body: some View {
+        Group {
+            if let image = image ?? Self.preloaded[item.key] {
+                Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
+                    .frame(width: width, height: height)
+                    .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(.primary.opacity(0.08), lineWidth: 0.5))
+                    .transition(.opacity)
+            } else if placeholder {
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .fill(LinearGradient(colors: [item.accent.opacity(0.35), item.category.color.opacity(0.18)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .overlay(Text(item.initial).font(.app(height * 0.38, .heavy)).foregroundStyle(.white.opacity(0.85)))
+                    .frame(width: width, height: height)
+            } else {
+                Color.clear.frame(width: 0, height: height)
+            }
+        }
+        .task(id: item.key) {
+            let url = [item.image, Magazine.shared.storedImage(item.key)].compactMap { $0 }.first { !ImageKey.isJunk($0) }
+            guard let url, let img = await ImageLoader.shared.image(url), !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.25)) { image = img }
+        }
     }
 }
 

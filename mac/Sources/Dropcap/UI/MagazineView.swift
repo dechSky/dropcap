@@ -12,7 +12,7 @@ struct MagazineView: View {
     @ObservedObject private var mag = Magazine.shared
     @ObservedObject private var app = AppModel.shared
     @ObservedObject private var book = Scrapbook.shared
-    @State private var page: Page = ProcessInfo.processInfo.environment["DROPCAP_TEST_MAG_PAGE"] == "scrapbook" ? .scrapbook : .today
+    @State private var page: Page = MagazineController.pendingPage ?? (ProcessInfo.processInfo.environment["DROPCAP_TEST_MAG_PAGE"] == "scrapbook" ? .scrapbook : .today)
     @State private var turn = 0   // 넘긴 방향(+1 다음, -1 이전) — 책장 넘김 방향
 
     var body: some View {
@@ -49,6 +49,7 @@ struct MagazineView: View {
             .clipped()
         }
         .frame(minWidth: 860, minHeight: 620)
+        .onReceive(NotificationCenter.default.publisher(for: .magazineGo)) { n in if let p = n.object as? Page { go(p) } }
         .background {
             Group {
                 Button("") { go(.today) }.keyboardShortcut("1", modifiers: .command)
@@ -91,7 +92,7 @@ struct MagazineView: View {
         case .story: return 3
         case .saved: return 4
         case .scrapbook: return 5
-        case .search: return 6
+        case .search: return 7
         case .issue(let i): return 100 + (mag.archive.firstIndex(of: i) ?? 0)
         }
     }
@@ -171,7 +172,7 @@ struct IssueView: View {
                         }
                         ForEach(Array(d.sections.enumerated()), id: \.element.section.id) { si, sec in
                             SectionBlock(section: sec.section, items: (MagSort(rawValue: sortRaw) ?? .recommended).apply(sec.items),
-                                         issue: d.issue, index: si, onStory: onStory)
+                                         issue: d.issue, index: si, onStory: onStory, clusters: d.clusters)
                                 .padding(.top, 38)
                         }
                         Text("기사 저작권은 각 언론사·기업에 있습니다. 제목·요약·사진은 원문으로 이어 주기 위한 것입니다.")
@@ -233,7 +234,7 @@ private struct Masthead: View {
                     Text("ROPCAP").font(.system(size: 13, weight: .heavy, design: .serif)).tracking(2.2)
                 }
                 .foregroundStyle(.primary)
-                Text("AI 매거진").font(.app(11.5, .medium)).foregroundStyle(.secondary)
+                Text("매거진").font(.app(11.5, .medium)).foregroundStyle(.secondary)
                 if live {
                     Text("발행 중").font(.app(10.5, .bold)).foregroundStyle(.white)
                         .padding(.horizontal, 7).padding(.vertical, 2)
@@ -290,40 +291,47 @@ private struct CoverStory: View {
     @State private var frame: CGRect = .zero
 
     private var item: NewsItem { stored.item }
+    // 사진이 없으면 사진 자리를 만들지 않고 글자 표지로(지어낸 그림은 쓰지 않음)
+    private var hasPhoto: Bool { item.image != nil && !ImageKey.isJunk(item.image) }
+    private var ink: Color { hasPhoto ? .white : .primary }
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            // 켄 번스: 표지 사진이 아주 천천히 다가오며 흐른다
-            RemoteImage(url: item.image, category: item.category, accent: item.accent)
-                .scaleEffect(drift ? 1.12 : 1.0)
-                .offset(x: drift ? -22 : 8, y: drift ? -10 : 4)
-                .frame(height: 400)
-                .clipped()
-            LinearGradient(stops: [.init(color: .clear, location: 0.25), .init(color: .black.opacity(0.82), location: 1)],
-                           startPoint: .top, endPoint: .bottom)
+            if hasPhoto {
+                // 켄 번스: 표지 사진이 아주 천천히 다가오며 흐른다
+                RemoteImage(url: item.image, category: item.category, accent: item.accent)
+                    .scaleEffect(drift ? 1.12 : 1.0)
+                    .offset(x: drift ? -22 : 8, y: drift ? -10 : 4)
+                    .frame(height: 400)
+                    .clipped()
+                LinearGradient(stops: [.init(color: .clear, location: 0.25), .init(color: .black.opacity(0.82), location: 1)],
+                               startPoint: .top, endPoint: .bottom)
+            } else {
+                RoundedRectangle(cornerRadius: 22, style: .continuous).fill(.primary.opacity(0.045))
+            }
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
                     Text("표지").font(.app(11, .heavy)).tracking(1.5)
                         .padding(.horizontal, 7).padding(.vertical, 3)
-                        .background(.white, in: RoundedRectangle(cornerRadius: 4))
-                        .foregroundStyle(.black)
+                        .background(ink, in: RoundedRectangle(cornerRadius: 4))
+                        .foregroundStyle(hasPhoto ? Color.black : Color(nsColor: .textBackgroundColor))
                     Label(item.category.label, systemImage: item.category.symbol).font(.app(12, .semibold))
                     Text("\(item.sourceName) · \(RelativeTime.string(item.date))").font(.app(12))
                 }
-                .foregroundStyle(.white.opacity(0.9))
+                .foregroundStyle(ink.opacity(0.9))
                 Text(item.displayTitle)
                     .font(.display(34, .bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(ink)
                     .lineLimit(3)
-                    .shadow(color: .black.opacity(0.3), radius: 8, y: 2)
+                    .shadow(color: .black.opacity(hasPhoto ? 0.3 : 0), radius: 8, y: 2)
                 if item.titleKo != nil, item.titleKo != item.title {
-                    Text(item.title).font(.app(13)).foregroundStyle(.white.opacity(0.7)).lineLimit(1)
+                    Text(item.title).font(.app(13)).foregroundStyle(ink.opacity(0.7)).lineLimit(1)
                 }
                 HStack(spacing: 10) {
                     Button { ReaderController.open(item, from: frame) ; AppModel.shared.markOpened(item) } label: {
                         Label("기사 읽기", systemImage: "book").font(.app(13, .semibold))
                             .padding(.horizontal, 14).padding(.vertical, 8)
-                            .background(.white, in: Capsule()).foregroundStyle(.black)
+                            .background(ink, in: Capsule()).foregroundStyle(hasPhoto ? Color.black : Color(nsColor: .textBackgroundColor))
                     }
                     .buttonStyle(.plain)
                     if let c = stored.cluster, (Magazine.shared.cluster(c)?.size ?? 1) >= 2 {
@@ -331,8 +339,8 @@ private struct CoverStory: View {
                             Label("여러 시각 \(Magazine.shared.cluster(c)?.size ?? 2)곳", systemImage: "rectangle.split.3x1")
                                 .font(.app(13, .semibold))
                                 .padding(.horizontal, 14).padding(.vertical, 8)
-                                .background(.white.opacity(0.18), in: Capsule()).foregroundStyle(.white)
-                                .overlay(Capsule().strokeBorder(.white.opacity(0.4), lineWidth: 0.5))
+                                .background(ink.opacity(0.12), in: Capsule()).foregroundStyle(ink)
+                                .overlay(Capsule().strokeBorder(ink.opacity(0.35), lineWidth: 0.5))
                         }
                         .buttonStyle(.plain)
                     }
@@ -341,7 +349,7 @@ private struct CoverStory: View {
             }
             .padding(30)
         }
-        .frame(height: 400)
+        .frame(height: hasPhoto ? 400 : nil)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .shadow(color: .black.opacity(hover ? 0.28 : 0.16), radius: hover ? 26 : 16, y: hover ? 14 : 8)
         .scaleEffect(hover ? 1.006 : 1)
@@ -361,6 +369,7 @@ private struct SectionBlock: View {
     let issue: Issue
     let index: Int
     let onStory: (String) -> Void
+    var clusters: [String: String] = [:]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -373,7 +382,7 @@ private struct SectionBlock: View {
             .padding(.horizontal, 36)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 230, maximum: 360), spacing: 18)], alignment: .leading, spacing: 22) {
                 ForEach(Array(items.enumerated()), id: \.element.key) { i, it in
-                    StoryCard(item: it, issue: issue, order: i, onStory: onStory)
+                    StoryCard(item: it, issue: issue, order: i, onStory: onStory, clusterID: clusters[it.key])
                 }
             }
             .padding(.horizontal, 28)
@@ -386,6 +395,7 @@ struct StoryCard: View {
     var issue: Issue?
     var order: Int = 0
     var onStory: ((String) -> Void)?
+    var clusterID: String?
     @State private var hover = false
     @State private var tilt: CGSize = .zero
     @State private var shown = false
@@ -397,7 +407,8 @@ struct StoryCard: View {
             ReaderController.open(item, from: frame)
         } label: {
             VStack(alignment: .leading, spacing: 0) {
-                // 마우스를 따라 사진이 살짝 움직이는 시차 효과
+                // 마우스를 따라 사진이 살짝 움직이는 시차 효과(사진이 없으면 사진 자리 없이 글만)
+                if item.image != nil && !ImageKey.isJunk(item.image) {
                 RemoteImage(url: item.image, category: item.category, accent: item.accent)
                     .scaleEffect(hover ? 1.08 : 1.0)
                     .offset(x: tilt.width * 8, y: tilt.height * 6)
@@ -416,6 +427,7 @@ struct StoryCard: View {
                     .overlay(alignment: .topLeading) {
                         if item.itemKind != .article { KindBadge(kind: item.itemKind).background(.thinMaterial, in: RoundedRectangle(cornerRadius: 5)).padding(8) }
                     }
+                }
                 VStack(alignment: .leading, spacing: 7) {
                     HStack(spacing: 6) {
                         if item.important == true { Image(systemName: "star.fill").foregroundStyle(.orange).font(.app(10)) }
@@ -456,7 +468,7 @@ struct StoryCard: View {
         .animation(.interactiveSpring(response: 0.3, dampingFraction: 0.8), value: tilt)
         .contextMenu {
             Button(AppModel.shared.isSaved(item) ? "저장 취소" : "나중에 읽기") { AppModel.shared.toggleSaved(item) }
-            if let issue, let c = Magazine.shared.clusterID(of: item.key, near: issue), let onStory {
+            if let c = clusterID, let onStory {
                 Button("여러 시각 보기") { onStory(c) }
             }
             Button("브라우저에서 열기") { ExternalLink.open(item.link) }
@@ -656,7 +668,11 @@ struct SearchView: View {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                     TextField("모든 기록에서 제목·출처·요약 검색", text: $q).textFieldStyle(.plain).font(.app(15))
                         .onSubmit { results = Magazine.shared.search(q) }
-                        .onChange(of: q) { _, v in if v.count >= 2 { results = Magazine.shared.search(v) } else if v.isEmpty { results = [] } }
+                        .task(id: q) { // 입력이 멈추면(0.25초) 찾는다
+                            guard q.count >= 2 else { if q.isEmpty { results = [] }; return }
+                            try? await Task.sleep(for: .milliseconds(250))
+                            if !Task.isCancelled { results = Magazine.shared.search(q) }
+                        }
                 }
                 .padding(12)
                 .background(.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -683,6 +699,13 @@ private struct Stagger: ViewModifier {
 @MainActor
 enum MagazineController {
     private static var window: NSWindow?
+    static var pendingPage: MagazineView.Page?
+
+    static func open(page: MagazineView.Page) {
+        pendingPage = page
+        if window != nil { NotificationCenter.default.post(name: .magazineGo, object: page) }
+        open()
+    }
 
     static func open() {
         NSApp.setActivationPolicy(.regular) // 매거진을 여는 동안은 Dock 에 보인다
@@ -711,6 +734,7 @@ enum MagazineController {
         }
         NSApp.activate(ignoringOtherApps: true)
         w.makeKeyAndOrderFront(nil)
+        pendingPage = nil
     }
 }
 
@@ -735,12 +759,15 @@ enum MagSort: String, CaseIterable {
         }
     }
     // 추천순은 편집 순서(점수) 그대로
-    func apply(_ items: [NewsItem]) -> [NewsItem] {
+    @MainActor func apply(_ items: [NewsItem]) -> [NewsItem] {
         switch self {
         case .recommended: return items
         case .newest: return items.sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
-        case .coverage: return items.enumerated().sorted { a, b in
-                let ca = a.element.related?.count ?? 0, cb = b.element.related?.count ?? 0
+        case .coverage: // 같은 소식을 다룬 출처 수(스토리 크기)로. '외 N곳'만 보던 때는 거의 다 0이라 효과가 없었다
+            let cov = Magazine.shared.coverage(items)
+            return items.enumerated().sorted { a, b in
+                let ca = max(cov[a.element.key] ?? 1, (a.element.related?.count ?? 0) + 1)
+                let cb = max(cov[b.element.key] ?? 1, (b.element.related?.count ?? 0) + 1)
                 return ca != cb ? ca > cb : a.offset < b.offset
             }.map(\.element)
         case .source: return items.sorted { ($0.sourceName, $1.date ?? .distantPast) < ($1.sourceName, $0.date ?? .distantPast) }
@@ -839,12 +866,12 @@ struct ScrapbookView: View {
         }
         .alert("새 스크랩 폴더", isPresented: $creating) {
             TextField("폴더 이름", text: $newName)
-            Button("만들기") { book.createCollection(newName); folder = newName.trimmingCharacters(in: .whitespaces); newName = "" }
+            Button("만들기") { if book.createCollection(newName) { folder = newName.trimmingCharacters(in: .whitespaces) }; newName = "" }
             Button("취소", role: .cancel) { newName = "" }
         }
         .alert("폴더 이름 바꾸기", isPresented: $renaming) {
             TextField("폴더 이름", text: $newName)
-            Button("바꾸기") { book.rename(folder, to: newName); folder = newName.trimmingCharacters(in: .whitespaces); newName = "" }
+            Button("바꾸기") { if book.rename(folder, to: newName) { folder = newName.trimmingCharacters(in: .whitespaces) }; newName = "" }
             Button("취소", role: .cancel) { newName = "" }
         }
     }
@@ -862,8 +889,10 @@ private struct ScrapGroupCard: View {
                 ReaderController.open(item, from: frame)
             } label: {
                 HStack(alignment: .top, spacing: 12) {
-                    RemoteImage(url: item.image, category: item.category, accent: item.accent)
-                        .frame(width: 84, height: 56).clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    if item.image != nil && !ImageKey.isJunk(item.image) {
+                        RemoteImage(url: item.image, category: item.category, accent: item.accent)
+                            .frame(width: 84, height: 56).clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    }
                     VStack(alignment: .leading, spacing: 4) {
                         Text(item.displayTitle).font(.display(16, .semibold)).multilineTextAlignment(.leading)
                         Text("\(item.sourceName) · \(RelativeTime.string(item.date))").font(.app(12)).foregroundStyle(.secondary)
@@ -884,7 +913,8 @@ private struct ScrapGroupCard: View {
 }
 
 private struct ScrapRow: View {
-    @State var scrap: Scrap
+    let scrap: Scrap
+    @State private var memo = ""
     @State private var hover = false
     @FocusState private var editing: Bool
 
@@ -904,15 +934,17 @@ private struct ScrapRow: View {
             }
             HStack(spacing: 8) {
                 Image(systemName: "pencil").font(.app(11)).foregroundStyle(.tertiary)
-                TextField("메모 남기기", text: $scrap.memo, axis: .vertical)
+                TextField("메모 남기기", text: $memo, axis: .vertical)
                     .textFieldStyle(.plain).font(.app(13))
                     .focused($editing)
-                    .onSubmit { Scrapbook.shared.update(scrap) }
-                    .onChange(of: editing) { _, now in if !now { Scrapbook.shared.update(scrap) } }
+                    .onSubmit { saveMemo() }
+                    .onChange(of: editing) { _, now in if !now { saveMemo() } }
+                    .onAppear { memo = scrap.memo }
+                    .onChange(of: scrap.memo) { _, v in if !editing { memo = v } }
                 Spacer()
                 Menu {
                     ForEach(Scrapbook.shared.collections.filter { $0 != scrap.collection }, id: \.self) { c in
-                        Button("‘\(c)’로 옮기기") { scrap.collection = c; Scrapbook.shared.update(scrap) }
+                        Button("‘\(c)’로 옮기기") { var n = scrap; n.collection = c; n.memo = memo; Scrapbook.shared.update(n) }
                     }
                     Divider()
                     Button("스크랩 지우기", role: .destructive) { withAnimation { Scrapbook.shared.remove(scrap) } }
@@ -924,6 +956,13 @@ private struct ScrapRow: View {
         .padding(.vertical, 4)
         .onHover { hover = $0 }
     }
+
+    private func saveMemo() {
+        guard memo != scrap.memo else { return }
+        var n = scrap
+        n.memo = memo
+        Scrapbook.shared.update(n)
+    }
 }
 
 private struct StaggerIn: ViewModifier {
@@ -934,3 +973,6 @@ private struct StaggerIn: ViewModifier {
             .onAppear { withAnimation(.spring(response: 0.5, dampingFraction: 0.86).delay(min(Double(index) * 0.05, 0.4))) { on = true } }
     }
 }
+
+
+extension Notification.Name { static let magazineGo = Notification.Name("dropcap.magazineGo") }

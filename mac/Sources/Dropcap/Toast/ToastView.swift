@@ -280,7 +280,7 @@ struct ToastView: View {
             .padding(EdgeInsets(top: 12, leading: 13, bottom: 12, trailing: 16))
         case .more(let n):
             HStack(spacing: 4) {
-                Text("AI 소식")
+                Text("새 소식")
                 Text("\(n)건").foregroundStyle(Color.accentColor)
                 Text("더 · 상단바 아이콘에서 확인")
             }

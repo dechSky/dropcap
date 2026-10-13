@@ -51,6 +51,7 @@ final class ArticleService {
     // interactive: 사용자가 연 기사(스크립트가 필요한 사이트도 띄움). 미리 받기는 false — 스크립트 없이 빠른 길만.
     @discardableResult
     func prepare(_ item: NewsItem, interactive: Bool = true) async -> PreparedArticle {
+        if let t = inflight[item.link], let c = cached(item.link), c.summarizing { return await t.value } // 요약까지 기다림
         if let c = cached(item.link) { return c }
         if let t = inflight[item.link] {
             let r = await t.value
@@ -102,7 +103,7 @@ final class ArticleService {
             return a
         }
         NSLog("[기사] 그림 %d개", art.blocks.filter { $0.type == .img }.count)
-        let artTitle = art.title?.nonEmpty ?? item.title
+        let artTitle = ArticleService.stripSiteName(art.title?.nonEmpty ?? item.title, source: item.sourceName, feedTitle: item.title)
         a.originalTitle = artTitle
         a.blocks = art.blocks
         let texts = art.blocks.compactMap(\.text)
@@ -165,5 +166,20 @@ final class ArticleService {
         // 저장한 기사는 오프라인으로 읽을 수 있게 지우지 않는다
         let pinned = Set(AppModel.shared.state.saved.map { file($0.link).lastPathComponent })
         sorted.filter { !pinned.contains($0.lastPathComponent) }.prefix(files.count - diskLimit).forEach { try? fm.removeItem(at: $0) }
+    }
+}
+
+extension ArticleService {
+    // 웹 문서 제목 끝의 사이트 이름(" - AI타임스", " | The Verge")은 출처가 이미 위에 보이므로 뗀다
+    nonisolated static func stripSiteName(_ title: String, source: String, feedTitle: String) -> String {
+        let norm: (String) -> String = { $0.lowercased().filter { $0.isLetter || $0.isNumber } }
+        for sep in [" - ", " | ", " – ", " — ", " :: ", " · "] {
+            guard let r = title.range(of: sep, options: .backwards) else { continue }
+            let head = String(title[..<r.lowerBound]).trimmingCharacters(in: .whitespaces)
+            let tail = String(title[r.upperBound...]).trimmingCharacters(in: .whitespaces)
+            guard !head.isEmpty else { continue }
+            if norm(tail) == norm(source) || norm(head) == norm(feedTitle) || (!norm(source).isEmpty && norm(tail).contains(norm(source))) { return head }
+        }
+        return title
     }
 }

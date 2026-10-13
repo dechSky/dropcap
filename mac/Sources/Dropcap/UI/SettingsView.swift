@@ -167,7 +167,8 @@ struct SettingsView: View {
             if model.isSubscribed(s) {
                 Label("구독 중", systemImage: "checkmark.circle.fill").foregroundStyle(.green).labelStyle(.titleAndIcon).font(.caption)
             } else {
-                Button("구독") { Task { addError = await model.subscribe(s) } }.controlSize(.small)
+                Button(model.subscribing.contains(s.url) ? "확인 중…" : "구독") { Task { addError = await model.subscribe(s) } }
+                    .controlSize(.small).disabled(model.subscribing.contains(s.url))
             }
         }
     }
@@ -209,7 +210,7 @@ extension SettingsView {
             }
             Section("단축키") {
                 LabeledContent("가장 최근 안 읽은 소식 열기") { Text("⌥⌘N").monospaced().foregroundStyle(.secondary) }
-                LabeledContent("AI 매거진 열기") { Text("⌥⌘M").monospaced().foregroundStyle(.secondary) }
+                LabeledContent("매거진 열기") { Text("⌥⌘M").monospaced().foregroundStyle(.secondary) }
             }
             Section("같은 소식 묶기") {
                 Text("여러 곳이 같은 소식을 다루면 한 번만 알리고 \"외 N곳\"으로 표시합니다. 공식 발표를 먼저 고릅니다.")

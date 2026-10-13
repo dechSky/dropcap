@@ -15,6 +15,7 @@ final class ReaderModel: ObservableObject {
     @Published var keyPoints: [String]?  // 3줄 요약
     @Published var summarizing = false
     @Published var engine = ""
+    @Published var cover: String?        // 표지 사진(피드 → 매거진 기록 → 기사 머리 대표 사진)
     private var token: UUID?
 
     init(item: NewsItem) {
@@ -24,8 +25,9 @@ final class ReaderModel: ObservableObject {
     }
 
     func load() async {
+        Task { await findCover() }
         let svc = ArticleService.shared
-        if let c = svc.cached(item.link) { apply(c); return }
+        if let c = svc.cached(item.link) { apply(c); if !c.summarizing { return } }
         token = svc.observe(item.link) { [weak self] a in self?.apply(a) }
         let a = await svc.prepare(item)
         apply(a)
@@ -33,8 +35,8 @@ final class ReaderModel: ObservableObject {
     }
 
     private func apply(_ a: PreparedArticle) {
-        title = a.title
-        originalTitle = a.originalTitle
+        title = ArticleService.stripSiteName(a.title, source: item.sourceName, feedTitle: item.title) // 예전에 저장한 기사에도 적용
+        originalTitle = ArticleService.stripSiteName(a.originalTitle, source: item.sourceName, feedTitle: item.title)
         translated = a.translated
         engine = a.engine
         keyPoints = a.summary
@@ -49,6 +51,15 @@ final class ReaderModel: ObservableObject {
         case .failed: next = .failed
         }
         if next != phase { withAnimation(.easeOut(duration: 0.3)) { phase = next } }
+    }
+
+    // 상단바 목록의 기사 정보에는 대표 사진이 비어 있을 수 있다(매거진만 기사 머리에서 찾아 둠).
+    // 그때 본문의 첫 그림(기자 프로필 등)을 표지로 쓰던 문제가 있어, 대표 사진을 먼저 찾는다.
+    private func findCover() async {
+        if let i = item.image, !ImageKey.isJunk(i) { cover = i; return }
+        if let s = Magazine.shared.storedImage(item.key), !ImageKey.isJunk(s) { cover = s; return }
+        guard !item.link.isEmpty, let og = await FeedService.shared.ogImage(item.link), !ImageKey.isJunk(og) else { return }
+        withAnimation(.easeOut(duration: 0.3)) { cover = og }
     }
 
     var translatedPageURL: URL? {
@@ -67,6 +78,7 @@ struct ReaderView: View {
     @StateObject private var speaker = Speaker()
     @ObservedObject private var scrapbook = Scrapbook.shared
     @State private var scrapFlash = false
+    @State private var linkCopied = false
     @State private var newFolder = false
     @State private var folderName = ""
     @State private var scrapToast: String?
@@ -149,6 +161,14 @@ struct ReaderView: View {
                 }
                 .help(app.isSaved(model.item) ? "저장 취소" : "나중에 읽기로 저장")
                 Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(model.item.link, forType: .string)
+                    withAnimation(.spring(response: 0.3)) { linkCopied = true }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { withAnimation(.easeOut(duration: 0.25)) { linkCopied = false } }
+                } label: { Label("기사 주소 복사", systemImage: linkCopied ? "checkmark" : "link") }
+                .keyboardShortcut("c", modifiers: [.command, .shift])
+                .help("기사 주소 복사 (⌘⇧C)")
+                Button {
                     ExternalLink.open(model.item.link)
                 } label: { Label("브라우저에서 열기", systemImage: "safari") }
                 .help("원문을 브라우저에서 열기")
@@ -159,6 +179,17 @@ struct ReaderView: View {
         .onDisappear { speaker.stop() }
         .background {
             Button("") { scrapSelection() }.keyboardShortcut("s", modifiers: [.command, .shift]).opacity(0).allowsHitTesting(false)
+        }
+        .overlay(alignment: .bottom) {
+            if linkCopied {
+                Label("기사 주소를 복사했어요", systemImage: "link")
+                    .font(.app(12.5, .semibold))
+                    .padding(.horizontal, 14).padding(.vertical, 8)
+                    .background(.regularMaterial, in: Capsule())
+                    .shadow(color: .black.opacity(0.15), radius: 8, y: 3)
+                    .padding(.bottom, 20)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
         .overlay(alignment: .bottom) {
             if let msg = scrapToast {
@@ -174,8 +205,11 @@ struct ReaderView: View {
         .alert("새 스크랩 폴더", isPresented: $newFolder) {
             TextField("폴더 이름", text: $folderName)
             Button("스크랩") {
-                scrapbook.createCollection(folderName)
-                scrapbook.add(model.item, to: folderName.trimmingCharacters(in: .whitespaces))
+                let n = folderName.trimmingCharacters(in: .whitespaces)
+                if !n.isEmpty {
+                    scrapbook.createCollection(n)
+                    scrapbook.add(model.item, to: n)
+                }
                 folderName = ""
             }
             Button("취소", role: .cancel) { folderName = "" }
@@ -192,9 +226,12 @@ struct ReaderView: View {
         } ?? []
         let before = pb.changeCount
         NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
-        let picked = pb.changeCount != before ? pb.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) : nil
-        pb.clearContents()
-        if !saved.isEmpty { pb.writeObjects(saved) }
+        let changed = pb.changeCount != before
+        let picked = changed ? pb.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) : nil
+        if changed { // 복사가 일어났을 때만 원래 클립보드로 되돌린다
+            pb.clearContents()
+            if !saved.isEmpty { pb.writeObjects(saved) }
+        }
         guard let text = picked, !text.isEmpty else {
             flash("먼저 스크랩할 글을 끌어서 고르세요")
             return
@@ -252,13 +289,15 @@ struct ReaderView: View {
     }
 
     // 표지: 피드의 대표 사진, 없으면 본문의 첫 사진(본문에서는 그 사진을 다시 싣지 않음)
-    private var coverURL: String? { model.item.image ?? model.blocks.first { $0.type == .img }?.src }
+    private var coverURL: String? { model.cover ?? model.blocks.first { $0.type == .img && !ImageKey.isJunk($0.src) }?.src }
 
     @ViewBuilder private var cover: some View {
-        if let url = coverURL {
-            CoverImage(url: url, accent: model.item.accent, category: model.item.category)
-                .padding(.bottom, 22)
+        Group {
+            if let url = coverURL {
+                CoverImage(url: url, accent: model.item.accent, category: model.item.category, seed: model.item.key, source: model.item.sourceName)
+            }
         }
+        .padding(.bottom, 22)
     }
 
     private var header: some View {
@@ -296,11 +335,13 @@ struct ReaderView: View {
     }
 
     private func articleBody(_ blocks: [Block]) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        // 표지와 같은 사진(주소가 같거나 크기 표기만 다른 것)은 본문에서 처음 한 번 뺀다
+        let dup = coverURL.flatMap { c in blocks.firstIndex { $0.type == .img && ImageKey.same($0.src, c) } }
+        return VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(blocks.enumerated()), id: \.offset) { i, b in
                 let text = (model.showOriginal ? b.original : nil) ?? b.text ?? ""
                 let prevIsLi = i > 0 && blocks[i - 1].type == .li
-                if !(b.type == .img && b.src == coverURL && model.item.image == nil) {
+                if i != dup, !(b.type == .img && ImageKey.isJunk(b.src)) { // 기자 프로필·로고 같은 잡그림은 싣지 않음
                 blockView(b, text: text, prevIsLi: prevIsLi)
                     .modifier(ScrapHover(item: model.item, text: text,
                                          original: model.showOriginal ? nil : b.original,
@@ -461,8 +502,10 @@ private struct ScrapHover: ViewModifier {
     let original: String?
     let enabled: Bool
     @State private var hover = false
+    @State private var hoverToken = 0
     @State private var showSheet = false
     @State private var memo = ""
+    private static let gutter: CGFloat = 46 // 가위 단추가 놓이는 왼쪽 여백(마우스 올림 영역에 포함)
     @ObservedObject private var book = Scrapbook.shared
 
     private var scrap: Scrap? { book.scraps.first { $0.item.key == item.key && $0.quote == text } }
@@ -499,11 +542,25 @@ private struct ScrapHover: ViewModifier {
                     .help(scrapped ? "스크랩한 문단 — 눌러서 폴더·메모 바꾸기" : "이 문단 스크랩")
                     .offset(x: -38, y: -2)
                     .transition(.opacity.combined(with: .scale(scale: 0.8)))
-                    .popover(isPresented: $showSheet, arrowEdge: .leading) { sheet }
+                    .popover(isPresented: $showSheet, arrowEdge: .leading) { sheet.onDisappear { if let s = scrap, s.memo != memo { var n = s; n.memo = memo; book.update(n) } } }
                 }
             }
+            // 단추가 문단 바깥 왼쪽 여백에 있으므로, 그 여백까지 마우스 올림 영역으로 잡는다(자리 배치는 그대로)
+            .padding(.leading, Self.gutter)
             .contentShape(Rectangle())
-            .onHover { h in withAnimation(.easeOut(duration: 0.15)) { hover = h } }
+            .onHover { h in
+                hoverToken += 1
+                if h {
+                    withAnimation(.easeOut(duration: 0.15)) { hover = true }
+                } else { // 살짝 벗어났다 돌아와도 단추가 깜빡이지 않게 잠깐 기다렸다 숨김
+                    let token = hoverToken
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                        guard token == hoverToken else { return }
+                        withAnimation(.easeOut(duration: 0.15)) { hover = false }
+                    }
+                }
+            }
+            .padding(.leading, -Self.gutter)
             .contextMenu {
                 if enabled {
                     if scrapped {
@@ -563,16 +620,27 @@ private struct ScrapHover: ViewModifier {
 private struct ArticleImage: View {
     let url: String
     @State private var image: NSImage?
+    @State private var failed = false
+
+    // 빈 뷰에는 .task 가 돌지 않으므로, 불러오는 동안에도 자리(옅은 상자)를 둔다
     var body: some View {
-        Group {
+        ZStack {
             if let image {
                 Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .transition(.opacity)
+            } else if !failed {
+                RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.quaternary.opacity(0.5))
+                    .frame(height: 180)
+                    .overlay(ProgressView().controlSize(.small))
             }
         }
         .frame(maxWidth: .infinity)
-        .task(id: url) { image = await ImageLoader.shared.image(url) }
+        .imageActions(image, url: url)
+        .task(id: url) {
+            let img = await ImageLoader.shared.image(url)
+            withAnimation(.easeOut(duration: 0.3)) { image = img; failed = img == nil }
+        }
     }
 }
 
@@ -582,11 +650,13 @@ private struct CoverImage: View {
     let url: String
     let accent: Color
     let category: NewsCategory
+    var seed = ""
+    var source: String? = nil
     @State private var image: NSImage?
     @State private var failed = false
 
     var body: some View {
-        if failed { EmptyView() } else { content }
+        if failed { EmptyView() } else { content } // 대체 표지는 컨셉을 정한 뒤 넣는다
     }
 
     private var content: some View {
@@ -603,9 +673,37 @@ private struct CoverImage: View {
         .frame(height: 340)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(.primary.opacity(0.06), lineWidth: 0.5))
+        .imageActions(image, url: url)
         .task(id: url) {
             let img = await ImageLoader.shared.image(url)
             withAnimation(.easeOut(duration: 0.35)) { image = img; failed = img == nil }
         }
+    }
+}
+
+
+// 같은 사진인지: 주소의 파일 이름에서 확장자·크기 표기(썸네일·_v150·-1024x576·-scaled 등)·쿼리를 떼고 비교
+enum ImageKey {
+    static func key(_ url: String) -> String {
+        var u = url.lowercased()
+        if let q = u.firstIndex(where: { $0 == "?" || $0 == "#" }) { u = String(u[..<q]) }
+        var name = u.split(separator: "/").last.map(String.init) ?? u
+        if let dot = name.lastIndex(of: "."), name.distance(from: dot, to: name.endIndex) <= 5 { name = String(name[..<dot]) }
+        let suffix = try! NSRegularExpression(pattern: "([-_](v?\\d{2,4}(x\\d{2,4})?|thumb(nail)?|small|medium|large|scaled|crop(ped)?|resize[d]?|\\d{2,4}w))+$")
+        name = suffix.stringByReplacingMatches(in: name, range: NSRange(name.startIndex..., in: name), withTemplate: "")
+        return name
+    }
+    // 기사 사진이 아닌 잡그림: 기자 프로필·아바타·로고·아이콘·추적용 1픽셀
+    static func isJunk(_ url: String?) -> Bool {
+        guard let u = url?.lowercased() else { return true }
+        let name = u.split(separator: "?").first.map(String.init) ?? u
+        return name.range(of: #"(default[-_]?user|avatar|profile|reporter|byline|author|gravatar|/logo|logo[-_.]|favicon|/icons?/|icon[-_.]|spacer|blank\.|1x1|pixel\.|badge|sprite|emoji|/ads?/)"#, options: .regularExpression) != nil
+    }
+
+    static func same(_ a: String?, _ b: String?) -> Bool {
+        guard let a, let b else { return false }
+        if a == b { return true }
+        let ka = key(a), kb = key(b)
+        return ka.count >= 6 && ka == kb
     }
 }

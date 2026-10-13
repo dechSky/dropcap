@@ -73,7 +73,7 @@ actor FeedService {
         }.map {
             NewsItem(id: $0.id, title: $0.title, titleKo: nil, link: $0.link, date: $0.date, summary: $0.summary,
                      sourceId: source.id, sourceName: source.name, tier: source.tier,
-                     image: $0.image.flatMap { URL(string: $0, relativeTo: URL(string: $0)) }.map(\.absoluteString),
+                     image: { e in e.image.flatMap { URL(string: $0, relativeTo: URL(string: e.link)) }.map(\.absoluteString) }($0),
                      kind: source.kind)
         }
     }

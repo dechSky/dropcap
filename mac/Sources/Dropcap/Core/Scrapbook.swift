@@ -31,7 +31,8 @@ final class Scrapbook: ObservableObject {
     }
 
     func add(_ item: NewsItem, quote: String? = nil, original: String? = nil, memo: String = "", to collection: String? = nil) {
-        let c = collection ?? UserDefaults.standard.string(forKey: "lastScrapCollection") ?? Self.defaultCollection
+        var c = (collection ?? UserDefaults.standard.string(forKey: "lastScrapCollection") ?? Self.defaultCollection).trimmingCharacters(in: .whitespaces)
+        if c.isEmpty { c = Self.defaultCollection } // 이름 없는 폴더는 만들지 않음
         // 같은 문단을 두 번 스크랩하지 않게
         if let q = quote, scraps.contains(where: { $0.item.key == item.key && $0.quote == q && $0.collection == c }) { return }
         if quote == nil, scraps.contains(where: { $0.item.key == item.key && $0.quote == nil && $0.collection == c }) { return }
@@ -43,20 +44,25 @@ final class Scrapbook: ObservableObject {
     func update(_ s: Scrap) { db.saveScrap(s); reload() }
     func remove(_ s: Scrap) { db.deleteScrap(s.id); reload() }
 
-    func createCollection(_ name: String) {
+    @discardableResult
+    func createCollection(_ name: String) -> Bool {
         let n = name.trimmingCharacters(in: .whitespaces)
-        guard !n.isEmpty, !collections.contains(n) else { return }
+        guard !n.isEmpty, !collections.contains(n) else { return false }
         UserDefaults.standard.set((UserDefaults.standard.stringArray(forKey: "scrapCollections") ?? []) + [n], forKey: "scrapCollections")
         reload()
+        return true
     }
 
-    func rename(_ from: String, to: String) {
+    @discardableResult
+    func rename(_ from: String, to: String) -> Bool {
         let n = to.trimmingCharacters(in: .whitespaces)
-        guard !n.isEmpty, n != from else { return }
+        guard !n.isEmpty, n != from, !collections.contains(n) else { return false }
+        if UserDefaults.standard.string(forKey: "lastScrapCollection") == from { UserDefaults.standard.set(n, forKey: "lastScrapCollection") }
         db.renameCollection(from, to: n)
         let extra = (UserDefaults.standard.stringArray(forKey: "scrapCollections") ?? []).map { $0 == from ? n : $0 }
         UserDefaults.standard.set(extra, forKey: "scrapCollections")
         reload()
+        return true
     }
 
     func isScrapped(_ item: NewsItem, quote: String? = nil) -> Bool {

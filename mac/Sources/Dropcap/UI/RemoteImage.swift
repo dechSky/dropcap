@@ -28,7 +28,12 @@ actor ImageLoader {
         return img
     }
 
-    private func file(_ url: String) -> URL {
+    // 시험용: 디스크에 받아 둔 사진만 바로 읽기(내려받지 않음)
+    nonisolated func cachedImage(_ url: String) -> NSImage? {
+        (try? Data(contentsOf: file(url))).flatMap(NSImage.init(data:))
+    }
+
+    nonisolated private func file(_ url: String) -> URL {
         let h = SHA256.hash(data: Data(url.utf8)).map { String(format: "%02x", $0) }.joined().prefix(24)
         return dir.appendingPathComponent("\(h).jpg")
     }

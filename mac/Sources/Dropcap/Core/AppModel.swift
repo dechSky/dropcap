@@ -32,7 +32,6 @@ final class AppModel: ObservableObject {
             }
         }
         Magazine.shared.migrateIfNeeded(from: state)
-        Magazine.shared.publishDue()
         if !state.magazineBackfilled { Task { await backfillMagazine() } }
         restartLoop()
         // 1분마다: 아침 브리핑 시각인지, 잠시 끄기가 끝났는지
@@ -41,7 +40,9 @@ final class AppModel: ObservableObject {
         minuteTimer = t
         HotKey.register(key: .n) { AppModel.shared.openLatestUnread() } // ⌥⌘N
         HotKey.register(key: .m) { MagazineController.open() }          // ⌥⌘M
-        if firstRun {
+        // 시험 폴더로 띄운 시험 실행은 사용자 화면에 환영 알림을 띄우지 않는다(DROPCAP_TEST_WELCOME 으로만 확인)
+        let env = ProcessInfo.processInfo.environment
+        if firstRun, env["DROPCAP_DATA_DIR"] == nil || env["DROPCAP_TEST_WELCOME"] != nil {
             ToastCenter.shared.showWelcome()
         }
         if state.settings.style == .system { SystemNotifier.requestAuthorization() }
@@ -99,6 +100,7 @@ final class AppModel: ObservableObject {
         state.unread += found.count
         state.lastCheck = Date()
         Store.save(state)
+        Magazine.shared.publishDue() // 확인을 마친 뒤에 지난 호를 엮어 빠지는 기사가 없게
         if (isQuietTime || isSnoozed), !manual {
             return // 방해 금지 시간·잠시 끄기: 알리지 않고 안 읽은 소식으로만 쌓는다
         }
@@ -292,10 +294,11 @@ final class AppModel: ObservableObject {
         let now = Date()
         guard cal.component(.hour, from: now) >= st.digestHour,
               !(state.lastDigest.map { cal.isDate($0, inSameDayAs: now) } ?? false) else { return }
+        guard !isQuietTime, !isSnoozed else { return } // 조용한 때가 끝나면 그날 안에 다시 시도
         state.lastDigest = now
         Store.save(state)
         let items = digestItems
-        guard !items.isEmpty, !isQuietTime else { return }
+        guard !items.isEmpty else { return }
         ToastCenter.shared.showDigest(count: items.count)
     }
 
@@ -372,9 +375,16 @@ final class AppModel: ObservableObject {
     }
 
     // 실제로 받아 읽어 보고, 되면 추가한다. 실패하면 이유를 돌려준다.
+    @Published private(set) var subscribing: Set<String> = []
+
     private func add(_ src: Source) async -> String? {
+        guard !subscribing.contains(src.url) else { return nil }
+        subscribing.insert(src.url)
+        defer { subscribing.remove(src.url) }
         do {
-            guard let items = try await FeedService.shared.items(for: src), !items.isEmpty else { return "글을 찾지 못했습니다" }
+            // 해지 뒤 다시 구독할 때 남은 ETag 로 304 를 받지 않게 조건 없이 받는다
+            guard let items = try await FeedService.shared.items(for: src, conditional: false), !items.isEmpty else { return "글을 찾지 못했습니다" }
+            guard !allSources.contains(where: { $0.id == src.id || $0.url == src.url }) else { return "이미 구독 중인 채널입니다" }
             // 지금 있는 글은 이 자리에서 기억해 두고(알리지 않음), 이후에 올라오는 글부터 알린다
             let now = Date().timeIntervalSince1970
             for it in items { state.seen[it.key] = now }
@@ -429,7 +439,7 @@ final class AppModel: ObservableObject {
 
     func preview() {
         let item = NewsItem(
-            id: Self.previewID, title: "This is how new AI news will drop in", titleKo: "새 AI 소식은 이렇게 떨어집니다",
+            id: Self.previewID, title: "This is how new stories will drop in", titleKo: "새 소식은 이렇게 떨어집니다",
             link: "", date: Date(), summary: "", sourceId: "openai", sourceName: "미리 보기", tier: "lab")
         deliver([item], manual: false)
     }
@@ -478,7 +488,7 @@ enum SystemNotifier {
         }
         if items.count > 3 {
             let c = UNMutableNotificationContent()
-            c.title = "AI 소식 \(items.count - 3)건 더"
+            c.title = "새 소식 \(items.count - 3)건 더"
             c.body = "상단바 아이콘에서 볼 수 있습니다."
             center.add(UNNotificationRequest(identifier: UUID().uuidString, content: c, trigger: nil))
         }
@@ -511,11 +521,28 @@ enum StoryMatch {
     // 문장 임베딩은 동시에 부르면 안전하지 않아 자물쇠로 한 번에 하나씩
     nonisolated(unsafe) private static let embedding = NLEmbedding.sentenceEmbedding(for: .english)
     private static let embeddingLock = NSLock()
+    // 제목마다 뜻 벡터를 한 번만 계산해 기억한다(쌍마다 다시 계산하면 기사 수의 제곱만큼 느려져 화면이 멈췄다)
+    nonisolated(unsafe) private static var vectors: [String: [Double]] = [:]
     static func meaningDistance(_ a: String, _ b: String) -> Double? {
         embeddingLock.lock(); defer { embeddingLock.unlock() }
-        guard let e = embedding else { return nil }
-        let d = e.distance(between: a, and: b)
+        guard let va = vector(a), let vb = vector(b), va.count == vb.count else { return nil }
+        var dot = 0.0, na = 0.0, nb = 0.0
+        for i in va.indices { dot += va[i] * vb[i]; na += va[i] * va[i]; nb += vb[i] * vb[i] }
+        guard na > 0, nb > 0 else { return nil }
+        let d = (2 * max(0, 1 - dot / (na.squareRoot() * nb.squareRoot()))).squareRoot() // NLEmbedding.distance 와 같은 값(단위 벡터 사이 거리)
         return d.isFinite ? d : nil
+    }
+    private static func vector(_ s: String) -> [Double]? { // 자물쇠 안에서만 부른다
+        if let v = vectors[s] { return v }
+        guard let v = embedding?.vector(for: s) else { return nil }
+        if vectors.count > 5000 { vectors.removeAll(keepingCapacity: true) }
+        vectors[s] = v
+        return v
+    }
+    // 시험용: 기억 없이 NLEmbedding 이 직접 잰 거리
+    static func rawDistance(_ a: String, _ b: String) -> Double? {
+        embeddingLock.lock(); defer { embeddingLock.unlock() }
+        return embedding.map { $0.distance(between: a, and: b) }
     }
 
     // 대문자로 시작하는 고유명사(문장 첫 낱말·흔한 말 제외)

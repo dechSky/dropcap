@@ -86,13 +86,18 @@ final class Magazine: ObservableObject {
             let when = it.date ?? Date()
             var cid: String?
             // 스토리의 대표 기사와만 비교한다(낱말을 계속 보태면 눈덩이처럼 아무 기사나 붙는다)
+            // 이미 있는 기사는 스토리를 다시 정하지 않는다(대표가 자기 자신이면 '같은 출처'로 보여 새 스토리가 생기던 문제)
+            if db.exists(it.key) {
+                db.upsert(it, cluster: nil)
+                continue
+            }
             // 기사만 스토리로 묶는다(논문·릴리스·커뮤니티 글은 양이 많고 성격이 달라 제외)
             if it.itemKind != .article && it.itemKind != .video {
                 db.upsert(it, cluster: nil)
                 continue
             }
             if let i = clusters.firstIndex(where: { c in representatives[c.id].map { StoryMatch.same(it, $0) } ?? false }) {
-                if !db.exists(it.key) { clusters[i].size += 1 }
+                clusters[i].size += 1
                 clusters[i].last = max(clusters[i].last, when)
                 clusters[i].first = min(clusters[i].first, when)
                 // 공식 발표 제목을 스토리 이름으로
@@ -148,7 +153,8 @@ final class Magazine: ObservableObject {
 
     // MARK: 호 엮기
     func makeIssue(kind: Issue.Kind, from: Date, to: Date, id: String) -> Issue {
-        let stored = db.items(from: from, to: to)
+        // 기사와 구독 채널 글을 따로(논문이 많아도 기사가 잘리지 않게)
+        let stored = db.items(from: from, to: to, limit: 4000, articlesOnly: true) + db.items(from: from, to: to, limit: 800, channelsOnly: true)
         // 같은 스토리는 대표 하나만 지면에(점수 높은 것)
         var sizes: [String: Int] = [:]
         for s in stored { if let c = s.cluster { sizes[c, default: 0] += 1 } }
@@ -193,7 +199,8 @@ final class Magazine: ObservableObject {
                 || ($0.category.sortOrder < $1.category.sortOrder
                     && AppModel.shared.interestWeight(category: $0.category, source: nil) == AppModel.shared.interestWeight(category: $1.category, source: nil))
         }
-        return Issue(id: id, kind: kind, date: Date(), from: from, to: to, cover: cover?.0.item.key, sections: sections + channelSections, count: stored.count)
+        let articleCount = stored.filter { $0.item.itemKind == .article }.count
+        return Issue(id: id, kind: kind, date: Date(), from: from, to: to, cover: cover?.0.item.key, sections: sections + channelSections, count: articleCount)
     }
 
     // 지금 진행 중인 오늘 호·이번 주 호(아직 발행 전, 화면에서 바로 계산)
@@ -210,11 +217,13 @@ final class Magazine: ObservableObject {
     func publishDue() {
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
-        for back in 1...3 {
+        // 일간 호의 기간은 '오늘 호'와 같게: 전날 18시 ~ 그날 18시. 어제 호는 오늘 정오까지는 새 기사가 오면 다시 엮는다.
+        for back in stride(from: 3, through: 1, by: -1) {
             guard let day = cal.date(byAdding: .day, value: -back, to: today) else { continue }
             let id = "daily-" + Self.dayID(day)
-            if db.hasIssue(id) { continue }
-            let issue = makeIssue(kind: .daily, from: day, to: day.addingTimeInterval(24 * 3600), id: id)
+            let refresh = back == 1 && cal.component(.hour, from: Date()) < 12
+            if db.hasIssue(id) && !refresh { continue }
+            let issue = makeIssue(kind: .daily, from: day.addingTimeInterval(-6 * 3600), to: day.addingTimeInterval(18 * 3600), id: id)
             if issue.count > 0 { db.saveIssue(issue) }
         }
         if let weekStart = cal.dateInterval(of: .weekOfYear, for: today)?.start,
@@ -225,6 +234,7 @@ final class Magazine: ObservableObject {
                 if issue.count > 0 { db.saveIssue(issue) }
             }
         }
+        db.prune()
         archive = db.issues()
     }
 
@@ -244,13 +254,17 @@ final class Magazine: ObservableObject {
         var issue: Issue
         var cover: Database.StoredItem?
         var sections: [(section: Issue.Section, items: [NewsItem])]
+        var clusters: [String: String] = [:]   // key → 스토리(카드 메뉴에서 DB 를 다시 읽지 않게)
     }
 
     func resolve(_ issue: Issue) -> Resolved {
-        let all = db.items(from: issue.from.addingTimeInterval(-24 * 3600), to: issue.to.addingTimeInterval(24 * 3600), limit: 5000)
-        let map = Dictionary(all.map { ($0.item.key, $0) }, uniquingKeysWith: { a, _ in a })
+        let keys = (issue.cover.map { [$0] } ?? []) + issue.sections.flatMap(\.keys)
+        let map = Dictionary(db.items(keys: keys).map { ($0.item.key, $0) }, uniquingKeysWith: { a, _ in a })
+        var clusters: [String: String] = [:]
+        for (k, v) in map { if let c = v.cluster { clusters[k] = c } }
         return Resolved(issue: issue, cover: issue.cover.flatMap { map[$0] },
-                        sections: issue.sections.map { s in (s, s.keys.compactMap { map[$0]?.item }) }.filter { !$0.1.isEmpty })
+                        sections: issue.sections.map { s in (s, s.keys.compactMap { map[$0]?.item }) }.filter { !$0.1.isEmpty },
+                        clusters: clusters)
     }
 
     func items(_ keys: [String], in issue: Issue) -> [NewsItem] {
@@ -259,13 +273,11 @@ final class Magazine: ObservableObject {
         return keys.compactMap { map[$0] }
     }
 
-    func stored(_ key: String, near issue: Issue) -> Database.StoredItem? {
-        db.items(from: issue.from.addingTimeInterval(-24 * 3600), to: issue.to.addingTimeInterval(24 * 3600), limit: 5000).first { $0.item.key == key }
-    }
+    func stored(_ key: String, near issue: Issue) -> Database.StoredItem? { db.items(keys: [key]).first }
 
     func storyItems(_ cluster: String) -> [NewsItem] { db.items(inCluster: cluster).map(\.item) }
     func cluster(_ id: String) -> Database.Cluster? { db.cluster(id) }
-    func clusterID(of key: String, near issue: Issue) -> String? { stored(key, near: issue)?.cluster }
+    func clusterID(of key: String, near issue: Issue) -> String? { db.clusterOf(key) }
 
     // 스토리: 최근 2주 동안 두 곳 이상이 다룬 것
     func stories() -> [Database.Cluster] {
@@ -273,6 +285,8 @@ final class Magazine: ObservableObject {
     }
 
     func search(_ q: String) -> [NewsItem] { db.search(q) }
+    func storedImage(_ key: String) -> String? { db.image(key) }
+    func coverage(_ items: [NewsItem]) -> [String: Int] { db.coverage(items.map(\.key)) }
 }
 
 extension NewsCategory {

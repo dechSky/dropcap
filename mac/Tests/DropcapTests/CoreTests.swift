@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import AINewsAlert
+@testable import Dropcap
 
 @Suite struct StoryMatchTests {
     @Test func sameStoryDifferentOutlets() {
@@ -176,7 +176,7 @@ import Testing
 }
 
 
-@Suite(.enabled(if: ProcessInfo.processInfo.environment["AINEWS_LIVE_TESTS"] == "1"))
+@Suite(.enabled(if: ProcessInfo.processInfo.environment["DROPCAP_LIVE_TESTS"] == "1"))
 struct URLSafetyDNSTests {
     // 이름이 내부망 IP 로 풀리면 거절(실제 DNS 조회, 네트워크 필요)
     @Test func nameResolvingToLoopbackIsBlocked() async {

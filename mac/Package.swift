@@ -2,18 +2,18 @@
 import PackageDescription
 
 let package = Package(
-    name: "AINewsAlert",
+    name: "Dropcap",
     platforms: [.macOS(.v14)],
     targets: [
         .executableTarget(
-            name: "AINewsAlert",
-            path: "Sources/AINewsAlert",
+            name: "Dropcap",
+            path: "Sources/Dropcap",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .testTarget(
-            name: "AINewsAlertTests",
-            dependencies: ["AINewsAlert"],
-            path: "Tests/AINewsAlertTests",
+            name: "DropcapTests",
+            dependencies: ["Dropcap"],
+            path: "Tests/DropcapTests",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
     ]

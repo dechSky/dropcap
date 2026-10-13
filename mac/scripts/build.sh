@@ -1,17 +1,17 @@
 #!/bin/zsh
 # 맥 앱(.app)과 설치 파일(.dmg)을 만든다: ./scripts/build.sh
-# 결과: build/AI News Alert.app, build/AI-News-Alert-<버전>.dmg (애플 실리콘·인텔 공용)
+# 결과: build/Dropcap.app, build/Dropcap-<버전>.dmg (애플 실리콘·인텔 공용)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT=$PWD
-APP="build/AI News Alert.app"
+APP="build/Dropcap.app"
 VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Resources/Info.plist)
 
 swift build -c release --arch arm64 --arch x86_64
-BIN=$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/AINewsAlert
+BIN=$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/Dropcap
 
 rm -rf build && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BIN" "$APP/Contents/MacOS/AINewsAlert"
+cp "$BIN" "$APP/Contents/MacOS/Dropcap"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp Resources/Readability.js "$APP/Contents/Resources/"
 cp -R Resources/Fonts "$APP/Contents/Resources/"
@@ -35,6 +35,6 @@ codesign --force --deep --options runtime --timestamp=none -s "$IDENTITY" "$APP"
 STAGE=build/dmg && mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
-hdiutil create -volname "AI News Alert" -srcfolder "$STAGE" -ov -format UDZO "build/AI-News-Alert-$VERSION.dmg" >/dev/null
+hdiutil create -volname "Dropcap" -srcfolder "$STAGE" -ov -format UDZO "build/Dropcap-$VERSION.dmg" >/dev/null
 rm -rf "$STAGE"
-echo "완료: $ROOT/build/AI-News-Alert-$VERSION.dmg"
+echo "완료: $ROOT/build/Dropcap-$VERSION.dmg"

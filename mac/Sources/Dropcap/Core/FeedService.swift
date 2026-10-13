@@ -4,7 +4,7 @@ import Compression
 // 출처 하나를 받아 와서 NewsItem 목록으로 바꾼다. ETag·Last-Modified 로 바뀐 것이 없으면 nil.
 actor FeedService {
     static let shared = FeedService()
-    static let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_0) AppleWebKit/605.1.15 (KHTML, like Gecko) AINewsAlert/1.0"
+    static let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Dropcap/1.0"
 
     private var validators: [String: (etag: String?, modified: String?)] = [:]
     private var pending: [String: (etag: String?, modified: String?)] = [:] // 해석이 성공해야 확정

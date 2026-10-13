@@ -1,9 +1,9 @@
 import Foundation
 import Testing
-@testable import AINewsAlert
+@testable import Dropcap
 
 // 실제 네트워크로 기본 출처를 받아 본다(안전 검사가 정상 출처를 막지 않는지)
-@Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["AINEWS_LIVE_TESTS"] == "1"))
+@Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["DROPCAP_LIVE_TESTS"] == "1"))
 struct LiveFeedTests {
     @Test func defaultSourcesLoad() async throws {
         var failures: [String] = []

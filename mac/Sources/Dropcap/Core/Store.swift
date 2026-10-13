@@ -83,14 +83,32 @@ struct AppState: Codable {
 
 enum Store {
     static let dir: URL = {
-        // 시험용: AINEWS_DATA_DIR 로 다른 폴더를 쓰면 실제 기록·구독을 건드리지 않는다
-        if let custom = ProcessInfo.processInfo.environment["AINEWS_DATA_DIR"] {
+        // 시험용: DROPCAP_DATA_DIR 로 다른 폴더를 쓰면 실제 기록·구독을 건드리지 않는다
+        if let custom = ProcessInfo.processInfo.environment["DROPCAP_DATA_DIR"] {
             let d = URL(fileURLWithPath: custom, isDirectory: true)
             try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
             return d
         }
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let d = base.appendingPathComponent("AI News Alert", isDirectory: true)
+        let d = base.appendingPathComponent("Dropcap", isDirectory: true)
+        // 이름이 바뀌기 전(AI News Alert) 기록이 있으면 한 번 옮겨 온다. 옛 폴더는 지우지 않고 이름만 표시해 남겨 둠.
+        let old = base.appendingPathComponent("AI News Alert", isDirectory: true)
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: d.path), fm.fileExists(atPath: old.appendingPathComponent("native-state.json").path) {
+            do {
+                // 이 앱이 쓰는 것만 옮긴다(예전 Electron 판의 캐시 등은 두고 온다)
+                try fm.createDirectory(at: d, withIntermediateDirectories: true)
+                for name in ["native-state.json", "native-state.bak.json", "magazine.sqlite", "magazine.sqlite-wal", "magazine.sqlite-shm", "articles", "images"] {
+                    let from = old.appendingPathComponent(name)
+                    if fm.fileExists(atPath: from.path) { try fm.copyItem(at: from, to: d.appendingPathComponent(name)) }
+                }
+                try? "이 폴더의 기록은 Dropcap 폴더로 복사되었습니다. 확인 후 지워도 됩니다.\n"
+                    .write(to: old.appendingPathComponent("옮겨짐-Dropcap.txt"), atomically: true, encoding: .utf8)
+                NSLog("[이름 변경] 기록을 Dropcap 폴더로 옮겼습니다")
+            } catch {
+                NSLog("[이름 변경] 기록 옮기기 실패: %@", error.localizedDescription)
+            }
+        }
         try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
         return d
     }()

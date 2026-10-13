@@ -193,7 +193,7 @@ struct MenuView: View {
                 Button("모두 읽음으로 표시") { model.markAllRead() }
                 Button("알림 미리 보기") { model.preview() }
                 Divider()
-                Button("AI News Alert 종료") { NSApp.terminate(nil) }
+                Button("Dropcap 종료") { NSApp.terminate(nil) }
             } label: { Image(systemName: "ellipsis.circle").font(.app(13)) }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("더 보기")
         }

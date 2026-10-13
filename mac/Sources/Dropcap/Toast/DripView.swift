@@ -60,7 +60,7 @@ struct DripView: View {
     @available(macOS 26.0, *)
     private func blob(_ w: CGFloat, _ h: CGFloat, center: CGPoint, _ glass: Glass) -> some View {
         Group {
-            // 시험용: AINEWS_DEBUG_DRIP=1 이면 유리 대신 보이는 색으로(캡처로 자리 확인)
+            // 시험용: DROPCAP_DEBUG_DRIP=1 이면 유리 대신 보이는 색으로(캡처로 자리 확인)
             if Self.debugFill {
                 Ellipse().fill(Color.red.opacity(0.8)).frame(width: max(w, 1), height: max(h, 1))
             } else {
@@ -69,7 +69,7 @@ struct DripView: View {
         }
         .position(center)
     }
-    private static let debugFill = ProcessInfo.processInfo.environment["AINEWS_DEBUG_DRIP"] == "1"
+    private static let debugFill = ProcessInfo.processInfo.environment["DROPCAP_DEBUG_DRIP"] == "1"
 
     // 물방울 위쪽의 반짝이는 반사광과 아래쪽의 맺힌 빛
     private func highlight(_ s: S) -> some View {

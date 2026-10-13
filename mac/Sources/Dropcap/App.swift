@@ -3,7 +3,7 @@ import SwiftUI
 import UserNotifications
 
 @main
-struct AINewsAlertApp: App {
+struct DropcapApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @ObservedObject private var model = AppModel.shared
 
@@ -23,25 +23,36 @@ struct AINewsAlertApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
+    // 이름이 바뀌기 전 번들(io.github.neulloopa.ainewsalert)의 화면 설정(글꼴·정렬·스크랩 폴더 등)을 한 번 옮긴다
+    static func migrateDefaults() {
+        let d = UserDefaults.standard
+        guard !d.bool(forKey: "migratedFromAINewsAlert"), let old = UserDefaults(suiteName: "io.github.neulloopa.ainewsalert") else { return }
+        for key in ["usePretendard", "readerFontSize", "magSort", "listSort", "scrapCollections", "lastScrapCollection"] {
+            if d.object(forKey: key) == nil, let v = old.object(forKey: key) { d.set(v, forKey: key) }
+        }
+        d.set(true, forKey: "migratedFromAINewsAlert")
+    }
+
     private var lockFD: Int32 = -1
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 이미 실행 중이면 끈다: 둘이 동시에 돌면 같은 소식을 두 번 알린다
         lockFD = open(Store.dir.appendingPathComponent("native.lock").path, O_CREAT | O_RDWR, 0o644)
         if lockFD < 0 || flock(lockFD, LOCK_EX | LOCK_NB) != 0 {
-            NSLog("AI News Alert 이 이미 실행 중이라 종료합니다")
+            NSLog("Dropcap 이 이미 실행 중이라 종료합니다")
             exit(0)
         }
         NSApp.setActivationPolicy(.accessory) // Dock 에 나타나지 않음
+        Self.migrateDefaults()
         Typography.register()
         if SystemNotifier.available { UNUserNotificationCenter.current().delegate = self }
         MainActor.assumeIsolated {
             AppModel.shared.start()
-            // 시험용: AINEWS_TEST_URL=<기사 주소> 면 읽기 창을, AINEWS_TEST_TOAST=1 이면 알림 미리 보기를 바로 띄운다
+            // 시험용: DROPCAP_TEST_URL=<기사 주소> 면 읽기 창을, DROPCAP_TEST_TOAST=1 이면 알림 미리 보기를 바로 띄운다
             let env = ProcessInfo.processInfo.environment
-            if let u = env["AINEWS_TEST_URL"] {
+            if let u = env["DROPCAP_TEST_URL"] {
                 ReaderController.open(NewsItem(id: u, title: u, titleKo: nil, link: u, date: Date(), summary: "", sourceId: "openai", sourceName: "시험", tier: "lab"))
-                if let dir = env["AINEWS_TEST_SHOT_DIR"] {
+                if let dir = env["DROPCAP_TEST_SHOT_DIR"] {
                     for sec in [3, 8, 20] {
                         DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(sec)) {
                             guard let v = NSApp.windows.first(where: { $0.isVisible && $0.title == "시험" })?.contentView,
@@ -52,10 +63,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     }
                 }
             }
-            if let subs = env["AINEWS_TEST_SUBSCRIBE"] { // 시험용: 추천 채널 구독
+            if let subs = env["DROPCAP_TEST_SUBSCRIBE"] { // 시험용: 추천 채널 구독
                 Task { for id in subs.split(separator: ",") { if let s = ChannelCatalog.all.first(where: { $0.id == id }) { _ = await AppModel.shared.subscribe(s) } } }
             }
-            if env["AINEWS_TEST_SCRAP"] != nil { // 시험용: 견본 스크랩
+            if env["DROPCAP_TEST_SCRAP"] != nil { // 시험용: 견본 스크랩
                 DispatchQueue.main.asyncAfter(deadline: .now() + 25) {
                     let items = Magazine.shared.liveDaily().sections.flatMap(\.keys).prefix(3)
                     let resolved = Magazine.shared.resolve(Magazine.shared.liveDaily()).sections.flatMap(\.items)
@@ -65,7 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     }
                 }
             }
-            if env["AINEWS_TEST_MENU"] != nil, let dir = env["AINEWS_TEST_SHOT_DIR"] { // 시험용: 상단바 창을 일반 창에 띄워 찍기
+            if env["DROPCAP_TEST_MENU"] != nil, let dir = env["DROPCAP_TEST_SHOT_DIR"] { // 시험용: 상단바 창을 일반 창에 띄워 찍기
                 DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
                     let w = NSWindow(contentViewController: NSHostingController(rootView: MenuView()))
                     w.title = "menu-test"
@@ -82,17 +93,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     }
                 }
             }
-            if env["AINEWS_TEST_SETTINGS"] != nil {
+            if env["DROPCAP_TEST_SETTINGS"] != nil {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
                     NSApp.activate(ignoringOtherApps: true)
                     NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
                 }
             }
-            if env["AINEWS_TEST_MAGAZINE"] != nil {
+            if env["DROPCAP_TEST_MAGAZINE"] != nil {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1) { MagazineController.open() }
-                if let dir = env["AINEWS_TEST_SHOT_DIR"] {
+                if let dir = env["DROPCAP_TEST_SHOT_DIR"] {
                     func shot(_ name: String) {
-                        guard let v = NSApp.windows.first(where: { $0.isVisible && $0.title == "AI 매거진" })?.contentView,
+                        guard let v = NSApp.windows.first(where: { $0.isVisible && $0.title == "Dropcap" })?.contentView,
                               let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return }
                         v.cacheDisplay(in: v.bounds, to: rep)
                         try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "\(dir)/\(name).png"))
@@ -100,7 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     // 가장 긴 스크롤 영역(지면)을 찾아 아래로 내려 가며 찍는다
                     func scroll(to y: CGFloat) {
                         func all(_ v: NSView) -> [NSScrollView] { (v as? NSScrollView).map { [$0] } ?? [] + v.subviews.flatMap(all) }
-                        guard let root = NSApp.windows.first(where: { $0.title == "AI 매거진" })?.contentView,
+                        guard let root = NSApp.windows.first(where: { $0.title == "Dropcap" })?.contentView,
                               let sv = all(root).max(by: { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }) else { return }
                         sv.contentView.scroll(to: NSPoint(x: 0, y: y))
                         sv.reflectScrolledClipView(sv.contentView)
@@ -114,9 +125,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     }
                 }
             }
-            if env["AINEWS_TEST_TOAST"] != nil {
+            if env["DROPCAP_TEST_TOAST"] != nil {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1) { AppModel.shared.preview() }
-                if let dir = env["AINEWS_TEST_SHOT_DIR"] {
+                if let dir = env["DROPCAP_TEST_SHOT_DIR"] {
                     for ms in [1300, 1700, 1950, 2100, 2200, 2300, 2450, 3400] {
                         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(ms)) {
                             ToastCenter.shared.snapshot(to: "\(dir)/toast-\(ms).png")

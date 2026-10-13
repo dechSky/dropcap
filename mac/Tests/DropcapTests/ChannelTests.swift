@@ -1,10 +1,10 @@
 import Foundation
 import Testing
-@testable import AINewsAlert
+@testable import Dropcap
 
 // 실제 네트워크로 주소 해석기를 확인한다
-// 바깥 서버 상태에 따라 흔들리므로 AINEWS_LIVE_TESTS=1 일 때만 돈다
-@Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["AINEWS_LIVE_TESTS"] == "1"))
+// 바깥 서버 상태에 따라 흔들리므로 DROPCAP_LIVE_TESTS=1 일 때만 돈다
+@Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["DROPCAP_LIVE_TESTS"] == "1"))
 struct ChannelResolverTests {
     @Test(arguments: [
         ("cs.CL", ItemKind.paper),

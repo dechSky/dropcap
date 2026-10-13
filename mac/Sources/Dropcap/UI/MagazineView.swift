@@ -12,7 +12,7 @@ struct MagazineView: View {
     @ObservedObject private var mag = Magazine.shared
     @ObservedObject private var app = AppModel.shared
     @ObservedObject private var book = Scrapbook.shared
-    @State private var page: Page = ProcessInfo.processInfo.environment["AINEWS_TEST_MAG_PAGE"] == "scrapbook" ? .scrapbook : .today
+    @State private var page: Page = ProcessInfo.processInfo.environment["DROPCAP_TEST_MAG_PAGE"] == "scrapbook" ? .scrapbook : .today
     @State private var turn = 0   // 넘긴 방향(+1 다음, -1 이전) — 책장 넘김 방향
 
     var body: some View {
@@ -227,7 +227,13 @@ private struct Masthead: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Text("AI 매거진").font(.system(size: 13, weight: .heavy, design: .serif)).tracking(2.5)
+                // 로고: 잡지 첫 글자를 크게 키우는 '드롭캡'처럼 D 를 크게
+                HStack(alignment: .firstTextBaseline, spacing: 0) {
+                    Text("D").font(.system(size: 22, weight: .black, design: .serif))
+                    Text("ROPCAP").font(.system(size: 13, weight: .heavy, design: .serif)).tracking(2.2)
+                }
+                .foregroundStyle(.primary)
+                Text("AI 매거진").font(.app(11.5, .medium)).foregroundStyle(.secondary)
                 if live {
                     Text("발행 중").font(.app(10.5, .bold)).foregroundStyle(.white)
                         .padding(.horizontal, 7).padding(.vertical, 2)
@@ -686,7 +692,7 @@ enum MagazineController {
             return
         }
         let w = NSWindow(contentViewController: NSHostingController(rootView: MagazineView()))
-        w.title = "AI 매거진"
+        w.title = "Dropcap"
         w.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         w.titlebarAppearsTransparent = true
         w.toolbarStyle = .unified

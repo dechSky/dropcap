@@ -74,7 +74,7 @@ final class Scrapbook: ObservableObject {
         let f = DateFormatter()
         f.locale = Locale(identifier: "ko_KR")
         f.dateFormat = "yyyy-MM-dd"
-        out += "_AI News Alert 스크랩 · \(f.string(from: Date())) · \(list.count)건_\n\n"
+        out += "_Dropcap 스크랩 · \(f.string(from: Date())) · \(list.count)건_\n\n"
         // 기사별로 묶어서
         var order: [String] = []
         var groups: [String: [Scrap]] = [:]

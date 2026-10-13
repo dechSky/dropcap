@@ -1,8 +1,10 @@
-# AI News Alert
+# Dropcap
 
-공신력 있는 AI 소식이 올라오면 상단바에서 **물방울이 맺혔다가 똑 떨어지고**, 떨어진 자리의 유리 카드에 **물이 찰랑찰랑 차오르며** 알려 주는 macOS 메뉴바 앱입니다. 카드를 누르면 광고 없이 본문만 추린 읽기 창이 열리고, 영어 기사는 한국어로 번역해 보여 줍니다.
+> 드롭캡(dropcap): 잡지 첫 글자를 크게 키우는 조판 방식. 그리고 상단바에서 똑 떨어지는(drop) 소식.
 
-> A macOS menu-bar app that watches trusted AI news sources and drips a Liquid Glass notification from the menu bar when something new is published. Articles open in a clean reader with Korean translation.
+공신력 있는 AI 소식을 모아 보는 macOS 매거진·알림 앱입니다. 새 소식이 올라오면 상단바에서 **물방울이 맺혔다가 똑 떨어지고**, 떨어진 자리의 유리 카드에 **물이 찰랑찰랑 차오르며** 알려 줍니다. 카드를 누르면 광고 없이 본문만 추린 읽기 창이 열리고, 영어 기사는 한국어로 번역해 보여 줍니다.
+
+> Dropcap is a macOS menu-bar magazine that watches trusted AI news sources and drips a Liquid Glass notification from the menu bar when something new is published. Articles open in a clean reader with Korean translation.
 
 - macOS 14 이상 (Liquid Glass·기기 내 번역·3줄 요약은 macOS 26 이상)
 - Swift · SwiftUI · AppKit 네이티브(글꼴 포함 앱 크기 약 9MB)
@@ -53,7 +55,7 @@
 
 - **번역**: 영어→한국어 언어 자료가 이 Mac 에 있으면 Apple 기기 내 번역(Translation 프레임워크)을 씁니다. 없으면 Google 번역 공개 엔드포인트를 씁니다. 이 경우 기사 문장이 Google 로 전송되며, 공식 API 가 아니라 언제든 막힐 수 있습니다. 설정 › 일반 › "기기 내 번역 자료 받기"로 바꿀 수 있습니다.
 - **요약**: Apple Intelligence(기기 내 모델)만 씁니다. 외부 AI 서비스로 보내지 않습니다.
-- **저장 위치**: `~/Library/Application Support/AI News Alert/` — 설정(native-state.json), 매거진·스크랩 기록(magazine.sqlite), 기사·사진 캐시. 계정·분석·추적 없음. magazine.sqlite 를 지워도 알림 기능은 그대로 동작합니다.
+- **저장 위치**: `~/Library/Application Support/Dropcap/` — 설정(native-state.json), 매거진·스크랩 기록(magazine.sqlite), 기사·사진 캐시. 계정·분석·추적 없음. magazine.sqlite 를 지워도 알림 기능은 그대로 동작합니다.
 - **안전**: 피드에서 온 주소는 믿지 않습니다. 공개 인터넷 주소만 받고(이름을 실제 IP 로 풀어 확인, 접속한 IP 도 다시 확인), 알림 때 미리 받기는 사이트 스크립트를 돌리지 않습니다.
 
 ## 빌드
@@ -64,7 +66,7 @@ Xcode 26 이상(Swift 6)이 필요합니다.
 cd mac
 swift build            # 개발용 빌드
 swift test             # 시험
-./scripts/build.sh     # build/AI News Alert.app 과 build/AI-News-Alert-<버전>.dmg (Apple 실리콘·Intel 공용)
+./scripts/build.sh     # build/Dropcap.app 과 build/Dropcap-<버전>.dmg (Apple 실리콘·Intel 공용)
 ```
 
 개발자 인증서가 없으면 이 Mac 전용 임시 서명으로 만들어집니다. 다른 Mac 에서 열 때는 시스템 설정 › 개인정보 보호 및 보안 › "그래도 열기"가 필요합니다. 인증서가 있으면 `MAC_SIGN_IDENTITY="Developer ID Application: …" ./scripts/build.sh`.
@@ -72,11 +74,11 @@ swift test             # 시험
 시험용 환경 변수:
 
 ```bash
-AINEWS_TEST_TOAST=1 .build/debug/AINewsAlert                 # 실행하자마자 알림 미리 보기
-AINEWS_TEST_URL=<기사 주소> .build/debug/AINewsAlert          # 읽기 창 바로 열기
-AINEWS_TEST_MAGAZINE=1 .build/debug/AINewsAlert               # 매거진 바로 열기
-AINEWS_DATA_DIR=/tmp/ainews-test .build/debug/AINewsAlert     # 실제 기록을 건드리지 않는 시험용 폴더
-AINEWS_LIVE_TESTS=1 swift test                                # 실제 서버로 피드·주소 해석 시험
+DROPCAP_TEST_TOAST=1 .build/debug/Dropcap                 # 실행하자마자 알림 미리 보기
+DROPCAP_TEST_URL=<기사 주소> .build/debug/Dropcap          # 읽기 창 바로 열기
+DROPCAP_TEST_MAGAZINE=1 .build/debug/Dropcap               # 매거진 바로 열기
+DROPCAP_DATA_DIR=/tmp/ainews-test .build/debug/Dropcap     # 실제 기록을 건드리지 않는 시험용 폴더
+DROPCAP_LIVE_TESTS=1 swift test                                # 실제 서버로 피드·주소 해석 시험
 ```
 
 ## 구조
@@ -84,7 +86,7 @@ AINEWS_LIVE_TESTS=1 swift test                                # 실제 서버로
 ```
 shared/sources.json        출처 목록(맥·윈도우 공용)
 mac/
-  Sources/AINewsAlert/
+  Sources/Dropcap/
     Core/      피드 받기·해석, 안전 검사, 번역, 요약, 분야, 구독 채널, 매거진 편집·DB, 스크랩, 상태 저장, 단축키
     Toast/     물방울(DripView) · 물 차오름(WaterFill) · 알림 카드와 패널
     Reader/    본문 추출(Readability), 미리 받기·캐시, 읽기 창, 소리 내어 읽기

@@ -54,7 +54,7 @@ final class ToastCenter: ObservableObject {
     }
 
     func showWelcome() {
-        showInfo("AI News Alert 실행 중", sub: "새 AI 소식이 오면 이렇게 상단바에서 떨어집니다")
+        showInfo("Dropcap 실행 중", sub: "새 AI 소식이 오면 이렇게 상단바에서 떨어집니다")
     }
 
     private func push(_ t: Toast) {

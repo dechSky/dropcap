@@ -47,13 +47,23 @@ struct MagazineView: View {
             .clipped()
         }
         .frame(minWidth: 860, minHeight: 620)
+        .background {
+            Group {
+                Button("") { go(.today) }.keyboardShortcut("1", modifiers: .command)
+                Button("") { go(.week) }.keyboardShortcut("2", modifiers: .command)
+                Button("") { go(.stories) }.keyboardShortcut("3", modifiers: .command)
+                Button("") { go(.search) }.keyboardShortcut("f", modifiers: .command)
+                Button("") { Task { await AppModel.shared.checkAll(manual: false) } }.keyboardShortcut("r", modifiers: .command)
+            }
+            .opacity(0).allowsHitTesting(false)
+        }
     }
 
     @ViewBuilder private var detail: some View {
         switch page {
-        case .today: IssueView(issue: mag.liveDaily(), live: true, onStory: openStory).id(mag.revision)
-        case .week: IssueView(issue: mag.liveWeekly(), live: true, onStory: openStory).id(mag.revision)
-        case .issue(let i): IssueView(issue: i, live: false, onStory: openStory)
+        case .today: IssueView(source: .today, onStory: openStory)
+        case .week: IssueView(source: .week, onStory: openStory)
+        case .issue(let i): IssueView(source: .fixed(i), onStory: openStory)
         case .stories: StoriesView(onStory: openStory)
         case .story(let id): StoryView(clusterID: id) { go(.stories) }
         case .saved: SavedView()
@@ -106,48 +116,101 @@ extension AnyTransition {
 
 // MARK: - 한 호
 struct IssueView: View {
-    let issue: Issue
-    let live: Bool
+    enum Source: Equatable { case today, week, fixed(Issue) }
+    let source: Source
     let onStory: (String) -> Void
     @ObservedObject private var mag = Magazine.shared
     @State private var appeared = false
+    @State private var data: Magazine.Resolved?
+    @State private var seenRevision = 0
     @AppStorage("magSort") private var sortRaw = MagSort.recommended.rawValue
 
-    private var cover: Database.StoredItem? { issue.cover.flatMap { mag.stored($0, near: issue) } }
+    private var isFixed: Bool { if case .fixed = source { return true }; return false }
+    private var newCount: Int { isFixed ? 0 : max(0, mag.revision - seenRevision) }
+
+    private func build() {
+        let issue: Issue
+        switch source {
+        case .today: issue = mag.liveDaily()
+        case .week: issue = mag.liveWeekly()
+        case .fixed(let i): issue = i
+        }
+        data = mag.resolve(issue)
+        seenRevision = mag.revision
+    }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                Masthead(issue: issue, live: live, appeared: appeared)
-                    .padding(.horizontal, 36).padding(.top, 28).padding(.bottom, 22)
-                    .overlay(alignment: .bottomTrailing) {
-                        Picker("정렬", selection: $sortRaw) {
-                            ForEach(MagSort.allCases, id: \.rawValue) { Label($0.label, systemImage: $0.symbol).tag($0.rawValue) }
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    Color.clear.frame(height: 0).id("top")
+                    if let d = data {
+                        Masthead(issue: d.issue, live: !isFixed, appeared: appeared)
+                            .padding(.horizontal, 36).padding(.top, 28).padding(.bottom, 22)
+                            .overlay(alignment: .bottomTrailing) {
+                                Picker("정렬", selection: $sortRaw) {
+                                    ForEach(MagSort.allCases, id: \.rawValue) { Label($0.label, systemImage: $0.symbol).tag($0.rawValue) }
+                                }
+                                .pickerStyle(.menu).fixedSize()
+                                .padding(.trailing, 36).padding(.bottom, 34)
+                                .help("지면 안의 기사 순서")
+                            }
+                        if let c = d.cover {
+                            CoverStory(stored: c, issue: d.issue, onStory: onStory)
+                                .padding(.horizontal, 28)
+                                .opacity(appeared ? 1 : 0)
+                                .offset(y: appeared ? 0 : 24)
+                                .animation(.spring(response: 0.7, dampingFraction: 0.85).delay(0.15), value: appeared)
+                        } else {
+                            EmptyIssue(live: !isFixed, preparing: mag.preparing).padding(.horizontal, 36)
                         }
-                        .pickerStyle(.menu).fixedSize()
-                        .padding(.trailing, 36).padding(.bottom, 34)
-                        .help("지면 안의 기사 순서")
+                        ForEach(Array(d.sections.enumerated()), id: \.element.section.id) { si, sec in
+                            SectionBlock(section: sec.section, items: (MagSort(rawValue: sortRaw) ?? .recommended).apply(sec.items),
+                                         issue: d.issue, index: si, onStory: onStory)
+                                .padding(.top, 38)
+                        }
+                        Text("기사 저작권은 각 언론사·기업에 있습니다. 제목·요약·사진은 원문으로 이어 주기 위한 것입니다.")
+                            .font(.app(11)).foregroundStyle(.tertiary)
+                            .padding(.horizontal, 36).padding(.vertical, 40)
                     }
-                if let c = cover {
-                    CoverStory(stored: c, issue: issue, onStory: onStory)
-                        .padding(.horizontal, 28)
-                        .opacity(appeared ? 1 : 0)
-                        .offset(y: appeared ? 0 : 24)
-                        .animation(.spring(response: 0.7, dampingFraction: 0.85).delay(0.15), value: appeared)
-                } else {
-                    EmptyIssue(live: live).padding(.horizontal, 36)
                 }
-                ForEach(Array(issue.sections.enumerated()), id: \.element.id) { si, sec in
-                    SectionBlock(section: sec, items: MagSort(rawValue: sortRaw)?.apply(mag.items(sec.keys, in: issue)) ?? mag.items(sec.keys, in: issue),
-                                 issue: issue, index: si, onStory: onStory)
-                        .padding(.top, 38)
+            }
+            // 보는 동안 새 소식이 오면 지면을 갈아엎지 않고 위에 알림만 띄운다
+            .overlay(alignment: .top) {
+                if newCount > 0 {
+                    Button {
+                        withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) { build(); proxy.scrollTo("top") }
+                    } label: {
+                        Label("새 소식이 들어왔어요 · 새로 보기", systemImage: "arrow.up")
+                            .font(.app(12.5, .semibold))
+                            .padding(.horizontal, 14).padding(.vertical, 8)
+                            .background(.regularMaterial, in: Capsule())
+                            .overlay(Capsule().strokeBorder(.primary.opacity(0.1), lineWidth: 0.5))
+                            .shadow(color: .black.opacity(0.15), radius: 10, y: 4)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 14)
+                    .transition(.move(edge: .top).combined(with: .opacity))
                 }
-                Text("기사 저작권은 각 언론사·기업에 있습니다. 제목·요약·사진은 원문으로 이어 주기 위한 것입니다.")
-                    .font(.app(11)).foregroundStyle(.tertiary)
-                    .padding(.horizontal, 36).padding(.vertical, 40)
+            }
+            .animation(.spring(response: 0.45, dampingFraction: 0.8), value: newCount > 0)
+        }
+        .onAppear { build(); appeared = true }
+        // 빈 지면이면 알림 없이 바로 채운다(처음 켰을 때)
+        .onChange(of: mag.revision) { _, _ in
+            // 지면이 비었거나 표지가 아직 없으면 알림 없이 바로 채운다(처음 켰을 때 등)
+            if !isFixed, data?.cover == nil || (data?.issue.count ?? 0) == 0 || mag.preparing {
+                withAnimation(.easeOut(duration: 0.4)) { build() }
             }
         }
-        .onAppear { appeared = true }
+        .onChange(of: mag.imageRevision) { _, _ in
+            // 사진만 새로 채워졌으면 알림 없이 조용히 반영(새 소식은 그대로 알림으로)
+            let pending = mag.revision != seenRevision
+            if !pending { build() }
+        }
+        .onChange(of: mag.preparing) { _, now in
+            if !now, !isFixed { withAnimation(.easeOut(duration: 0.4)) { build() } } // 첫 호가 다 엮이면 바로 보여 준다
+        }
     }
 }
 
@@ -189,11 +252,18 @@ private struct Masthead: View {
 
 private struct EmptyIssue: View {
     let live: Bool
+    var preparing = false
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Image(systemName: "newspaper").font(.app(34, .light)).foregroundStyle(.tertiary)
-            Text(live ? "아직 이번 호에 실을 소식이 없습니다" : "이 호에는 소식이 없습니다").font(.title3.weight(.semibold))
-            Text("새 소식이 들어오는 대로 지면이 채워집니다.").foregroundStyle(.secondary)
+            if preparing {
+                ProgressView().controlSize(.small)
+                Text("첫 호를 엮는 중…").font(.display(20, .semibold))
+                Text("구독한 출처에서 최근 사흘 소식을 모으고 번역하고 있어요. 잠시면 됩니다.").font(.app(13)).foregroundStyle(.secondary)
+            } else {
+                Image(systemName: "newspaper").font(.app(34, .light)).foregroundStyle(.tertiary)
+                Text(live ? "아직 이번 호에 실을 소식이 없습니다" : "이 호에는 소식이 없습니다").font(.display(20, .semibold))
+                Text("새 소식이 들어오는 대로 지면이 채워집니다.").font(.app(13)).foregroundStyle(.secondary)
+            }
         }
         .padding(.vertical, 60)
     }

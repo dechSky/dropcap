@@ -172,7 +172,8 @@ enum ChannelResolver {
     private static func check(_ feed: String, kind: ItemKind, name: String? = nil, home: String? = nil, notify: Bool = true) async throws -> Found {
         guard let data = try await FeedService.shared.fetch(feed) else { throw Failure.notFound }
         let entries = try FeedParser.parseFeed(data)
-        guard !entries.isEmpty else { throw Failure.notFound }
+        // 논문 피드는 발표 사이에 잠시 비어 있을 수 있다 — 형식이 맞으면 받아들인다
+        guard !entries.isEmpty || (kind == .paper && FeedParser.feedTitle(data) != nil) else { throw Failure.notFound }
         let title = name ?? FeedParser.feedTitle(data) ?? URL(string: feed)?.host ?? feed
         // 하루에 글이 많이 올라오는 채널은 알림 기본값을 끈다
         let recent = entries.compactMap(\.date).filter { Date().timeIntervalSince($0) < 24 * 3600 }.count

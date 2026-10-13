@@ -139,6 +139,17 @@ struct ReaderView: View {
         .onDisappear { speaker.stop() }
     }
 
+    // 읽는 시간: 한국어 분당 약 500자, 영어 분당 약 230낱말
+    private var readingMinutes: Int? {
+        let texts = model.blocks.compactMap { (model.showOriginal ? $0.original : nil) ?? $0.text }
+        guard !texts.isEmpty else { return nil }
+        let joined = texts.joined(separator: " ")
+        let minutes = Translator.looksForeign(joined)
+            ? Double(joined.split(whereSeparator: \.isWhitespace).count) / 230
+            : Double(joined.filter { !$0.isWhitespace }.count) / 500
+        return max(1, Int(minutes.rounded()))
+    }
+
     // 3줄 요약(이 Mac 안의 Apple Intelligence 로 만듦)
     @ViewBuilder private var keyPointsBox: some View {
         if model.keyPoints != nil || model.summarizing {
@@ -179,6 +190,10 @@ struct ReaderView: View {
                 if let d = model.item.date {
                     Text(d.formatted(.dateTime.locale(Locale(identifier: "ko_KR")).month().day().hour().minute()))
                         .font(.app(12)).foregroundStyle(.secondary)
+                }
+                if let m = readingMinutes {
+                    Label("약 \(m)분", systemImage: "clock").font(.app(12)).foregroundStyle(.secondary)
+                        .help("읽는 시간(한국어 분당 약 500자 기준)")
                 }
             }
             Text(model.showOriginal ? model.originalTitle : model.title)

@@ -176,7 +176,8 @@ import Testing
 }
 
 
-@Suite struct URLSafetyDNSTests {
+@Suite(.enabled(if: ProcessInfo.processInfo.environment["AINEWS_LIVE_TESTS"] == "1"))
+struct URLSafetyDNSTests {
     // 이름이 내부망 IP 로 풀리면 거절(실제 DNS 조회, 네트워크 필요)
     @Test func nameResolvingToLoopbackIsBlocked() async {
         #expect(!(await URLSafety.resolvesPublic(URL(string: "http://127.0.0.1.nip.io/"))))

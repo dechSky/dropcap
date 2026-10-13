@@ -10,7 +10,7 @@ struct Issue: Codable, Identifiable, Hashable {
         var kind: String? = nil   // 영상·논문 등 구독 채널 지면이면 그 종류
 
         var id: String { kind ?? category.rawValue }
-        var label: String { kind.flatMap { ItemKind(rawValue: $0)?.label } ?? category.label }
+        var label: String { kind.flatMap { ItemKind(rawValue: $0)?.label } ?? (category == .other ? "그 밖의 소식" : category.label) }
         var symbol: String { kind.flatMap { ItemKind(rawValue: $0)?.symbol } ?? category.symbol }
         var color: Color {
             switch kind {
@@ -53,7 +53,9 @@ final class Magazine: ObservableObject {
     private let db = Database.shared
 
     @Published private(set) var revision = 0   // 새 기사가 들어올 때마다 바뀜(화면 갱신용)
+    @Published private(set) var imageRevision = 0 // 사진만 채워졌을 때(조용히 다시 그림)
     @Published private(set) var archive: [Issue] = []
+    @Published var preparing = false             // 첫 호를 엮는 중
     private var enriching = false
 
     private init() {
@@ -126,7 +128,7 @@ final class Magazine: ObservableObject {
                 }
             }
             enriching = false
-            if changed { revision += 1 }
+            if changed { imageRevision += 1 }
         }
     }
 
@@ -167,10 +169,14 @@ final class Magazine: ObservableObject {
         let cover = picked.first { $0.0.item.image != nil } ?? picked.first
         var sections: [Issue.Section] = []
         let articles = picked.filter { $0.0.item.itemKind == .article && $0.0.item.key != cover?.0.item.key }
-        for cat in NewsCategory.allCases {
+        var leftovers: [String] = []
+        for cat in NewsCategory.allCases where cat != .other {
             let keys = articles.filter { $0.0.item.category == cat }.map(\.0.item.key)
-            if !keys.isEmpty { sections.append(.init(category: cat, keys: Array(keys.prefix(kind == .weekly ? 8 : 12)))) }
+            // 한 건뿐인 분야는 지면이 휑하므로 '그 밖의 소식'으로 모은다
+            if keys.count >= 2 { sections.append(.init(category: cat, keys: Array(keys.prefix(kind == .weekly ? 8 : 12)))) } else { leftovers += keys }
         }
+        leftovers += articles.filter { $0.0.item.category == .other }.map(\.0.item.key)
+        if !leftovers.isEmpty { sections.append(.init(category: .other, keys: Array(leftovers.prefix(12)))) }
         // 구독 채널 지면: 종류별, 채널 하나당 4개까지(논문처럼 많은 곳이 지면을 덮지 않게)
         var channelSections: [Issue.Section] = []
         for k in [ItemKind.video, .release, .paper, .podcast, .post] {
@@ -233,6 +239,20 @@ final class Magazine: ObservableObject {
     }
 
     // MARK: 꺼내 보기
+    // 한 호를 화면에 그릴 재료를 한 번에(지면마다 DB 를 다시 읽지 않게)
+    struct Resolved {
+        var issue: Issue
+        var cover: Database.StoredItem?
+        var sections: [(section: Issue.Section, items: [NewsItem])]
+    }
+
+    func resolve(_ issue: Issue) -> Resolved {
+        let all = db.items(from: issue.from.addingTimeInterval(-24 * 3600), to: issue.to.addingTimeInterval(24 * 3600), limit: 5000)
+        let map = Dictionary(all.map { ($0.item.key, $0) }, uniquingKeysWith: { a, _ in a })
+        return Resolved(issue: issue, cover: issue.cover.flatMap { map[$0] },
+                        sections: issue.sections.map { s in (s, s.keys.compactMap { map[$0]?.item }) }.filter { !$0.1.isEmpty })
+    }
+
     func items(_ keys: [String], in issue: Issue) -> [NewsItem] {
         let all = db.items(from: issue.from.addingTimeInterval(-24 * 3600), to: issue.to.addingTimeInterval(24 * 3600), limit: 5000)
         let map = Dictionary(all.map { ($0.item.key, $0.item) }, uniquingKeysWith: { a, _ in a })

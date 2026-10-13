@@ -212,6 +212,8 @@ final class AppModel: ObservableObject {
 
     // 처음 한 번: 켜진 출처에서 최근 3일 기사를 받아 매거진 첫 호를 채운다(알림 없음)
     private func backfillMagazine() async {
+        Magazine.shared.preparing = true
+        defer { Magazine.shared.preparing = false }
         let cutoff = Date().addingTimeInterval(-3 * 24 * 3600)
         var all: [NewsItem] = []
         for src in allSources where state.enabled[src.id] == true {
@@ -377,12 +379,20 @@ final class AppModel: ObservableObject {
             let now = Date().timeIntervalSince1970
             for it in items { state.seen[it.key] = now }
             state.seeded.append(src.id)
+            state.customSources.append(src)
+            state.enabled[src.id] = true
+            Store.save(state)
+            // 최근 3일 글은 매거진에 바로 싣는다(알림 없이) — 구독하자마자 지면에서 볼 수 있게
+            let cutoff = Date().addingTimeInterval(-3 * 24 * 3600)
+            var recent = Array(items.filter { ($0.date ?? .distantPast) > cutoff }.prefix(src.notifyDefault == false ? 30 : 15))
+            if !recent.isEmpty {
+                let titles = await Translator.shared.translateMany(recent.map(\.title))
+                for i in recent.indices where titles[i] != recent[i].title { recent[i].titleKo = titles[i] }
+                Magazine.shared.ingest(recent.reversed())
+            }
         } catch {
             return "읽지 못했습니다: \(error.localizedDescription)"
         }
-        state.customSources.append(src)
-        state.enabled[src.id] = true
-        Store.save(state)
         return nil
     }
 

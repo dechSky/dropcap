@@ -52,16 +52,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     }
                 }
             }
+            if let subs = env["AINEWS_TEST_SUBSCRIBE"] { // 시험용: 추천 채널 구독
+                Task { for id in subs.split(separator: ",") { if let s = ChannelCatalog.all.first(where: { $0.id == id }) { _ = await AppModel.shared.subscribe(s) } } }
+            }
+            if env["AINEWS_TEST_SETTINGS"] != nil {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                    NSApp.activate(ignoringOtherApps: true)
+                    NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                }
+            }
             if env["AINEWS_TEST_MAGAZINE"] != nil {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1) { MagazineController.open() }
                 if let dir = env["AINEWS_TEST_SHOT_DIR"] {
+                    func shot(_ name: String) {
+                        guard let v = NSApp.windows.first(where: { $0.isVisible && $0.title == "AI 매거진" })?.contentView,
+                              let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return }
+                        v.cacheDisplay(in: v.bounds, to: rep)
+                        try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "\(dir)/\(name).png"))
+                    }
+                    // 가장 긴 스크롤 영역(지면)을 찾아 아래로 내려 가며 찍는다
+                    func scroll(to y: CGFloat) {
+                        func all(_ v: NSView) -> [NSScrollView] { (v as? NSScrollView).map { [$0] } ?? [] + v.subviews.flatMap(all) }
+                        guard let root = NSApp.windows.first(where: { $0.title == "AI 매거진" })?.contentView,
+                              let sv = all(root).max(by: { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }) else { return }
+                        sv.contentView.scroll(to: NSPoint(x: 0, y: y))
+                        sv.reflectScrolledClipView(sv.contentView)
+                    }
                     for sec in [4, 12, 40] {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(sec)) {
-                            guard let v = NSApp.windows.first(where: { $0.isVisible && $0.title == "AI 매거진" })?.contentView,
-                                  let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return }
-                            v.cacheDisplay(in: v.bounds, to: rep)
-                            try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "\(dir)/mag-\(sec).png"))
-                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(sec)) { shot("mag-\(sec)") }
+                    }
+                    for (i, y) in [700, 1400, 2100, 2800, 3500, 4200].enumerated() {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(42 + i * 2)) { scroll(to: CGFloat(y)) }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(43 + i * 2)) { shot("scroll-\(y)") }
                     }
                 }
             }

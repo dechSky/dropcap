@@ -83,6 +83,12 @@ struct AppState: Codable {
 
 enum Store {
     static let dir: URL = {
+        // 시험용: AINEWS_DATA_DIR 로 다른 폴더를 쓰면 실제 기록·구독을 건드리지 않는다
+        if let custom = ProcessInfo.processInfo.environment["AINEWS_DATA_DIR"] {
+            let d = URL(fileURLWithPath: custom, isDirectory: true)
+            try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+            return d
+        }
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let d = base.appendingPathComponent("AI News Alert", isDirectory: true)
         try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)

@@ -86,12 +86,14 @@ final class Database: @unchecked Sendable {
 
     func upsert(_ item: NewsItem, cluster: String?, firstSeen: Date = Date()) {
         guard let json = try? Self.encoder.encode(item) else { return }
+        // 논문 피드(arXiv)는 날짜가 발표일 자정이라, 지면에는 받은 때를 기준으로 싣는다
+        let when = item.itemKind == .paper ? firstSeen : item.date
         queue.sync {
             run("""
             INSERT INTO items(key,json,date,first_seen,category,source,tier,cluster,image) VALUES(?,?,?,?,?,?,?,?,?)
             ON CONFLICT(key) DO UPDATE SET json=excluded.json, date=COALESCE(excluded.date, items.date),
               category=excluded.category, cluster=COALESCE(excluded.cluster, items.cluster), image=COALESCE(excluded.image, items.image)
-            """, [.text(item.key), .text(String(decoding: json, as: UTF8.self)), .real(item.date?.timeIntervalSince1970),
+            """, [.text(item.key), .text(String(decoding: json, as: UTF8.self)), .real(when?.timeIntervalSince1970),
                   .real(firstSeen.timeIntervalSince1970), .text(item.category.rawValue), .text(item.sourceId), .text(item.tier),
                   .text(cluster), .text(item.image)])
         }

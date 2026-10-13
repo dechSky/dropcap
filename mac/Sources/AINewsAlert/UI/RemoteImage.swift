@@ -88,8 +88,11 @@ struct RemoteImage: View {
         }
         .clipped()
         .task(id: url) {
-            guard let url, image == nil else { return }
-            if let img = await ImageLoader.shared.image(url) {
+            // 주소가 바뀌면(같은 칸에 다른 기사) 이전 사진을 비우고 새로 받는다
+            image = nil
+            shown = false
+            guard let url else { return }
+            if let img = await ImageLoader.shared.image(url), !Task.isCancelled {
                 image = img
                 withAnimation(.easeOut(duration: 0.5)) { shown = true }
             }

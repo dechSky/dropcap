@@ -146,7 +146,7 @@ struct ReaderView: View {
                 }
                 .help(app.isSaved(model.item) ? "저장 취소" : "나중에 읽기로 저장")
                 Button {
-                    if let u = URL(string: model.item.link) { openURL(u) }
+                    ExternalLink.open(model.item.link)
                 } label: { Label("브라우저에서 열기", systemImage: "safari") }
                 .help("원문을 브라우저에서 열기")
                 ShareLink(item: URL(string: model.item.link) ?? URL(string: "https://example.com")!)
@@ -293,9 +293,9 @@ struct ReaderView: View {
                 .font(.app(13)).foregroundStyle(.secondary)
             HStack {
                 if let u = model.translatedPageURL {
-                    Button("번역된 웹페이지로 보기") { openURL(u) }.buttonStyle(.borderedProminent)
+                    Button("번역된 웹페이지로 보기") { ExternalLink.open(u.absoluteString) }.buttonStyle(.borderedProminent)
                 }
-                Button("원문 열기") { if let u = URL(string: model.item.link) { openURL(u) } }
+                Button("원문 열기") { ExternalLink.open(model.item.link) }
             }
             .controlSize(.large)
         }
@@ -346,7 +346,7 @@ enum ReaderController {
     static func open(_ item: NewsItem, from: CGRect = .zero) {
         // 영상·팟캐스트는 원래 앱(브라우저·YouTube·팟캐스트)으로
         if item.itemKind.opensExternally {
-            if let u = URL(string: item.link), URLSafety.isPublicHTTP(u) { NSWorkspace.shared.open(u) }
+            ExternalLink.open(item.link)
             return
         }
         let model = ReaderModel(item: item)

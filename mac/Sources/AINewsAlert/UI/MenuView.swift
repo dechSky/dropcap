@@ -114,7 +114,7 @@ struct MenuView: View {
         Button(model.isSaved(it) ? "저장 취소" : "나중에 읽기") { model.toggleSaved(it) }
         Button(model.isRead(it) ? "안 읽음으로 표시" : "읽음으로 표시") { model.setRead(it, !model.isRead(it)) }
         Divider()
-        Button("브라우저에서 열기") { if let u = URL(string: it.link) { NSWorkspace.shared.open(u) } }
+        Button("브라우저에서 열기") { ExternalLink.open(it.link) }
         Button("링크 복사") {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(it.link, forType: .string)

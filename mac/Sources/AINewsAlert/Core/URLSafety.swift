@@ -1,3 +1,4 @@
+import AppKit
 import Darwin
 import Foundation
 
@@ -124,5 +125,14 @@ enum URLSafety {
             if map.count > 500 { map.removeAll() }
             map[h] = (ok, Date())
         }
+    }
+}
+
+// 기사 링크를 바깥(브라우저·앱)으로 여는 곳은 모두 이것만 쓴다: 공개 http(s) 주소만 연다
+enum ExternalLink {
+    @discardableResult
+    static func open(_ link: String?) -> Bool {
+        guard let link, let u = URL(string: link), URLSafety.isPublicHTTP(u) else { return false }
+        return NSWorkspace.shared.open(u)
     }
 }

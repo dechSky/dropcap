@@ -453,7 +453,7 @@ struct StoryCard: View {
             if let issue, let c = Magazine.shared.clusterID(of: item.key, near: issue), let onStory {
                 Button("여러 시각 보기") { onStory(c) }
             }
-            Button("브라우저에서 열기") { if let u = URL(string: item.link) { NSWorkspace.shared.open(u) } }
+            Button("브라우저에서 열기") { ExternalLink.open(item.link) }
         }
         .background(ScreenFrame(frame: $frame))
         // 지면이 차례로 깔리는 느낌: 처음엔 순서대로, 스크롤할 땐 들어오며 또렷해진다

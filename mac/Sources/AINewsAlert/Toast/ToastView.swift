@@ -170,7 +170,7 @@ struct ToastView: View {
                     AppModel.shared.toggleSaved(item)
                 }
                 QuickButton(symbol: "safari", help: "브라우저에서 열기") {
-                    if let u = URL(string: item.link) { NSWorkspace.shared.open(u) }
+                    ExternalLink.open(item.link)
                     AppModel.shared.setRead(item, true)
                     Task { await leave(quick: true) }
                 }

@@ -165,8 +165,24 @@ import Testing
     @Test func blocksPrivateAndOddSchemes() {
         for u in ["http://localhost:8080/", "http://127.0.0.1/", "http://192.168.0.1/admin", "http://10.1.2.3/", "http://172.20.0.5/",
                   "http://169.254.169.254/latest/meta-data", "http://router.local/", "http://intranet/", "http://[::1]/", "http://[fd00::1]/",
-                  "http://[::ffff:192.168.1.1]/", "file:///etc/passwd", "smb://server/share", "javascript:alert(1)", "http://0.0.0.0/"] {
+                  "http://[::ffff:192.168.1.1]/", "file:///etc/passwd", "smb://server/share", "javascript:alert(1)", "http://0.0.0.0/",
+                  // 숫자 표기 꼼수
+                  "http://2130706433/", "http://0x7f.1/", "http://127.1/", "http://0177.0.0.1/", "http://0x7f000001/",
+                  "http://[0:0:0:0:0:0:0:1]/", "http://[::ffff:7f00:1]/", "http://[64:ff9b::7f00:1]/", "http://[2002:c0a8:0101::]/",
+                  "http://localhost./", "http://[fe80::1]/"] {
             #expect(!URLSafety.isPublicHTTP(URL(string: u)), "\(u)")
         }
+    }
+}
+
+
+@Suite struct URLSafetyDNSTests {
+    // 이름이 내부망 IP 로 풀리면 거절(실제 DNS 조회, 네트워크 필요)
+    @Test func nameResolvingToLoopbackIsBlocked() async {
+        #expect(!(await URLSafety.resolvesPublic(URL(string: "http://127.0.0.1.nip.io/"))))
+        #expect(!(await URLSafety.resolvesPublic(URL(string: "http://localtest.me/"))))
+    }
+    @Test func publicNameAllowed() async {
+        #expect(await URLSafety.resolvesPublic(URL(string: "https://openai.com/")))
     }
 }

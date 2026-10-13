@@ -21,7 +21,7 @@ actor FeedService {
 
     // 본문과 함께 문자 인코딩 이름(헤더 기준)을 돌려준다
     func fetchWithEncoding(_ url: String, conditional: Bool = false) async throws -> (data: Data, encoding: String?)? {
-        guard let u = URL(string: url), URLSafety.isPublicHTTP(u) else { throw FeedError.badFormat }
+        guard let u = URL(string: url), await URLSafety.resolvesPublic(u) else { throw FeedError.badFormat }
         var req = URLRequest(url: u)
         req.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
         req.setValue("application/rss+xml, application/atom+xml, application/xml, text/xml, text/html;q=0.8", forHTTPHeaderField: "Accept")
@@ -106,6 +106,6 @@ final class RedirectGuard: NSObject, URLSessionTaskDelegate {
     static let shared = RedirectGuard()
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest) async -> URLRequest? {
-        URLSafety.isPublicHTTP(request.url) ? request : nil
+        await URLSafety.resolvesPublic(request.url) ? request : nil
     }
 }

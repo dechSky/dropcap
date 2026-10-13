@@ -65,7 +65,7 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
     // 2) 느린 길: 스크립트로 본문을 그리는 사이트만 실제로 띄운다. 그림·동영상·글꼴은 막고, 본문이 생기는 대로 바로 꺼낸다.
     // allowScripts: 사용자가 직접 연 기사일 때만 true. 미리 받기에서는 사이트의 스크립트를 돌리지 않는다.
     func extract(_ url: URL, allowScripts: Bool = true) async -> Article? {
-        guard URLSafety.isPublicHTTP(url) else { return nil }
+        guard await URLSafety.resolvesPublic(url) else { return nil }
         let t0 = Date()
         if let got = try? await FeedService.shared.fetchWithEncoding(url.absoluteString),
            let art = await run(data: got.data, encoding: got.encoding ?? Self.sniffCharset(got.data), base: url) {
@@ -177,7 +177,7 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
         guard let u = action.request.url else { return .cancel }
         if u.scheme == "about" || u.scheme == "data" { return .allow }
-        return URLSafety.isPublicHTTP(u) ? .allow : .cancel
+        return await URLSafety.resolvesPublic(u) ? .allow : .cancel
     }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { finishWait() }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { finishWait() }

@@ -29,7 +29,10 @@ actor FeedService {
             if let e = v.etag { req.setValue(e, forHTTPHeaderField: "If-None-Match") }
             if let m = v.modified { req.setValue(m, forHTTPHeaderField: "If-Modified-Since") }
         }
-        let (data, resp) = try await session.data(for: req, delegate: RedirectGuard.shared)
+        let guardian = RequestGuard()
+        let (data, resp) = try await session.data(for: req, delegate: guardian)
+        // 실제로 접속한 IP 가 내부망이면(확인 뒤 DNS 응답을 바꾸는 공격) 받은 내용을 버린다
+        if guardian.connectedToPrivate { throw FeedError.badFormat }
         let http = resp as? HTTPURLResponse
         if http?.statusCode == 304 { return nil }
         if let code = http?.statusCode, !(200..<300).contains(code) { throw FeedError.http(code) }
@@ -101,11 +104,25 @@ enum Gzip {
     }
 }
 
-// 공개 주소에서 내부망 주소로 넘기는 리다이렉트는 따라가지 않는다
-final class RedirectGuard: NSObject, URLSessionTaskDelegate {
-    static let shared = RedirectGuard()
+// 요청 하나를 지킨다: 내부망으로 넘기는 리다이렉트는 따라가지 않고, 실제 접속한 IP 를 기록한다
+final class RequestGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let lock = NSLock()
+    private var privateHit = false
+    var connectedToPrivate: Bool { lock.lock(); defer { lock.unlock() }; return privateHit }
+
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest) async -> URLRequest? {
         await URLSafety.resolvesPublic(request.url) ? request : nil
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
+        let bad = metrics.transactionMetrics.contains { t in
+            guard let ip = t.remoteAddress else { return false }
+            let bare = ip.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+            if let v4 = URLSafety.parseV4(bare) { return !URLSafety.isPublic(v4: v4) }
+            if let v6 = URLSafety.parseV6(bare.split(separator: "%").first.map(String.init) ?? bare) { return !URLSafety.isPublic(v6: v6) }
+            return false
+        }
+        if bad { lock.lock(); privateHit = true; lock.unlock() }
     }
 }

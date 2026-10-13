@@ -7,7 +7,8 @@ import Foundation
 // 두 단계로 본다.
 // 1) isPublicHTTP: 주소 모양만 보고 바로 판단(스킴·이름·IP 글자). 숫자처럼 생긴 이상한 표기(0x7f.1, 127.1 등)는 거절.
 // 2) resolvesPublic: 이름을 실제 IP 로 풀어 보고, 하나라도 내부망이면 거절(127.0.0.1.nip.io 같은 이름 대비).
-// 남는 위험: 확인과 실제 접속 사이에 DNS 응답을 바꾸는 공격(DNS rebinding)은 완전히 막지 못한다.
+// 3) 받은 뒤: 실제로 접속한 IP 를 다시 보고 내부망이면 응답을 버린다(FeedService.RequestGuard).
+// 남는 위험: DNS rebinding 때 요청 자체는 한 번 나갈 수 있다(내용은 쓰지 않음). 사용자가 직접 연 기사의 웹 보기는 일반 브라우저와 같은 수준.
 enum URLSafety {
     static func isPublicHTTP(_ url: URL?) -> Bool {
         guard let url, let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",

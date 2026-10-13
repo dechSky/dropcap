@@ -125,6 +125,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     }
                 }
             }
+            if env["DROPCAP_TEST_BURST"] != nil { // 시험용: 견본 알림 3건을 한꺼번에(두 번째부터 바로 떨어짐)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    let samples: [(String, String, String, String)] = [
+                        ("openai", "OpenAI", "새 AI 소식은 이렇게 떨어집니다", "This is how new AI news will drop in"),
+                        ("verge", "The Verge", "두 번째 소식부터는 맺히지 않고 바로 떨어집니다", "From the second item it drops straight in"),
+                        ("aitimes", "AI타임스", "세 번째 소식도 이어서 내려앉습니다", "The third one lands right after"),
+                    ]
+                    let items = samples.map { s in
+                        NewsItem(id: AppModel.previewID, title: s.3, titleKo: s.2, link: "", date: Date(), summary: "",
+                                 sourceId: s.0, sourceName: s.1 + " · 미리 보기", tier: "lab")
+                    }
+                    ToastCenter.shared.show(items, sound: AppModel.shared.state.settings.sound)
+                }
+            }
             if env["DROPCAP_TEST_TOAST"] != nil {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1) { AppModel.shared.preview() }
                 if let dir = env["DROPCAP_TEST_SHOT_DIR"] {

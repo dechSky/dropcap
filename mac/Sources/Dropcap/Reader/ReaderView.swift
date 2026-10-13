@@ -69,6 +69,7 @@ struct ReaderView: View {
     @State private var scrapFlash = false
     @State private var newFolder = false
     @State private var folderName = ""
+    @State private var scrapToast: String?
 
     var body: some View {
         ScrollView {
@@ -133,6 +134,7 @@ struct ReaderView: View {
                         Button(c) { scrapbook.add(model.item, to: c); scrapFlash.toggle() }
                     }
                     Divider()
+                    Button("선택한 부분 스크랩 (⌘⇧S)") { scrapSelection() }
                     Button("새 폴더에 스크랩…") { newFolder = true }
                 } label: {
                     Label("스크랩", systemImage: scrapbook.isScrapped(model.item) ? "scissors.circle.fill" : "scissors")
@@ -154,6 +156,20 @@ struct ReaderView: View {
         }
         .task { await model.load() }
         .onDisappear { speaker.stop() }
+        .background {
+            Button("") { scrapSelection() }.keyboardShortcut("s", modifiers: [.command, .shift]).opacity(0).allowsHitTesting(false)
+        }
+        .overlay(alignment: .bottom) {
+            if let msg = scrapToast {
+                Label(msg, systemImage: "scissors")
+                    .font(.app(12.5, .semibold))
+                    .padding(.horizontal, 14).padding(.vertical, 8)
+                    .background(.regularMaterial, in: Capsule())
+                    .shadow(color: .black.opacity(0.15), radius: 8, y: 3)
+                    .padding(.bottom, 20)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
         .alert("새 스크랩 폴더", isPresented: $newFolder) {
             TextField("폴더 이름", text: $folderName)
             Button("스크랩") {
@@ -162,6 +178,37 @@ struct ReaderView: View {
                 folderName = ""
             }
             Button("취소", role: .cancel) { folderName = "" }
+        }
+    }
+
+    // 끌어서 고른 글만 스크랩: 고른 글을 잠시 클립보드로 복사해 읽고, 원래 클립보드를 되돌린다
+    private func scrapSelection() {
+        let pb = NSPasteboard.general
+        let saved = pb.pasteboardItems?.compactMap { item -> NSPasteboardItem? in
+            let copy = NSPasteboardItem()
+            for t in item.types { if let d = item.data(forType: t) { copy.setData(d, forType: t) } }
+            return copy
+        } ?? []
+        let before = pb.changeCount
+        NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
+        let picked = pb.changeCount != before ? pb.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) : nil
+        pb.clearContents()
+        if !saved.isEmpty { pb.writeObjects(saved) }
+        guard let text = picked, !text.isEmpty else {
+            flash("먼저 스크랩할 글을 끌어서 고르세요")
+            return
+        }
+        // 고른 글이 들어 있는 문단의 원문도 함께(번역문을 골랐을 때)
+        let original = model.blocks.first { ($0.text ?? "").contains(text) }?.original
+        Scrapbook.shared.add(model.item, quote: text, original: original)
+        flash("고른 부분을 ‘\(UserDefaults.standard.string(forKey: "lastScrapCollection") ?? Scrapbook.defaultCollection)’에 스크랩했어요")
+    }
+
+    private func flash(_ msg: String) {
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { scrapToast = msg }
+        Task {
+            try? await Task.sleep(for: .seconds(2.2))
+            withAnimation(.easeOut(duration: 0.25)) { scrapToast = nil }
         }
     }
 
@@ -401,40 +448,101 @@ private struct ScrapHover: ViewModifier {
     let original: String?
     let enabled: Bool
     @State private var hover = false
-    @State private var done = false
+    @State private var showSheet = false
+    @State private var memo = ""
     @ObservedObject private var book = Scrapbook.shared
 
+    private var scrap: Scrap? { book.scraps.first { $0.item.key == item.key && $0.quote == text } }
+
     func body(content: Content) -> some View {
-        let scrapped = book.isScrapped(item, quote: text)
+        let scrapped = scrap != nil
         content
+            // 마우스를 올린 문단을 옅게 칠해 무엇이 스크랩될지 보이게
+            .background {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.accentColor.opacity(enabled && hover ? 0.06 : 0))
+                    .padding(.horizontal, -8).padding(.vertical, -3)
+            }
             .background(alignment: .leading) {
                 if scrapped {
-                    RoundedRectangle(cornerRadius: 3).fill(Color.yellow.opacity(0.55)).frame(width: 3).offset(x: -14)
+                    RoundedRectangle(cornerRadius: 3).fill(Color.yellow.opacity(0.6)).frame(width: 3).offset(x: -14)
                 }
             }
             .overlay(alignment: .topLeading) {
-                if enabled && (hover || done) {
+                if enabled && (hover || showSheet) {
                     Button {
-                        book.add(item, quote: text, original: original)
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) { done = true }
-                        Task { try? await Task.sleep(for: .seconds(1.2)); withAnimation { done = false } }
+                        if !scrapped { book.add(item, quote: text, original: original) }
+                        memo = scrap?.memo ?? ""
+                        showSheet = true
                     } label: {
-                        Image(systemName: done || scrapped ? "checkmark" : "scissors")
-                            .font(.app(11, .semibold))
-                            .frame(width: 24, height: 24)
+                        Image(systemName: scrapped ? "scissors.circle.fill" : "scissors")
+                            .font(.app(12, .semibold))
+                            .frame(width: 26, height: 26)
                             .background(.regularMaterial, in: Circle())
                             .overlay(Circle().strokeBorder(.primary.opacity(0.1), lineWidth: 0.5))
-                            .foregroundStyle(done || scrapped ? Color.green : Color.secondary)
-                            .scaleEffect(done ? 1.15 : 1)
+                            .foregroundStyle(scrapped ? Color.orange : Color.secondary)
                     }
                     .buttonStyle(.plain)
-                    .help(scrapped ? "스크랩한 문단" : "이 문단 스크랩")
-                    .offset(x: -34, y: 0)
+                    .help(scrapped ? "스크랩한 문단 — 눌러서 폴더·메모 바꾸기" : "이 문단 스크랩")
+                    .offset(x: -38, y: -2)
                     .transition(.opacity.combined(with: .scale(scale: 0.8)))
+                    .popover(isPresented: $showSheet, arrowEdge: .leading) { sheet }
                 }
             }
             .contentShape(Rectangle())
             .onHover { h in withAnimation(.easeOut(duration: 0.15)) { hover = h } }
+            .contextMenu {
+                if enabled {
+                    if scrapped {
+                        Button("스크랩 지우기") { if let s = scrap { book.remove(s) } }
+                    } else {
+                        Button("이 문단 스크랩") { book.add(item, quote: text, original: original) }
+                    }
+                    Menu("다른 폴더에 스크랩") {
+                        ForEach(book.collections, id: \.self) { c in
+                            Button(c) { book.add(item, quote: text, original: original, to: c) }
+                        }
+                    }
+                    Divider()
+                    Button("이 문단 복사") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(text, forType: .string)
+                    }
+                }
+            }
+    }
+
+    // 스크랩한 뒤: 담긴 폴더, 폴더 바꾸기, 메모, 되돌리기
+    private var sheet: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let s = scrap {
+                Label("‘\(s.collection)’에 스크랩했어요", systemImage: "checkmark.circle.fill")
+                    .font(.app(13, .semibold)).foregroundStyle(.green)
+                Picker("폴더", selection: Binding(get: { s.collection }, set: { c in var n = s; n.collection = c; book.update(n) })) {
+                    ForEach(book.collections, id: \.self) { Text($0).tag($0) }
+                }
+                .pickerStyle(.menu)
+                TextField("메모 (선택)", text: $memo, axis: .vertical)
+                    .textFieldStyle(.roundedBorder).font(.app(13)).lineLimit(2...4)
+                    .onSubmit { save(s) }
+                HStack {
+                    Button("되돌리기", role: .destructive) { book.remove(s); showSheet = false }
+                    Spacer()
+                    Button("완료") { save(s) }.keyboardShortcut(.defaultAction)
+                }
+            } else {
+                Text("스크랩을 지웠어요").font(.app(13)).foregroundStyle(.secondary)
+            }
+        }
+        .padding(14)
+        .frame(width: 280)
+    }
+
+    private func save(_ s: Scrap) {
+        var n = s
+        n.memo = memo
+        book.update(n)
+        showSheet = false
     }
 }
 

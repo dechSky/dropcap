@@ -11,8 +11,8 @@ struct DripView: View {
     static let width: CGFloat = 120
 
     // 시간표(초)
-    static let swell = 0.62     // 맺혀서 부푸는 시간
-    static let sag = 0.30       // 무게로 처지며 목이 늘어나는 시간
+    static let swell = 0.45     // 맺혀서 부푸는 시간(빨리 읽히게 0.62→0.45)
+    static let sag = 0.22       // 무게로 처지며 목이 늘어나는 시간
     static var detach: Double { swell + sag }
     static let gravity: CGFloat = 2600 // 화면에서 보기 좋게 빠르게 한 중력(pt/s²)
     static let dropRadius: CGFloat = 15

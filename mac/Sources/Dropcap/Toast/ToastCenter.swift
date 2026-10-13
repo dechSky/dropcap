@@ -8,6 +8,7 @@ struct Toast: Identifiable, Equatable {
     let id = UUID()
     let kind: Kind
     var playSound = false
+    var quickDrop = false   // 여러 건일 때 두 번째부터: 맺히는 단계를 건너뛰고 바로 떨어짐
 
     @MainActor var accent: Color {
         if case .news(let it) = kind { return it.accent }
@@ -39,6 +40,7 @@ final class ToastCenter: ObservableObject {
         var queue = Array(cards)
         if items.count > 3 { queue.append(Toast(kind: .more(items.count - 3))) }
         if !queue.isEmpty, sound { queue[0].playSound = true }
+        for i in queue.indices.dropFirst() { queue[i].quickDrop = true }
         // 여러 건이면 조금씩 시간차를 두고 하나씩 떨어뜨린다
         for (i, t) in queue.enumerated() {
             DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.32) { self.push(t) }

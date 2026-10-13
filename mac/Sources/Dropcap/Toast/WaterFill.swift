@@ -9,7 +9,7 @@ struct WaterFill: View {
     let level: Double        // 가득 찬 뒤의 물높이(남은 시간, 0~1)
     var calm = false         // 잔잔해진 뒤에는 초당 12번만 다시 그림(전기·CPU 절약)
 
-    static let fillTime = 0.95
+    static let fillTime = 0.75
 
     var body: some View {
         TimelineView(.animation(minimumInterval: calm ? 1.0 / 12 : nil)) { tl in
@@ -31,7 +31,8 @@ struct WaterFill: View {
         // 물결: 차오르는 동안 크게 출렁이다 잔잔해지고, 평소엔 아주 작게 일렁인다
         let amp = CGFloat(4.5 * exp(-2.2 * e) + 0.9)
         let tilt = CGFloat(0.05 * sin(e * 7.5) * exp(-1.6 * e)) // 좌우로 기우뚱
-        let alpha = 0.5 - 0.36 * smooth((e - F * 0.8) / 0.4) // 거의 차면 맑아져 글자가 잘 보이게
+        // 글자가 물과 함께 떠오르므로 물빛은 옅게 시작하고, 다 차면 더 맑게
+        let alpha = 0.4 - 0.27 * smooth((e - F * 0.6) / 0.45)
 
         func wave(phase: Double, length: CGFloat, ampScale: CGFloat) -> Path {
             var p = Path()

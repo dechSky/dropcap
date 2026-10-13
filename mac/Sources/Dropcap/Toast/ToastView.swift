@@ -307,10 +307,12 @@ struct ToastView: View {
         } else {
             // 1) 빈 유리잔(카드)이 살며시 나타나고, 천장에 물이 맺혀 → 처지다 → 톡 떨어진다
             guard await pause(30) else { return } // 카드 높이를 잰 뒤
-            dripStart = Date()
+            // 두 번째 카드부터는 맺히는 단계 대부분을 건너뛴다(앞부분을 이미 지난 것처럼 시작)
+            let skip = toast.quickDrop ? DripView.detach - 0.12 : 0
+            dripStart = Date().addingTimeInterval(-skip)
             withAnimation(.easeOut(duration: 0.5)) { alpha = 1; shadow = 0.6 }
             let land = DripView.landingTime(landY)
-            guard await pause(Int(land * 1000) - 25) else { return } // 닿는 순간 바로 물이 차기 시작하게
+            guard await pause(Int((land - skip) * 1000) - 25) else { return } // 닿는 순간 바로 물이 차기 시작하게
 
             // 2) 바닥에 "퐁" 하고 닿으면 물이 찰랑찰랑 차오른다
             if toast.playSound { DropSound.play() }
@@ -325,10 +327,11 @@ struct ToastView: View {
             }
 
             // 3) 거의 다 차면 글자가 떠오르고 그림자가 짙어진다
-            guard await pause(Int(WaterFill.fillTime * 0.85 * 1000)) else { return }
+            // 글자는 물이 3분의 1쯤 찼을 때부터 물과 함께 떠오른다
+            guard await pause(Int(WaterFill.fillTime * 0.3 * 1000)) else { return }
             withAnimation(.easeOut(duration: 0.4)) { shadow = 1 }
             reveal = true
-            guard await pause(Int(WaterFill.fillTime * 0.15 * 1000)) else { return }
+            guard await pause(Int(WaterFill.fillTime * 0.7 * 1000)) else { return }
             Task { try? await Task.sleep(for: .milliseconds(900)); calm = true }
         }
 

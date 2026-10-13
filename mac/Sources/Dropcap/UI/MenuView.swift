@@ -10,6 +10,7 @@ struct MenuView: View {
     @AppStorage("listSort") private var sortRaw = "newest"
 
     enum Tab: String, CaseIterable { case all = "전체", unread = "안 읽음", saved = "저장" }
+    static let listHeight: CGFloat = 400
 
     private var items: [NewsItem] {
         var list: [NewsItem]
@@ -83,25 +84,33 @@ struct MenuView: View {
             .background(.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
             .padding(.horizontal, 14).padding(.bottom, 10)
             Divider().opacity(0.5)
-            if items.isEmpty {
-                empty
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 2) {
-                        ForEach(items) { it in
-                            Row(item: it, read: model.isRead(it), saved: model.isSaved(it)) { model.open(it) }
-                                .contextMenu { menu(for: it) }
+            // 목록 칸 높이를 고정한다: 상단바 창은 내용이 줄어도 창 크기를 줄이지 않아 아래에 빈 칸이 남는다
+            Group {
+                if items.isEmpty {
+                    empty.frame(maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 2) {
+                            ForEach(items) { it in
+                                Row(item: it, read: model.isRead(it), saved: model.isSaved(it)) { model.open(it) }
+                                    .contextMenu { menu(for: it) }
+                            }
                         }
+                        .padding(6)
                     }
-                    .padding(6)
                 }
-                .frame(height: min(CGFloat(items.count) * 70 + 12, 440))
             }
+            .frame(height: Self.listHeight)
             Divider().opacity(0.5)
             footer
         }
         .frame(width: 370)
-        .onAppear { model.markRead() }
+        .fixedSize()
+        .onAppear {
+            model.markRead()
+            // 열자마자 검색칸에 입력 커서가 들어가지 않게
+            DispatchQueue.main.async { NSApp.keyWindow?.makeFirstResponder(nil) }
+        }
     }
 
     @ViewBuilder private func menu(for it: NewsItem) -> some View {

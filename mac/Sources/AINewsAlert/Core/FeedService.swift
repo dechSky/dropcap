@@ -57,7 +57,8 @@ actor FeedService {
             URLSafety.isPublicHTTP(URL(string: e.link))
         }.map {
             NewsItem(id: $0.id, title: $0.title, titleKo: nil, link: $0.link, date: $0.date, summary: $0.summary,
-                     sourceId: source.id, sourceName: source.name, tier: source.tier)
+                     sourceId: source.id, sourceName: source.name, tier: source.tier,
+                     image: $0.image.flatMap { URL(string: $0, relativeTo: URL(string: $0)) }.map(\.absoluteString))
         }
     }
 
@@ -75,6 +76,7 @@ actor FeedService {
         item.title = title.map { Plain.clean($0).replacingOccurrences(of: "\\s*[|\\\\-]\\s*Anthropic\\s*$", with: "", options: .regularExpression) }?.nonEmpty
             ?? Plain.titleFromSlug(item.link)
         if let d = meta("<meta[^>]+name=[\"']description[\"'][^>]+content=[\"']([^\"']+)") { item.summary = String(Plain.clean(d).prefix(300)) }
+        if item.image == nil, let img = meta("<meta[^>]+property=[\"']og:image[\"'][^>]+content=[\"']([^\"']+)") { item.image = img }
     }
 }
 
@@ -114,6 +116,12 @@ final class RequestGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable 
 
     var lastRemote: String? { lock.lock(); defer { lock.unlock() }; return lastIP }
 
+    static var systemProxyConfigured: Bool {
+        guard let p = CFNetworkCopySystemProxySettings()?.takeRetainedValue() as? [String: Any] else { return false }
+        let on = { (k: String) in (p[k] as? Int ?? 0) != 0 }
+        return on("HTTPEnable") || on("HTTPSEnable") || on("ProxyAutoConfigEnable") || on("SOCKSEnable")
+    }
+
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest) async -> URLRequest? {
         await URLSafety.resolvesPublic(request.url) ? request : nil
@@ -121,9 +129,16 @@ final class RequestGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable 
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
         var safe = true
+        var verified = false   // 실제로 IP 를 확인한 연결이 하나라도 있어야 통과
+        var proxied = false
         var seen: String?
         for t in metrics.transactionMetrics where t.resourceFetchType == .networkLoad {
-            if t.isProxyConnection { continue }
+            if t.isProxyConnection {
+                // 프록시를 거친 연결: 시스템에 프록시가 실제로 설정된 경우에만 이름 확인 단계에 맡긴다
+                if Self.systemProxyConfigured { proxied = true } else { safe = false }
+                continue
+            }
+            verified = true
             guard let ip = t.remoteAddress else { safe = false; continue } // 모르면 막음
             seen = ip
             let bare = ip.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
@@ -136,7 +151,7 @@ final class RequestGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable 
             }
         }
         lock.lock()
-        verdict = safe
+        verdict = safe && (verified || proxied)
         lastIP = seen
         let w = waiter
         waiter = nil
@@ -166,5 +181,24 @@ final class RequestGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable 
         }
         lock.lock(); defer { lock.unlock() }
         return verdict ?? false
+    }
+}
+
+extension FeedService {
+    // 대표 사진이 없는 기사는 페이지 머리의 og:image 를 찾아 채운다(공개 주소만, 앞 64KB 만 읽음)
+    func ogImage(_ link: String) async -> String? {
+        guard let data = try? await fetch(link) else { return nil }
+        let head = String(decoding: data.prefix(65536), as: UTF8.self)
+        for pattern in [#"<meta[^>]+property=["']og:image(?::url)?["'][^>]+content=["']([^"']+)"#,
+                        #"<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image"#,
+                        #"<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)"#] {
+            if let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+               let m = re.firstMatch(in: head, range: NSRange(head.startIndex..., in: head)),
+               let r = Range(m.range(at: 1), in: head) {
+                let raw = String(head[r]).replacingOccurrences(of: "&amp;", with: "&")
+                return URL(string: raw, relativeTo: URL(string: link))?.absoluteString
+            }
+        }
+        return nil
     }
 }

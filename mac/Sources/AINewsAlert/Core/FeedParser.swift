@@ -40,7 +40,34 @@ enum FeedError: LocalizedError {
 }
 
 enum FeedParser {
-    struct Entry { var id: String; var title: String; var link: String; var date: Date?; var summary: String }
+    struct Entry { var id: String; var title: String; var link: String; var date: Date?; var summary: String; var image: String? = nil }
+
+    // 대표 사진: media:content / media:thumbnail / 그림 enclosure / 본문의 첫 <img>
+    static func image(_ it: XNode) -> String? {
+        for n in it.children {
+            switch n.name {
+            case "media:content", "media:thumbnail":
+                if let u = n.attrs["url"], (n.attrs["medium"] ?? "image") == "image" || n.attrs["type"]?.hasPrefix("image") == true { return u }
+                if let t = n.child("media:thumbnail")?.attrs["url"] { return t }
+            case "media:group":
+                if let u = n.all("media:content").first(where: { ($0.attrs["medium"] ?? "image") == "image" })?.attrs["url"] { return u }
+            case "enclosure":
+                if n.attrs["type"]?.hasPrefix("image") == true, let u = n.attrs["url"] { return u }
+            default: break
+            }
+        }
+        for field in ["content:encoded", "content", "description", "summary"] {
+            let html = it.value(field)
+            if let r = html.range(of: #"<img[^>]+src=["']([^"']+)["']"#, options: .regularExpression) {
+                let tag = String(html[r])
+                if let q = tag.range(of: #"src=["']"#, options: .regularExpression) {
+                    let rest = tag[q.upperBound...]
+                    if let end = rest.firstIndex(where: { $0 == "\"" || $0 == "'" }) { return String(rest[..<end]) }
+                }
+            }
+        }
+        return nil
+    }
 
     static func tree(_ data: Data) throws -> XNode {
         let b = TreeBuilder()
@@ -58,7 +85,7 @@ enum FeedParser {
                 let link = it.value("link")
                 return Entry(id: it.value("guid").nonEmpty ?? link, title: Plain.clean(it.value("title")), link: link,
                              date: Dates.parse(it.value("pubDate").nonEmpty ?? it.value("dc:date")),
-                             summary: String(Plain.clean(it.value("description")).prefix(300)))
+                             summary: String(Plain.clean(it.value("description")).prefix(300)), image: image(it))
             }
         }
         if let feed = root.child("feed") {
@@ -68,7 +95,7 @@ enum FeedParser {
                 let link = alt?.attrs["href"] ?? alt?.text ?? ""
                 return Entry(id: it.value("id").nonEmpty ?? link, title: Plain.clean(it.value("title")), link: link,
                              date: Dates.parse(it.value("published").nonEmpty ?? it.value("updated")),
-                             summary: String(Plain.clean(it.value("summary").nonEmpty ?? it.value("content")).prefix(300)))
+                             summary: String(Plain.clean(it.value("summary").nonEmpty ?? it.value("content")).prefix(300)), image: image(it))
             }
         }
         if let rdf = root.child("rdf:RDF") {

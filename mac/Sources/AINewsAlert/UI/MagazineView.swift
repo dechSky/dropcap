@@ -111,6 +111,7 @@ struct IssueView: View {
     let onStory: (String) -> Void
     @ObservedObject private var mag = Magazine.shared
     @State private var appeared = false
+    @AppStorage("magSort") private var sortRaw = MagSort.recommended.rawValue
 
     private var cover: Database.StoredItem? { issue.cover.flatMap { mag.stored($0, near: issue) } }
 
@@ -119,6 +120,14 @@ struct IssueView: View {
             VStack(alignment: .leading, spacing: 0) {
                 Masthead(issue: issue, live: live, appeared: appeared)
                     .padding(.horizontal, 36).padding(.top, 28).padding(.bottom, 22)
+                    .overlay(alignment: .bottomTrailing) {
+                        Picker("정렬", selection: $sortRaw) {
+                            ForEach(MagSort.allCases, id: \.rawValue) { Label($0.label, systemImage: $0.symbol).tag($0.rawValue) }
+                        }
+                        .pickerStyle(.menu).fixedSize()
+                        .padding(.trailing, 36).padding(.bottom, 34)
+                        .help("지면 안의 기사 순서")
+                    }
                 if let c = cover {
                     CoverStory(stored: c, issue: issue, onStory: onStory)
                         .padding(.horizontal, 28)
@@ -128,12 +137,13 @@ struct IssueView: View {
                 } else {
                     EmptyIssue(live: live).padding(.horizontal, 36)
                 }
-                ForEach(Array(issue.sections.enumerated()), id: \.element.category) { si, sec in
-                    SectionBlock(section: sec, items: mag.items(sec.keys, in: issue), issue: issue, index: si, onStory: onStory)
+                ForEach(Array(issue.sections.enumerated()), id: \.element.id) { si, sec in
+                    SectionBlock(section: sec, items: MagSort(rawValue: sortRaw)?.apply(mag.items(sec.keys, in: issue)) ?? mag.items(sec.keys, in: issue),
+                                 issue: issue, index: si, onStory: onStory)
                         .padding(.top, 38)
                 }
                 Text("기사 저작권은 각 언론사·기업에 있습니다. 제목·요약·사진은 원문으로 이어 주기 위한 것입니다.")
-                    .font(.system(size: 11)).foregroundStyle(.tertiary)
+                    .font(.app(11)).foregroundStyle(.tertiary)
                     .padding(.horizontal, 36).padding(.vertical, 40)
             }
         }
@@ -151,7 +161,7 @@ private struct Masthead: View {
             HStack(spacing: 8) {
                 Text("AI 매거진").font(.system(size: 13, weight: .heavy, design: .serif)).tracking(2.5)
                 if live {
-                    Text("발행 중").font(.system(size: 10.5, weight: .bold)).foregroundStyle(.white)
+                    Text("발행 중").font(.app(10.5, .bold)).foregroundStyle(.white)
                         .padding(.horizontal, 7).padding(.vertical, 2)
                         .background(Color.red.gradient, in: Capsule())
                         .symbolEffect(.pulse)
@@ -161,12 +171,12 @@ private struct Masthead: View {
             .opacity(appeared ? 1 : 0).offset(y: appeared ? 0 : 8)
             .animation(.easeOut(duration: 0.5), value: appeared)
             Text(issue.title)
-                .font(.system(size: 38, weight: .bold, design: .serif))
+                .font(.display(38, .bold))
                 .tracking(-0.6)
                 .opacity(appeared ? 1 : 0).offset(y: appeared ? 0 : 14)
                 .animation(.spring(response: 0.6, dampingFraction: 0.85).delay(0.06), value: appeared)
             Text("소식 \(issue.count)건 · 분야 \(issue.sections.count)개")
-                .font(.system(size: 13)).foregroundStyle(.secondary)
+                .font(.app(13)).foregroundStyle(.secondary)
                 .opacity(appeared ? 1 : 0)
                 .animation(.easeOut(duration: 0.5).delay(0.12), value: appeared)
             Rectangle().fill(.primary.opacity(0.85)).frame(height: 2)
@@ -181,7 +191,7 @@ private struct EmptyIssue: View {
     let live: Bool
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Image(systemName: "newspaper").font(.system(size: 34, weight: .light)).foregroundStyle(.tertiary)
+            Image(systemName: "newspaper").font(.app(34, .light)).foregroundStyle(.tertiary)
             Text(live ? "아직 이번 호에 실을 소식이 없습니다" : "이 호에는 소식이 없습니다").font(.title3.weight(.semibold))
             Text("새 소식이 들어오는 대로 지면이 채워집니다.").foregroundStyle(.secondary)
         }
@@ -212,25 +222,25 @@ private struct CoverStory: View {
                            startPoint: .top, endPoint: .bottom)
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
-                    Text("표지").font(.system(size: 11, weight: .heavy)).tracking(1.5)
+                    Text("표지").font(.app(11, .heavy)).tracking(1.5)
                         .padding(.horizontal, 7).padding(.vertical, 3)
                         .background(.white, in: RoundedRectangle(cornerRadius: 4))
                         .foregroundStyle(.black)
-                    Label(item.category.label, systemImage: item.category.symbol).font(.system(size: 12, weight: .semibold))
-                    Text("\(item.sourceName) · \(RelativeTime.string(item.date))").font(.system(size: 12))
+                    Label(item.category.label, systemImage: item.category.symbol).font(.app(12, .semibold))
+                    Text("\(item.sourceName) · \(RelativeTime.string(item.date))").font(.app(12))
                 }
                 .foregroundStyle(.white.opacity(0.9))
                 Text(item.displayTitle)
-                    .font(.system(size: 34, weight: .bold, design: .serif))
+                    .font(.display(34, .bold))
                     .foregroundStyle(.white)
                     .lineLimit(3)
                     .shadow(color: .black.opacity(0.3), radius: 8, y: 2)
                 if item.titleKo != nil, item.titleKo != item.title {
-                    Text(item.title).font(.system(size: 13)).foregroundStyle(.white.opacity(0.7)).lineLimit(1)
+                    Text(item.title).font(.app(13)).foregroundStyle(.white.opacity(0.7)).lineLimit(1)
                 }
                 HStack(spacing: 10) {
                     Button { ReaderController.open(item, from: frame) ; AppModel.shared.markOpened(item) } label: {
-                        Label("기사 읽기", systemImage: "book").font(.system(size: 13, weight: .semibold))
+                        Label("기사 읽기", systemImage: "book").font(.app(13, .semibold))
                             .padding(.horizontal, 14).padding(.vertical, 8)
                             .background(.white, in: Capsule()).foregroundStyle(.black)
                     }
@@ -238,7 +248,7 @@ private struct CoverStory: View {
                     if let c = stored.cluster, (Magazine.shared.cluster(c)?.size ?? 1) >= 2 {
                         Button { onStory(c) } label: {
                             Label("여러 시각 \(Magazine.shared.cluster(c)?.size ?? 2)곳", systemImage: "rectangle.split.3x1")
-                                .font(.system(size: 13, weight: .semibold))
+                                .font(.app(13, .semibold))
                                 .padding(.horizontal, 14).padding(.vertical, 8)
                                 .background(.white.opacity(0.18), in: Capsule()).foregroundStyle(.white)
                                 .overlay(Capsule().strokeBorder(.white.opacity(0.4), lineWidth: 0.5))
@@ -274,9 +284,9 @@ private struct SectionBlock: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
-                Image(systemName: section.category.symbol).foregroundStyle(section.category.color)
-                Text(section.category.label).font(.system(size: 20, weight: .bold, design: .serif))
-                Text("\(items.count)").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
+                Image(systemName: section.symbol).foregroundStyle(section.color)
+                Text(section.label).font(.display(20, .bold))
+                Text("\(items.count)").font(.app(13, .semibold)).foregroundStyle(.secondary)
                 Rectangle().fill(.primary.opacity(0.12)).frame(height: 1).padding(.leading, 6)
             }
             .padding(.horizontal, 36)
@@ -312,21 +322,34 @@ struct StoryCard: View {
                     .offset(x: tilt.width * 8, y: tilt.height * 6)
                     .frame(height: 150)
                     .clipped()
+                    .overlay {
+                        if item.itemKind == .video || item.itemKind == .podcast {
+                            Image(systemName: item.itemKind == .video ? "play.fill" : "waveform")
+                                .font(.app(18, .bold)).foregroundStyle(.white)
+                                .frame(width: 46, height: 46)
+                                .background(.black.opacity(0.45), in: Circle())
+                                .overlay(Circle().strokeBorder(.white.opacity(0.6), lineWidth: 1))
+                                .scaleEffect(hover ? 1.12 : 1)
+                        }
+                    }
+                    .overlay(alignment: .topLeading) {
+                        if item.itemKind != .article { KindBadge(kind: item.itemKind).background(.thinMaterial, in: RoundedRectangle(cornerRadius: 5)).padding(8) }
+                    }
                 VStack(alignment: .leading, spacing: 7) {
                     HStack(spacing: 6) {
-                        if item.important == true { Image(systemName: "star.fill").foregroundStyle(.orange).font(.system(size: 10)) }
-                        Text(item.sourceName).font(.system(size: 11.5, weight: .semibold))
-                        if let r = item.related, !r.isEmpty { Text("외 \(r.count)곳").font(.system(size: 11)).foregroundStyle(.secondary) }
+                        if item.important == true { Image(systemName: "star.fill").foregroundStyle(.orange).font(.app(10)) }
+                        Text(item.sourceName).font(.app(11.5, .semibold))
+                        if let r = item.related, !r.isEmpty { Text("외 \(r.count)곳").font(.app(11)).foregroundStyle(.secondary) }
                         Spacer(minLength: 0)
-                        Text(RelativeTime.string(item.date)).font(.system(size: 11)).foregroundStyle(.tertiary)
+                        Text(RelativeTime.string(item.date)).font(.app(11)).foregroundStyle(.tertiary)
                     }
                     Text(item.displayTitle)
-                        .font(.system(size: 15, weight: .semibold, design: .serif))
+                        .font(.display(15, .semibold))
                         .lineLimit(3)
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
                     if AppModel.shared.isRead(item) {
-                        Label("읽음", systemImage: "checkmark").font(.system(size: 10.5)).foregroundStyle(.tertiary)
+                        Label("읽음", systemImage: "checkmark").font(.app(10.5)).foregroundStyle(.tertiary)
                     }
                 }
                 .padding(14)
@@ -397,7 +420,7 @@ struct StoriesView: View {
         let list = mag.stories()
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Text("스토리").font(.system(size: 34, weight: .bold, design: .serif)).padding(.top, 28)
+                Text("스토리").font(.display(34, .bold)).padding(.top, 28)
                 Text("최근 2주 동안 여러 곳이 함께 다룬 소식을 한 줄기로 묶었습니다.").foregroundStyle(.secondary)
                 if list.isEmpty {
                     Text("아직 여러 곳이 함께 다룬 소식이 없습니다.").foregroundStyle(.secondary).padding(.vertical, 40)
@@ -407,13 +430,13 @@ struct StoriesView: View {
                         HStack(alignment: .top, spacing: 14) {
                             VStack(spacing: 2) {
                                 Text("\(c.size)").font(.system(size: 22, weight: .bold, design: .rounded))
-                                Text("곳").font(.system(size: 11)).foregroundStyle(.secondary)
+                                Text("곳").font(.app(11)).foregroundStyle(.secondary)
                             }
                             .frame(width: 46)
                             VStack(alignment: .leading, spacing: 4) {
-                                Text(c.title).font(.system(size: 16, weight: .semibold, design: .serif)).multilineTextAlignment(.leading)
+                                Text(c.title).font(.display(16, .semibold)).multilineTextAlignment(.leading)
                                 Text("\(RelativeTime.string(c.first)) 시작 · 최근 \(RelativeTime.string(c.last))")
-                                    .font(.system(size: 12)).foregroundStyle(.secondary)
+                                    .font(.app(12)).foregroundStyle(.secondary)
                             }
                             Spacer()
                             Image(systemName: "chevron.right").foregroundStyle(.tertiary)
@@ -445,7 +468,7 @@ struct StoryView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Button(action: back) { Label("스토리", systemImage: "chevron.left") }.buttonStyle(.borderless).padding(.top, 24)
-                Text(cluster?.title ?? "스토리").font(.system(size: 30, weight: .bold, design: .serif)).padding(.top, 10)
+                Text(cluster?.title ?? "스토리").font(.display(30, .bold)).padding(.top, 10)
                 Text("\(items.count)곳 보도 · 같은 소식, 여러 시각").foregroundStyle(.secondary).padding(.top, 4).padding(.bottom, 26)
                 ZStack(alignment: .topLeading) {
                     Rectangle().fill(.primary.opacity(0.15)).frame(width: 2)
@@ -482,18 +505,18 @@ private struct TimelineRow: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
                     Monogram(letter: item.initial, color: item.accent, size: 18)
-                    Text(item.sourceName).font(.system(size: 12.5, weight: .semibold))
-                    Text(Resources.tierLabel(item.tier)).font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text(item.sourceName).font(.app(12.5, .semibold))
+                    Text(Resources.tierLabel(item.tier)).font(.app(11)).foregroundStyle(.secondary)
                     Text("· " + (item.date?.formatted(.dateTime.locale(Locale(identifier: "ko_KR")).month().day().hour().minute()) ?? ""))
-                        .font(.system(size: 11.5)).foregroundStyle(.secondary)
-                    if first { Text("첫 보도").font(.system(size: 10.5, weight: .bold)).foregroundStyle(item.accent) }
+                        .font(.app(11.5)).foregroundStyle(.secondary)
+                    if first { Text("첫 보도").font(.app(10.5, .bold)).foregroundStyle(item.accent) }
                 }
                 Button {
                     AppModel.shared.markOpened(item)
                     ReaderController.open(item, from: frame)
                 } label: {
                     HStack(alignment: .top, spacing: 12) {
-                        Text(item.displayTitle).font(.system(size: 16, weight: .semibold, design: .serif))
+                        Text(item.displayTitle).font(.display(16, .semibold))
                             .multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
                         Spacer(minLength: 0)
                         if item.image != nil {
@@ -518,7 +541,7 @@ struct SavedView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                Text("저장").font(.system(size: 34, weight: .bold, design: .serif)).padding(.top, 28)
+                Text("저장").font(.display(34, .bold)).padding(.top, 28)
                 Text("저장한 기사는 번역까지 이 Mac 에 보관돼 인터넷 없이도 읽을 수 있습니다.").foregroundStyle(.secondary)
                 if app.state.saved.isEmpty {
                     Text("아직 저장한 기사가 없습니다. 카드를 오른쪽 클릭해 '나중에 읽기'로 저장하세요.").foregroundStyle(.secondary).padding(.vertical, 40)
@@ -528,7 +551,7 @@ struct SavedView: View {
                         StoryCard(item: it, order: i)
                             .overlay(alignment: .topTrailing) {
                                 if ArticleService.shared.cached(it.link) != nil {
-                                    Label("보관됨", systemImage: "arrow.down.circle.fill").font(.system(size: 10.5, weight: .semibold))
+                                    Label("보관됨", systemImage: "arrow.down.circle.fill").font(.app(10.5, .semibold))
                                         .padding(.horizontal, 7).padding(.vertical, 3)
                                         .background(.thinMaterial, in: Capsule()).padding(10)
                                 }
@@ -547,10 +570,10 @@ struct SearchView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                Text("검색").font(.system(size: 34, weight: .bold, design: .serif)).padding(.top, 28)
+                Text("검색").font(.display(34, .bold)).padding(.top, 28)
                 HStack {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                    TextField("모든 기록에서 제목·출처·요약 검색", text: $q).textFieldStyle(.plain).font(.system(size: 15))
+                    TextField("모든 기록에서 제목·출처·요약 검색", text: $q).textFieldStyle(.plain).font(.app(15))
                         .onSubmit { results = Magazine.shared.search(q) }
                         .onChange(of: q) { _, v in if v.count >= 2 { results = Magazine.shared.search(v) } else if v.isEmpty { results = [] } }
                 }
@@ -607,5 +630,39 @@ enum MagazineController {
         }
         NSApp.activate(ignoringOtherApps: true)
         w.makeKeyAndOrderFront(nil)
+    }
+}
+
+
+// 기사 정렬 기준
+enum MagSort: String, CaseIterable {
+    case recommended, newest, coverage, source
+    var label: String {
+        switch self {
+        case .recommended: return "추천순"
+        case .newest: return "최신순"
+        case .coverage: return "많이 보도된 순"
+        case .source: return "출처별"
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .recommended: return "sparkles"
+        case .newest: return "clock"
+        case .coverage: return "person.3"
+        case .source: return "building.2"
+        }
+    }
+    // 추천순은 편집 순서(점수) 그대로
+    func apply(_ items: [NewsItem]) -> [NewsItem] {
+        switch self {
+        case .recommended: return items
+        case .newest: return items.sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+        case .coverage: return items.enumerated().sorted { a, b in
+                let ca = a.element.related?.count ?? 0, cb = b.element.related?.count ?? 0
+                return ca != cb ? ca > cb : a.offset < b.offset
+            }.map(\.element)
+        case .source: return items.sorted { ($0.sourceName, $1.date ?? .distantPast) < ($1.sourceName, $0.date ?? .distantPast) }
+        }
     }
 }

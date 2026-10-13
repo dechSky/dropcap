@@ -46,11 +46,14 @@ enum FeedParser {
     static func image(_ it: XNode) -> String? {
         for n in it.children {
             switch n.name {
-            case "media:content", "media:thumbnail":
-                if let u = n.attrs["url"], (n.attrs["medium"] ?? "image") == "image" || n.attrs["type"]?.hasPrefix("image") == true { return u }
+            case "media:thumbnail":
+                if let u = n.attrs["url"] { return u }
+            case "media:content":
+                if let u = n.attrs["url"], isImage(n) { return u }
                 if let t = n.child("media:thumbnail")?.attrs["url"] { return t }
             case "media:group":
-                if let u = n.all("media:content").first(where: { ($0.attrs["medium"] ?? "image") == "image" })?.attrs["url"] { return u }
+                if let t = n.child("media:thumbnail")?.attrs["url"] { return t }
+                if let u = n.all("media:content").first(where: isImage)?.attrs["url"] { return u }
             case "enclosure":
                 if n.attrs["type"]?.hasPrefix("image") == true, let u = n.attrs["url"] { return u }
             default: break
@@ -67,6 +70,20 @@ enum FeedParser {
             }
         }
         return nil
+    }
+
+    private static func isImage(_ n: XNode) -> Bool {
+        if n.attrs["medium"] == "image" || n.attrs["type"]?.hasPrefix("image") == true { return true }
+        let u = (n.attrs["url"] ?? "").lowercased()
+        return n.attrs["medium"] == nil && n.attrs["type"] == nil && [".jpg", ".jpeg", ".png", ".webp", ".gif"].contains { u.contains($0) }
+    }
+
+    // 피드 자체의 이름(구독할 때 기본 이름으로)
+    static func feedTitle(_ data: Data) -> String? {
+        guard let root = try? tree(data) else { return nil }
+        let t = root.child("rss")?.child("channel")?.value("title").nonEmpty ?? root.child("feed")?.value("title").nonEmpty
+            ?? root.child("rdf:RDF")?.child("channel")?.value("title").nonEmpty
+        return t.map(Plain.clean)
     }
 
     static func tree(_ data: Data) throws -> XNode {

@@ -19,6 +19,39 @@ struct Source: Codable, Identifiable, Hashable {
     let aiOnly: Bool
     let defaultOn: Bool
     let color: String
+    var kind: String? = nil          // article(기본) · video · paper · release · post · podcast
+    var notifyDefault: Bool? = nil   // 알림 기본값(양 많은 채널은 false)
+    var group: String? = nil         // 추천 목록의 묶음 이름
+    var home: String? = nil          // 사람이 보는 주소(설정 화면 표시용)
+
+    var itemKind: ItemKind { ItemKind(rawValue: kind ?? "article") ?? .article }
+}
+
+// 글의 종류: 기사 외의 구독 채널(영상·논문·릴리스·커뮤니티·팟캐스트)
+enum ItemKind: String, Codable, CaseIterable {
+    case article, video, paper, release, post, podcast
+    var label: String {
+        switch self {
+        case .article: return "기사"
+        case .video: return "영상"
+        case .paper: return "논문"
+        case .release: return "릴리스"
+        case .post: return "커뮤니티"
+        case .podcast: return "팟캐스트"
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .article: return "doc.text"
+        case .video: return "play.rectangle.fill"
+        case .paper: return "doc.richtext"
+        case .release: return "shippingbox"
+        case .post: return "bubble.left.and.bubble.right"
+        case .podcast: return "waveform"
+        }
+    }
+    // 읽기 창 대신 원래 앱·브라우저로 여는 것
+    var opensExternally: Bool { self == .video || self == .podcast }
 }
 
 struct NewsItem: Codable, Identifiable, Hashable {
@@ -35,6 +68,8 @@ struct NewsItem: Codable, Identifiable, Hashable {
     var related: [String]? = nil   // 같은 소식을 다룬 다른 출처
     var image: String? = nil       // 대표 사진 주소
     var titleEn: String? = nil     // 영어 제목(한국어 기사를 다른 기사와 같은 소식인지 비교할 때)
+    var kind: String? = nil        // ItemKind
+    var itemKind: ItemKind { ItemKind(rawValue: kind ?? "article") ?? .article }
     var important: Bool? = nil      // '꼭 알림' 낱말에 걸림
 
     var key: String { "\(sourceId)|\(id)" }

@@ -7,6 +7,7 @@ struct MenuView: View {
     @State private var tab: Tab = .all
     @State private var query = ""
     @State private var category: NewsCategory?
+    @AppStorage("listSort") private var sortRaw = "newest"
 
     enum Tab: String, CaseIterable { case all = "전체", unread = "안 읽음", saved = "저장" }
 
@@ -22,7 +23,18 @@ struct MenuView: View {
         if !q.isEmpty {
             list = list.filter { "\($0.title) \($0.titleKo ?? "") \($0.sourceName) \($0.summary)".lowercased().contains(q) }
         }
-        return list
+        switch sortRaw {
+        case "important": // 중요 표시 → 여러 곳 보도 → 최신
+            return list.sorted { a, b in
+                let ia = a.important == true ? 1 : 0, ib = b.important == true ? 1 : 0
+                if ia != ib { return ia > ib }
+                let ra = a.related?.count ?? 0, rb = b.related?.count ?? 0
+                if ra != rb { return ra > rb }
+                return (a.date ?? .distantPast) > (b.date ?? .distantPast)
+            }
+        case "source": return list.sorted { ($0.sourceName, $1.date ?? .distantPast) < ($1.sourceName, $0.date ?? .distantPast) }
+        default: return list.sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+        }
     }
 
     var body: some View {
@@ -37,11 +49,20 @@ struct MenuView: View {
             .labelsHidden()
             .padding(.horizontal, 14).padding(.bottom, 8)
             HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary).font(.system(size: 11))
-                TextField("제목·출처 검색", text: $query).textFieldStyle(.plain).font(.system(size: 12))
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary).font(.app(11))
+                TextField("제목·출처 검색", text: $query).textFieldStyle(.plain).font(.app(12))
                 if !query.isEmpty {
                     Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }.buttonStyle(.plain)
                 }
+                Menu {
+                    Picker("정렬", selection: $sortRaw) {
+                        Label("최신순", systemImage: "clock").tag("newest")
+                        Label("중요·많이 보도된 순", systemImage: "star").tag("important")
+                        Label("출처별", systemImage: "building.2").tag("source")
+                    }
+                    .pickerStyle(.inline)
+                } label: { Image(systemName: "arrow.up.arrow.down").font(.app(11)).foregroundStyle(.secondary) }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("정렬")
             }
             .padding(.horizontal, 9).padding(.vertical, 5)
             .background(.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
@@ -104,14 +125,14 @@ struct MenuView: View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    Text("AI 소식").font(.system(size: 15, weight: .bold))
+                    Text("AI 소식").font(.app(15, .bold))
                     if model.isQuietTime {
                         Label("방해 금지", systemImage: "moon.fill").labelStyle(.iconOnly)
-                            .font(.system(size: 11)).foregroundStyle(.indigo).help("방해 금지 시간이라 알림을 띄우지 않습니다")
+                            .font(.app(11)).foregroundStyle(.indigo).help("방해 금지 시간이라 알림을 띄우지 않습니다")
                     }
                 }
                 Text(model.checking ? "확인하는 중…" : "마지막 확인 \(AppModel.clock(model.state.lastCheck))")
-                    .font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
+                    .font(.app(11)).foregroundStyle(.secondary).monospacedDigit()
             }
             Spacer()
             Menu {
@@ -123,20 +144,20 @@ struct MenuView: View {
                     Button("내일 아침 8시까지") { model.snooze(AppModel.tomorrowMorning()) }
                 }
             } label: {
-                Image(systemName: model.isSnoozed ? "bell.slash.fill" : "bell").font(.system(size: 12))
+                Image(systemName: model.isSnoozed ? "bell.slash.fill" : "bell").font(.app(12))
                     .foregroundStyle(model.isSnoozed ? Color.orange : Color.secondary)
             }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             .help(model.isSnoozed ? "알림 꺼짐 — \(AppModel.clock(model.state.snoozeUntil))까지" : "알림 잠시 끄기")
-            Button { MagazineController.open() } label: { Image(systemName: "book.pages").font(.system(size: 12)) }
+            Button { MagazineController.open() } label: { Image(systemName: "book.pages").font(.app(12)) }
                 .buttonStyle(.borderless).help("AI 매거진 (⌥⌘M)")
-            Button { model.markAllRead() } label: { Image(systemName: "checkmark.circle").font(.system(size: 13)) }
+            Button { model.markAllRead() } label: { Image(systemName: "checkmark.circle").font(.app(13)) }
                 .buttonStyle(.borderless).help("모두 읽음으로 표시")
             Button {
                 Task { await model.checkAll(manual: true) }
             } label: {
                 Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.app(12, .semibold))
                     .rotationEffect(.degrees(model.checking ? 360 : 0))
                     .animation(model.checking ? .linear(duration: 0.9).repeatForever(autoreverses: false) : .default, value: model.checking)
             }
@@ -149,11 +170,11 @@ struct MenuView: View {
 
     private var empty: some View {
         VStack(spacing: 8) {
-            Image(systemName: tab == .saved ? "bookmark" : "newspaper").font(.system(size: 26, weight: .light)).foregroundStyle(.tertiary)
+            Image(systemName: tab == .saved ? "bookmark" : "newspaper").font(.app(26, .light)).foregroundStyle(.tertiary)
             Text(!query.isEmpty || category != nil ? "맞는 소식이 없습니다" : tab == .saved ? "저장한 소식이 없습니다" : tab == .unread ? "모두 읽었습니다" : "아직 새 소식이 없습니다")
-                .font(.system(size: 13, weight: .medium))
+                .font(.app(13, .medium))
             Text(tab == .saved ? "소식을 오른쪽 클릭해 '나중에 읽기'로 저장할 수 있어요" : "새 글이 올라오면 물방울이 떨어지듯 알려 드려요")
-                .font(.system(size: 11.5)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                .font(.app(11.5)).foregroundStyle(.secondary).multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 32)
@@ -203,7 +224,7 @@ private struct Row: View {
                         Text(RelativeTime.string(item.date))
                         if saved { Image(systemName: "bookmark.fill").foregroundStyle(item.accent) }
                     }
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .font(.app(11)).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
                 if !read {
@@ -229,7 +250,7 @@ private struct FooterButton: ButtonStyle {
         var body: some View {
             configuration.label
                 .labelStyle(.titleAndIcon)
-                .font(.system(size: 12))
+                .font(.app(12))
                 .padding(.horizontal, 8).padding(.vertical, 5)
                 .background(Color.primary.opacity(configuration.isPressed ? 0.12 : hover ? 0.07 : 0), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                 .onHover { hover = $0 }

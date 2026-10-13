@@ -185,7 +185,7 @@ struct ToastView: View {
     private var closeButton: some View {
         Button { dismiss() } label: {
             Image(systemName: "xmark")
-                .font(.system(size: 9, weight: .bold))
+                .font(.app(9, .bold))
                 .foregroundStyle(.secondary)
                 .frame(width: 20, height: 20)
                 .background(.regularMaterial, in: Circle())
@@ -210,28 +210,28 @@ struct ToastView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
                         if item.important == true {
-                            Image(systemName: "star.fill").font(.system(size: 9.5, weight: .bold)).foregroundStyle(.orange)
+                            Image(systemName: "star.fill").font(.app(9.5, .bold)).foregroundStyle(.orange)
                                 .help("꼭 알림 낱말이 들어간 소식")
                         }
-                        Text(item.sourceName).font(.system(size: 11.5, weight: .semibold)).lineLimit(1)
+                        Text(item.sourceName).font(.app(11.5, .semibold)).lineLimit(1)
                         CategoryChip(category: item.category)
                         if let r = item.related, !r.isEmpty {
-                            Text("외 \(r.count)곳").font(.system(size: 10.5, weight: .medium)).foregroundStyle(.secondary)
+                            Text("외 \(r.count)곳").font(.app(10.5, .medium)).foregroundStyle(.secondary)
                                 .help("같은 소식: \(r.joined(separator: ", "))")
                         }
                         Spacer(minLength: 4)
-                        Text(RelativeTime.string(item.date)).font(.system(size: 11)).foregroundStyle(.tertiary).monospacedDigit()
+                        Text(RelativeTime.string(item.date)).font(.app(11)).foregroundStyle(.tertiary).monospacedDigit()
                     }
                     .rise(reveal, 1)
                     Text(item.displayTitle)
-                        .font(.system(size: 14.5, weight: .semibold))
+                        .font(.app(14.5, .semibold))
                         .tracking(-0.15)
                         .lineSpacing(1.5)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                         .rise(reveal, 2)
                     if let ko = item.titleKo, ko != item.title {
-                        Text(item.title).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                        Text(item.title).font(.app(12)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
                             .rise(reveal, 3)
                     }
                 }
@@ -252,28 +252,28 @@ struct ToastView: View {
         case .info(let title, let sub):
             HStack(spacing: 11) {
                 Image(systemName: "sparkles")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.app(15, .semibold))
                     .foregroundStyle(LinearGradient(colors: [.cyan, .blue], startPoint: .top, endPoint: .bottom))
                     .frame(width: 30, height: 30)
                     .background(.blue.opacity(0.12), in: Circle())
                     .rise(reveal, 0)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.system(size: 13.5, weight: .semibold)).rise(reveal, 1)
-                    Text(sub).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(2).rise(reveal, 2)
+                    Text(title).font(.app(13.5, .semibold)).rise(reveal, 1)
+                    Text(sub).font(.app(12)).foregroundStyle(.secondary).lineLimit(2).rise(reveal, 2)
                 }
             }
             .padding(EdgeInsets(top: 12, leading: 13, bottom: 12, trailing: 16))
         case .digest(let n):
             HStack(spacing: 11) {
                 Image(systemName: "sun.horizon.fill")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.app(15, .semibold))
                     .foregroundStyle(LinearGradient(colors: [.orange, .pink], startPoint: .top, endPoint: .bottom))
                     .frame(width: 30, height: 30)
                     .background(.orange.opacity(0.13), in: Circle())
                     .rise(reveal, 0)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("오늘의 AI 브리핑").font(.system(size: 13.5, weight: .semibold)).rise(reveal, 1)
-                    Text("지난 하루 소식 \(n)건 — 매거진에서 보기").font(.system(size: 12)).foregroundStyle(.secondary).rise(reveal, 2)
+                    Text("오늘의 AI 브리핑").font(.app(13.5, .semibold)).rise(reveal, 1)
+                    Text("지난 하루 소식 \(n)건 — 매거진에서 보기").font(.app(12)).foregroundStyle(.secondary).rise(reveal, 2)
                 }
             }
             .padding(EdgeInsets(top: 12, leading: 13, bottom: 12, trailing: 16))
@@ -283,7 +283,7 @@ struct ToastView: View {
                 Text("\(n)건").foregroundStyle(Color.accentColor)
                 Text("더 · 상단바 아이콘에서 확인")
             }
-            .font(.system(size: 12.5, weight: .semibold))
+            .font(.app(12.5, .semibold))
             .frame(maxWidth: .infinity)
             .padding(.vertical, 10)
             .rise(reveal, 0)
@@ -434,7 +434,7 @@ struct CategoryChip: View {
     let category: NewsCategory
     var body: some View {
         Label(category.label, systemImage: category.symbol)
-            .font(.system(size: 10.5, weight: .semibold))
+            .font(.app(10.5, .semibold))
             .foregroundStyle(category.color)
             .padding(.horizontal, 6).padding(.vertical, 1)
             .background(category.color.opacity(0.13), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
@@ -450,12 +450,25 @@ private struct QuickButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 11, weight: .semibold))
+                .font(.app(11, .semibold))
                 .frame(width: 24, height: 22)
                 .background(.primary.opacity(hover ? 0.12 : 0.06), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
         .buttonStyle(.plain)
         .help(help)
         .onHover { hover = $0 }
+    }
+}
+
+
+struct KindBadge: View {
+    let kind: ItemKind
+    var body: some View {
+        Label(kind.label, systemImage: kind.symbol)
+            .font(.app(10.5, .semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 6).padding(.vertical, 1)
+            .background(.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+            .lineLimit(1)
     }
 }

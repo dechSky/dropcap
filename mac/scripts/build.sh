@@ -14,6 +14,7 @@ rm -rf build && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/AINewsAlert"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp Resources/Readability.js "$APP/Contents/Resources/"
+cp -R Resources/Fonts "$APP/Contents/Resources/"
 cp ../shared/sources.json "$APP/Contents/Resources/"
 
 # 아이콘

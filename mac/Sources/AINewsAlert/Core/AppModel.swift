@@ -92,6 +92,8 @@ final class AppModel: ObservableObject {
         found = applyKeywords(found) // 번역 뒤에: 한국어 낱말도 영어 기사에 걸리게
         await addEnglishTitles(&found)
         Magazine.shared.ingest(found) // 매거진에는 묶이기 전 전부(여러 시각 비교용)
+        // 알림을 끈 채널(논문·커뮤니티 등 양 많은 곳)은 매거진에만 싣고, 목록·알림에는 넣지 않는다
+        found = found.filter { notifies($0.sourceId) }
         found = groupSameStory(found)
         state.recent = Array((found + state.recent).prefix(recentLimit))
         state.unread += found.count
@@ -332,16 +334,43 @@ final class AppModel: ObservableObject {
         Store.save(state)
     }
 
-    // MARK: 직접 추가한 출처
-    // 주소를 실제로 받아 읽어 보고, 되면 추가한다. 실패하면 이유를 돌려준다.
-    func addCustomSource(name: String, url: String) async -> String? {
-        let u = url.trimmingCharacters(in: .whitespaces)
-        guard let parsed = URL(string: u), parsed.scheme?.hasPrefix("http") == true else { return "http(s) 주소를 넣어 주세요" }
-        let palette = ["#6E56CF", "#0090FF", "#E5484D", "#30A46C", "#F76B15", "#D6409F", "#12A594"]
-        let src = Source(id: "custom-\(abs(u.hashValue))", name: name.trimmingCharacters(in: .whitespaces).nonEmpty ?? (parsed.host ?? u),
-                         tier: "press", type: "feed", url: u, match: nil, aiOnly: false, defaultOn: true,
-                         color: palette[state.customSources.count % palette.count])
-        guard !allSources.contains(where: { $0.url == u }) else { return "이미 있는 출처입니다" }
+    // MARK: 구독 채널
+    func notifies(_ sourceId: String) -> Bool {
+        state.notify[sourceId] ?? allSources.first { $0.id == sourceId }?.notifyDefault ?? true
+    }
+
+    func setNotify(_ sourceId: String, _ on: Bool) {
+        state.notify[sourceId] = on
+        Store.save(state)
+    }
+
+    func isSubscribed(_ src: Source) -> Bool { state.customSources.contains { $0.id == src.id || $0.url == src.url } }
+
+    // 추천 목록에서 구독
+    func subscribe(_ src: Source) async -> String? {
+        guard !isSubscribed(src) else { return nil }
+        return await add(src)
+    }
+
+    // 아무 주소나: 알맞은 피드를 찾아 구독
+    func addChannel(_ input: String, name: String = "") async -> String? {
+        do {
+            let f = try await ChannelResolver.resolve(input)
+            guard !allSources.contains(where: { $0.url == f.feedURL }) else { return "이미 구독 중인 채널입니다" }
+            let palette = ["#6E56CF", "#0090FF", "#E5484D", "#30A46C", "#F76B15", "#D6409F", "#12A594"]
+            let id = "custom-" + String(f.feedURL.unicodeScalars.reduce(5381) { ($0 &* 33) &+ Int($1.value) } & 0x7fffffff, radix: 36)
+            let src = Source(id: id, name: name.trimmingCharacters(in: .whitespaces).nonEmpty ?? f.name, tier: "press", type: "feed",
+                             url: f.feedURL, match: nil, aiOnly: false, defaultOn: true,
+                             color: f.kind == .video ? "#FF0033" : palette[state.customSources.count % palette.count],
+                             kind: f.kind.rawValue, notifyDefault: f.notifyDefault, group: "직접 추가", home: f.home)
+            return await add(src)
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    // 실제로 받아 읽어 보고, 되면 추가한다. 실패하면 이유를 돌려준다.
+    private func add(_ src: Source) async -> String? {
         do {
             guard let items = try await FeedService.shared.items(for: src), !items.isEmpty else { return "글을 찾지 못했습니다" }
             // 지금 있는 글은 이 자리에서 기억해 두고(알리지 않음), 이후에 올라오는 글부터 알린다
@@ -360,6 +389,7 @@ final class AppModel: ObservableObject {
     func removeCustomSource(_ id: String) {
         state.customSources.removeAll { $0.id == id }
         state.enabled.removeValue(forKey: id)
+        state.notify.removeValue(forKey: id)
         state.seeded.removeAll { $0 == id }
         Store.save(state)
     }

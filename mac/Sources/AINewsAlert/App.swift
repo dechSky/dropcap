@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             exit(0)
         }
         NSApp.setActivationPolicy(.accessory) // Dock 에 나타나지 않음
+        Typography.register()
         if SystemNotifier.available { UNUserNotificationCenter.current().delegate = self }
         MainActor.assumeIsolated {
             AppModel.shared.start()

@@ -7,6 +7,21 @@ struct Issue: Codable, Identifiable, Hashable {
     struct Section: Codable, Hashable {
         var category: NewsCategory
         var keys: [String]
+        var kind: String? = nil   // 영상·논문 등 구독 채널 지면이면 그 종류
+
+        var id: String { kind ?? category.rawValue }
+        var label: String { kind.flatMap { ItemKind(rawValue: $0)?.label } ?? category.label }
+        var symbol: String { kind.flatMap { ItemKind(rawValue: $0)?.symbol } ?? category.symbol }
+        var color: Color {
+            switch kind {
+            case "video": return .red
+            case "paper": return Color(hex: "#B31B1B")
+            case "release": return .gray
+            case "post": return .orange
+            case "podcast": return .purple
+            default: return category.color
+            }
+        }
     }
     var id: String          // daily-2026-10-13 · weekly-2026-W41
     var kind: Kind
@@ -69,6 +84,11 @@ final class Magazine: ObservableObject {
             let when = it.date ?? Date()
             var cid: String?
             // 스토리의 대표 기사와만 비교한다(낱말을 계속 보태면 눈덩이처럼 아무 기사나 붙는다)
+            // 기사만 스토리로 묶는다(논문·릴리스·커뮤니티 글은 양이 많고 성격이 달라 제외)
+            if it.itemKind != .article && it.itemKind != .video {
+                db.upsert(it, cluster: nil)
+                continue
+            }
             if let i = clusters.firstIndex(where: { c in representatives[c.id].map { StoryMatch.same(it, $0) } ?? false }) {
                 if !db.exists(it.key) { clusters[i].size += 1 }
                 clusters[i].last = max(clusters[i].last, when)
@@ -142,13 +162,24 @@ final class Magazine: ObservableObject {
         }
         let ranked = (Array(best.values) + loose).sorted { $0.1 > $1.1 }
         let limit = kind == .weekly ? 40 : 60
-        let picked = ranked.prefix(limit)
+        let picked = ranked.filter { $0.0.item.itemKind == .article }.prefix(limit)
         // 표지: 사진이 있는 기사 중 점수 1등(없으면 그냥 1등)
         let cover = picked.first { $0.0.item.image != nil } ?? picked.first
         var sections: [Issue.Section] = []
+        let articles = picked.filter { $0.0.item.itemKind == .article && $0.0.item.key != cover?.0.item.key }
         for cat in NewsCategory.allCases {
-            let keys = picked.filter { $0.0.item.category == cat && $0.0.item.key != cover?.0.item.key }.map(\.0.item.key)
+            let keys = articles.filter { $0.0.item.category == cat }.map(\.0.item.key)
             if !keys.isEmpty { sections.append(.init(category: cat, keys: Array(keys.prefix(kind == .weekly ? 8 : 12)))) }
+        }
+        // 구독 채널 지면: 종류별, 채널 하나당 4개까지(논문처럼 많은 곳이 지면을 덮지 않게)
+        var channelSections: [Issue.Section] = []
+        for k in [ItemKind.video, .release, .paper, .podcast, .post] {
+            var perSource: [String: Int] = [:]
+            let keys = ranked.filter { $0.0.item.itemKind == k }.compactMap { s -> String? in
+                perSource[s.0.item.sourceId, default: 0] += 1
+                return perSource[s.0.item.sourceId]! <= 4 ? s.0.item.key : nil
+            }
+            if !keys.isEmpty { channelSections.append(.init(category: .other, keys: Array(keys.prefix(12)), kind: k.rawValue)) }
         }
         // 지면 순서도 관심 분야가 앞으로
         sections.sort {
@@ -156,7 +187,7 @@ final class Magazine: ObservableObject {
                 || ($0.category.sortOrder < $1.category.sortOrder
                     && AppModel.shared.interestWeight(category: $0.category, source: nil) == AppModel.shared.interestWeight(category: $1.category, source: nil))
         }
-        return Issue(id: id, kind: kind, date: Date(), from: from, to: to, cover: cover?.0.item.key, sections: sections, count: stored.count)
+        return Issue(id: id, kind: kind, date: Date(), from: from, to: to, cover: cover?.0.item.key, sections: sections + channelSections, count: stored.count)
     }
 
     // 지금 진행 중인 오늘 호·이번 주 호(아직 발행 전, 화면에서 바로 계산)

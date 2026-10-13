@@ -78,7 +78,7 @@ struct ReaderView: View {
                     keyPointsBox.padding(.top, 22)
                     if model.phase == .translating {
                         Label("한국어로 바꾸는 중 — 위에서부터 차례로 바뀝니다", systemImage: "character.bubble")
-                            .font(.system(size: 12)).foregroundStyle(.secondary)
+                            .font(.app(12)).foregroundStyle(.secondary)
                             .symbolEffect(.pulse, options: .repeating)
                             .padding(.top, 18)
                     }
@@ -144,17 +144,17 @@ struct ReaderView: View {
         if model.keyPoints != nil || model.summarizing {
             VStack(alignment: .leading, spacing: 9) {
                 Label("3줄 요약", systemImage: "sparkles")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.app(12, .semibold))
                     .foregroundStyle(model.item.accent)
                 if let pts = model.keyPoints {
                     ForEach(Array(pts.enumerated()), id: \.offset) { _, p in
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Text("•").foregroundStyle(model.item.accent)
-                            Text(p).font(.system(size: fs - 1)).lineSpacing(4)
+                            Text(p).font(.app(fs - 1)).lineSpacing(4)
                         }
                     }
                 } else {
-                    Text("요약하는 중…").font(.system(size: 13)).foregroundStyle(.secondary)
+                    Text("요약하는 중…").font(.app(13)).foregroundStyle(.secondary)
                         .symbolEffect(.pulse, options: .repeating)
                 }
             }
@@ -170,28 +170,28 @@ struct ReaderView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Monogram(letter: model.item.initial, color: model.item.accent, size: 22)
-                Text(model.item.sourceName).font(.system(size: 13, weight: .semibold))
+                Text(model.item.sourceName).font(.app(13, .semibold))
                 Text(Resources.tierLabel(model.item.tier))
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.app(11, .semibold))
                     .foregroundStyle(model.item.accent)
                     .padding(.horizontal, 7).padding(.vertical, 2)
                     .background(model.item.accent.opacity(0.13), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
                 if let d = model.item.date {
                     Text(d.formatted(.dateTime.locale(Locale(identifier: "ko_KR")).month().day().hour().minute()))
-                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                        .font(.app(12)).foregroundStyle(.secondary)
                 }
             }
             Text(model.showOriginal ? model.originalTitle : model.title)
-                .font(.system(size: 30, weight: .bold))
+                .font(.app(30, .bold))
                 .tracking(-0.4)
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
             if !model.showOriginal, model.originalTitle != model.title {
-                Text(model.originalTitle).font(.system(size: 14)).foregroundStyle(.secondary)
+                Text(model.originalTitle).font(.app(14)).foregroundStyle(.secondary)
             }
             if model.translated, !model.engine.isEmpty {
                 Label(model.engine, systemImage: "character.bubble")
-                    .font(.system(size: 11)).foregroundStyle(.tertiary)
+                    .font(.app(11)).foregroundStyle(.tertiary)
             }
         }
     }
@@ -203,18 +203,18 @@ struct ReaderView: View {
                 let prevIsLi = i > 0 && blocks[i - 1].type == .li
                 switch b.type {
                 case .h:
-                    Text(text).font(.system(size: fs + 4, weight: .bold)).tracking(-0.2)
+                    Text(text).font(.app(fs + 4, .bold)).tracking(-0.2)
                         .padding(.top, 26).padding(.bottom, 8)
                 case .p:
-                    Text(text).font(.system(size: fs)).lineSpacing(fs * 0.47).padding(.bottom, fs + 1)
+                    Text(text).font(.app(fs)).lineSpacing(fs * 0.47).padding(.bottom, fs + 1)
                 case .li:
                     HStack(alignment: .firstTextBaseline, spacing: 10) {
                         Circle().fill(model.item.accent.opacity(0.8)).frame(width: 5, height: 5).offset(y: -3)
-                        Text(text).font(.system(size: fs)).lineSpacing(fs * 0.41)
+                        Text(text).font(.app(fs)).lineSpacing(fs * 0.41)
                     }
                     .padding(.top, prevIsLi ? 0 : 2).padding(.bottom, 8).padding(.leading, 4)
                 case .quote:
-                    Text(text).font(.system(size: fs)).italic().lineSpacing(fs * 0.41).foregroundStyle(.secondary)
+                    Text(text).font(.app(fs)).italic().lineSpacing(fs * 0.41).foregroundStyle(.secondary)
                         .padding(.leading, 16)
                         .overlay(alignment: .leading) { Capsule().fill(model.item.accent.opacity(0.6)).frame(width: 3) }
                         .padding(.vertical, 6).padding(.bottom, 14)
@@ -236,7 +236,7 @@ struct ReaderView: View {
                         .frame(maxWidth: .infinity)
                     }
                 case .cap:
-                    Text(text).font(.system(size: 13)).foregroundStyle(.secondary).padding(.top, -8).padding(.bottom, 18)
+                    Text(text).font(.app(13)).foregroundStyle(.secondary).padding(.top, -8).padding(.bottom, 18)
                 }
             }
         }
@@ -245,10 +245,10 @@ struct ReaderView: View {
     private var failed: some View {
         VStack(alignment: .leading, spacing: 14) {
             if !model.summary.isEmpty {
-                Text(model.summary).font(.system(size: 17)).lineSpacing(8)
+                Text(model.summary).font(.app(17)).lineSpacing(8)
             }
             Text("이 기사는 본문을 추리지 못했습니다(유료 기사·차단 등).")
-                .font(.system(size: 13)).foregroundStyle(.secondary)
+                .font(.app(13)).foregroundStyle(.secondary)
             HStack {
                 if let u = model.translatedPageURL {
                     Button("번역된 웹페이지로 보기") { openURL(u) }.buttonStyle(.borderedProminent)
@@ -267,7 +267,7 @@ struct Skeleton: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label(label, systemImage: "ellipsis").font(.system(size: 12)).foregroundStyle(.secondary)
+            Label(label, systemImage: "ellipsis").font(.app(12)).foregroundStyle(.secondary)
                 .symbolEffect(.variableColor.iterative, options: .repeating)
                 .padding(.bottom, 8)
             ForEach(0..<3, id: \.self) { para in
@@ -302,6 +302,11 @@ enum ReaderController {
 
     // from: 누른 카드의 화면 위치. 주면 읽기 창이 그 자리에서 커져 나온다.
     static func open(_ item: NewsItem, from: CGRect = .zero) {
+        // 영상·팟캐스트는 원래 앱(브라우저·YouTube·팟캐스트)으로
+        if item.itemKind.opensExternally {
+            if let u = URL(string: item.link), URLSafety.isPublicHTTP(u) { NSWorkspace.shared.open(u) }
+            return
+        }
         let model = ReaderModel(item: item)
         let host = NSHostingController(rootView: ReaderView(model: model))
         host.sceneBridgingOptions = [.toolbars]

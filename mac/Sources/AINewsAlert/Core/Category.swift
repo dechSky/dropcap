@@ -55,5 +55,11 @@ enum NewsCategory: String, Codable, CaseIterable, Identifiable {
 }
 
 extension NewsItem {
-    var category: NewsCategory { NewsCategory.classify("\(title) \(titleKo ?? "") \(summary)") }
+    var category: NewsCategory {
+        switch itemKind {
+        case .paper: return .research
+        case .release: return .model
+        default: return NewsCategory.classify("\(title) \(titleKo ?? "") \(summary)")
+        }
+    }
 }

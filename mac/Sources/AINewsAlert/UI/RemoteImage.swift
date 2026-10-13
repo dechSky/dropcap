@@ -77,7 +77,7 @@ struct RemoteImage: View {
         ZStack {
             LinearGradient(colors: [accent.opacity(0.35), category.color.opacity(0.25), accent.opacity(0.12)],
                            startPoint: .topLeading, endPoint: .bottomTrailing)
-                .overlay(Image(systemName: category.symbol).font(.system(size: 28, weight: .light)).foregroundStyle(.white.opacity(0.55)))
+                .overlay(Image(systemName: category.symbol).font(.app(28, .light)).foregroundStyle(.white.opacity(0.55)))
             if let image {
                 Image(nsImage: image)
                     .resizable()

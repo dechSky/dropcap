@@ -20,7 +20,22 @@ actor FeedService {
     }
 
     // 본문과 함께 문자 인코딩 이름(헤더 기준)을 돌려준다
+    // 잠깐의 서버 오류(5xx·429, YouTube 피드의 간헐적 404)는 한 번 더 시도한다
     func fetchWithEncoding(_ url: String, conditional: Bool = false) async throws -> (data: Data, encoding: String?)? {
+        let youtube = url.contains("youtube.com/feeds")
+        var attempt = 0
+        while true {
+            do {
+                return try await fetchOnce(url, conditional: conditional)
+            } catch FeedError.http(let code) where code == 429 || (500...504).contains(code) || (code == 404 && youtube) {
+                attempt += 1
+                guard attempt <= (youtube ? 2 : 1) else { throw FeedError.http(code) }
+                try await Task.sleep(for: .milliseconds(code == 429 ? 3000 : 1500 * attempt))
+            }
+        }
+    }
+
+    private func fetchOnce(_ url: String, conditional: Bool) async throws -> (data: Data, encoding: String?)? {
         guard let u = URL(string: url), await URLSafety.resolvesPublic(u) else { throw FeedError.blocked("주소 확인") }
         var req = URLRequest(url: u)
         req.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
@@ -58,7 +73,8 @@ actor FeedService {
         }.map {
             NewsItem(id: $0.id, title: $0.title, titleKo: nil, link: $0.link, date: $0.date, summary: $0.summary,
                      sourceId: source.id, sourceName: source.name, tier: source.tier,
-                     image: $0.image.flatMap { URL(string: $0, relativeTo: URL(string: $0)) }.map(\.absoluteString))
+                     image: $0.image.flatMap { URL(string: $0, relativeTo: URL(string: $0)) }.map(\.absoluteString),
+                     kind: source.kind)
         }
     }
 

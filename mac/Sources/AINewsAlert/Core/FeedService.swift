@@ -32,7 +32,7 @@ actor FeedService {
         let guardian = RequestGuard()
         let (data, resp) = try await session.data(for: req, delegate: guardian)
         // 실제로 접속한 IP 가 내부망이면(확인 뒤 DNS 응답을 바꾸는 공격) 받은 내용을 버린다
-        if guardian.connectedToPrivate { throw FeedError.blocked("접속 IP \(guardian.lastRemote ?? "?")") }
+        guard await guardian.isSafe() else { throw FeedError.blocked("접속 IP \(guardian.lastRemote ?? "확인 안 됨")") }
         let http = resp as? HTTPURLResponse
         if http?.statusCode == 304 { return nil }
         if let code = http?.statusCode, !(200..<300).contains(code) { throw FeedError.http(code) }
@@ -104,12 +104,14 @@ enum Gzip {
     }
 }
 
-// 요청 하나를 지킨다: 내부망으로 넘기는 리다이렉트는 따라가지 않고, 실제 접속한 IP 를 기록한다
+// 요청 하나를 지킨다: 내부망으로 넘기는 리다이렉트는 따라가지 않고, 실제 접속한 IP 를 확인한다.
+// 확인할 수 없으면 막는다(fail closed). 프록시를 거친 연결은 IP 가 프록시 것이라 이름 확인에만 맡긴다.
 final class RequestGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     private let lock = NSLock()
-    private var privateHit = false
+    private var verdict: Bool?            // nil = 아직 측정값 없음, true = 안전, false = 막음
     private var lastIP: String?
-    var connectedToPrivate: Bool { lock.lock(); defer { lock.unlock() }; return privateHit }
+    private var waiter: CheckedContinuation<Void, Never>?
+
     var lastRemote: String? { lock.lock(); defer { lock.unlock() }; return lastIP }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
@@ -118,14 +120,51 @@ final class RequestGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable 
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
-        let bad = metrics.transactionMetrics.contains { t in
-            guard let ip = t.remoteAddress else { return false }
+        var safe = true
+        var seen: String?
+        for t in metrics.transactionMetrics where t.resourceFetchType == .networkLoad {
+            if t.isProxyConnection { continue }
+            guard let ip = t.remoteAddress else { safe = false; continue } // 모르면 막음
+            seen = ip
             let bare = ip.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
-            if let v4 = URLSafety.parseV4(bare) { return !URLSafety.isPublic(v4: v4) }
-            if let v6 = URLSafety.parseV6(bare.split(separator: "%").first.map(String.init) ?? bare) { return !URLSafety.isPublic(v6: v6) }
-            return false
+            if let v4 = URLSafety.parseV4(bare) {
+                if !URLSafety.isPublic(v4: v4) { safe = false }
+            } else if let v6 = URLSafety.parseV6(bare.split(separator: "%").first.map(String.init) ?? bare) {
+                if !URLSafety.isPublic(v6: v6) { safe = false }
+            } else {
+                safe = false // 알아볼 수 없는 주소도 막음
+            }
         }
-        let last = metrics.transactionMetrics.last?.remoteAddress
-        lock.lock(); lastIP = last; if bad { privateHit = true }; lock.unlock()
+        lock.lock()
+        verdict = safe
+        lastIP = seen
+        let w = waiter
+        waiter = nil
+        lock.unlock()
+        w?.resume()
+    }
+
+    // 응답을 쓰기 전에 측정값을 기다린다(최대 2초). 끝내 안 오면 막는다.
+    func isSafe() async -> Bool {
+        lock.lock()
+        if let v = verdict { lock.unlock(); return v }
+        lock.unlock()
+        await withTaskGroup(of: Void.self) { g in
+            g.addTask {
+                await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                    self.lock.lock()
+                    if self.verdict != nil { self.lock.unlock(); c.resume(); return }
+                    self.waiter = c
+                    self.lock.unlock()
+                }
+            }
+            g.addTask { try? await Task.sleep(for: .seconds(2)) }
+            await g.next()
+            g.cancelAll()
+            self.lock.lock(); let w = self.waiter; self.waiter = nil; self.lock.unlock()
+            w?.resume()
+        }
+        lock.lock(); defer { lock.unlock() }
+        return verdict ?? false
     }
 }

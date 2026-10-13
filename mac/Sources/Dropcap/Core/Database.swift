@@ -10,23 +10,38 @@ final class Database: @unchecked Sendable {
 
     private var db: OpaquePointer?
     private let queue = DispatchQueue(label: "magazine.db")
-    let file = Store.dir.appendingPathComponent("magazine.sqlite")
+    let file: URL
 
-    private init() {
+    // file 은 시험에서만 바꾼다
+    init(file: URL = Store.dir.appendingPathComponent("magazine.sqlite")) {
+        self.file = file
         queue.sync { open() }
     }
 
     private func open() {
-        if sqlite3_open(file.path, &db) != SQLITE_OK {
+        // sqlite3_open 은 깨진 파일도 열어 준다 — 첫 문장에서 '데이터베이스가 아님/깨짐'이 나오면 그때 옆으로 치운다.
+        // (그대로 두면 모든 읽기·쓰기가 조용히 실패해 새 스크랩까지 사라졌다)
+        let opened = sqlite3_open(file.path, &db) == SQLITE_OK
+        if !opened || (!createSchema() && [SQLITE_NOTADB, SQLITE_CORRUPT].contains(sqlite3_errcode(db))) {
             NSLog("[DB] 열기 실패, 새로 만듭니다: %@", String(cString: sqlite3_errmsg(db)))
             sqlite3_close(db)
-            let broken = file.deletingPathExtension().appendingPathExtension("broken.sqlite")
-            try? FileManager.default.removeItem(at: broken)
-            try? FileManager.default.moveItem(at: file, to: broken)
+            db = nil
+            let fm = FileManager.default
+            for ext in ["", "-wal", "-shm"] { // 남은 WAL 이 새 파일에 섞이지 않게 함께 치운다
+                let from = URL(fileURLWithPath: file.path + ext)
+                let broken = URL(fileURLWithPath: file.deletingPathExtension().path + ".broken.sqlite" + ext)
+                try? fm.removeItem(at: broken)
+                try? fm.moveItem(at: from, to: broken)
+            }
             sqlite3_open(file.path, &db)
+            createSchema()
         }
+    }
+
+    @discardableResult
+    private func createSchema() -> Bool {
         exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")
-        exec("""
+        && exec("""
         CREATE TABLE IF NOT EXISTS items(
           key TEXT PRIMARY KEY, json TEXT NOT NULL, date REAL, first_seen REAL NOT NULL,
           category TEXT, source TEXT, tier TEXT, cluster TEXT, image TEXT);
@@ -41,7 +56,7 @@ final class Database: @unchecked Sendable {
           id TEXT PRIMARY KEY, collection TEXT NOT NULL, created REAL NOT NULL, json TEXT NOT NULL);
         CREATE INDEX IF NOT EXISTS scraps_collection ON scraps(collection, created);
         """)
-        exec("PRAGMA user_version=\(Self.schemaVersion);")
+        && exec("PRAGMA user_version=\(Self.schemaVersion);")
     }
 
     @discardableResult

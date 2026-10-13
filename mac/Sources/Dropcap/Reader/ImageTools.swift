@@ -92,6 +92,8 @@ enum ImageTools {
     nonisolated static func recognize(_ image: NSImage) async -> [Line] {
         guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return [] }
         return await withCheckedContinuation { cont in
+            // Vision 은 실패할 때 완료 처리기와 throw 를 둘 다 낼 수 있다 — 한 번만 돌려준다(두 번이면 앱이 멈춤)
+            let once = ResumeOnce(cont)
             let req = VNRecognizeTextRequest { req, _ in
                 let obs = (req.results as? [VNRecognizedTextObservation]) ?? []
                 let lines = obs.compactMap { o -> Line? in
@@ -100,14 +102,14 @@ enum ImageTools {
                     let box = CGRect(x: b.minX, y: 1 - b.maxY, width: b.width, height: b.height)
                     return Line(text: t.string, box: box, background: averageColor(cg, box))
                 }
-                cont.resume(returning: lines)
+                once.resume(lines)
             }
             req.recognitionLevel = .accurate
             req.usesLanguageCorrection = true
             req.automaticallyDetectsLanguage = true
             let handler = VNImageRequestHandler(cgImage: cg)
             DispatchQueue.global(qos: .userInitiated).async {
-                do { try handler.perform([req]) } catch { cont.resume(returning: []) }
+                do { try handler.perform([req]) } catch { once.resume([]) }
             }
         }
     }
@@ -133,6 +135,16 @@ enum ImageTools {
         }
         guard n > 0 else { return .white }
         return NSColor(red: sum[0] / n, green: sum[1] / n, blue: sum[2] / n, alpha: 1)
+    }
+}
+
+private final class ResumeOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cont: CheckedContinuation<[ImageTools.Line], Never>?
+    init(_ c: CheckedContinuation<[ImageTools.Line], Never>) { cont = c }
+    func resume(_ v: [ImageTools.Line]) {
+        lock.lock(); let c = cont; cont = nil; lock.unlock()
+        c?.resume(returning: v)
     }
 }
 

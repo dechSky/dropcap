@@ -101,6 +101,7 @@ final class AppModel: ObservableObject {
         state.recent = Array((found + state.recent).prefix(recentLimit))
         state.unread += found.count
         state.lastCheck = Date()
+        state.seen = Store.pruned(state.seen) // 저장 파일만이 아니라 메모리의 기억도 정리(오래 켜 두면 끝없이 커지고 저장마다 정렬하던 문제)
         Store.save(state)
         Magazine.shared.publishDue() // 확인을 마친 뒤에 지난 호를 엮어 빠지는 기사가 없게
         if (isQuietTime || isSnoozed), !manual {

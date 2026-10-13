@@ -308,3 +308,14 @@ struct URLSafetyDNSTests {
         #expect(MenuView.byImportance([a, b], coverage: [:]).first?.id == "b")
     }
 }
+
+
+@Suite struct CategoryBoundaryTests {
+    @Test func noPartialWordMatches() { // A-08
+        #expect(NewsCategory.classify("The impact of rapid growth in capital markets") == .other)
+        #expect(NewsCategory.classify("A flaw that may happen in urban areas") == .other)
+        #expect(NewsCategory.classify("EU passes the AI Act") == .policy)
+        #expect(NewsCategory.classify("OpenAI raises funding at new valuation") == .business)
+        #expect(NewsCategory.classify("새 모델 출시") == .model)
+    }
+}

@@ -121,30 +121,54 @@ enum Store {
 
     static var exists: Bool { FileManager.default.fileExists(atPath: file.path) }
 
+    static let backupFile = dir.appendingPathComponent("native-state.bak.json")
+
     static func load() -> AppState {
-        let dec = JSONDecoder()
-        dec.dateDecodingStrategy = .iso8601
-        var s = (try? Data(contentsOf: file)).flatMap { try? dec.decode(AppState.self, from: $0) } ?? AppState()
+        let (state, fromBackup) = read(file, backup: backupFile)
+        // 본 파일이 깨져 .bak 에서 읽었으면, 첫 저장 때 깨진 파일로 .bak 을 덮어쓰지 않게 한다
+        if fromBackup { backedUp = true }
+        var s = state
         for src in Resources.config.sources + s.customSources where s.enabled[src.id] == nil { s.enabled[src.id] = src.defaultOn }
         return s
     }
 
+    // 본 파일을 통째로 못 읽으면(깨짐) .bak 을 읽는다. 깨진 파일은 .broken.json 으로 남겨 둔다.
+    static func read(_ file: URL, backup: URL) -> (state: AppState, fromBackup: Bool) {
+        let dec = JSONDecoder()
+        dec.dateDecodingStrategy = .iso8601
+        guard let data = try? Data(contentsOf: file) else { return (AppState(), false) } // 처음 실행
+        if let s = try? dec.decode(AppState.self, from: data) { return (s, false) }
+        let broken = file.deletingPathExtension().appendingPathExtension("broken.json")
+        try? FileManager.default.removeItem(at: broken)
+        try? FileManager.default.copyItem(at: file, to: broken)
+        if let b = try? Data(contentsOf: backup), let s = try? dec.decode(AppState.self, from: b) {
+            NSLog("[상태] native-state.json 이 깨져 .bak 에서 되살렸습니다")
+            return (s, true)
+        }
+        NSLog("[상태] native-state.json 이 깨졌고 .bak 도 읽지 못해 새로 시작합니다")
+        return (AppState(), true)
+    }
+
     private static var backedUp = false
+
+    // 본 글 기억은 오래된 것부터 정리해 seenLimit 개만 남긴다
+    static func pruned(_ seen: [String: Double], limit: Int = seenLimit) -> [String: Double] {
+        guard seen.count > limit else { return seen }
+        var out = seen
+        for (k, _) in seen.sorted(by: { $0.value < $1.value }).prefix(seen.count - limit) { out.removeValue(forKey: k) }
+        return out
+    }
 
     static func save(_ state: AppState) {
         var state = state
         // 실행마다 첫 저장 전에 이전 파일을 .bak 으로 남긴다(형식이 바뀌어 일부를 못 읽었을 때 되살릴 수 있게)
         if !backedUp, exists {
             backedUp = true
-            let bak = dir.appendingPathComponent("native-state.bak.json")
-            try? FileManager.default.removeItem(at: bak)
-            try? FileManager.default.copyItem(at: file, to: bak)
+            try? FileManager.default.removeItem(at: backupFile)
+            try? FileManager.default.copyItem(at: file, to: backupFile)
         }
         var s = state
-        if s.seen.count > seenLimit {
-            let drop = s.seen.sorted { $0.value < $1.value }.prefix(s.seen.count - seenLimit)
-            for (k, _) in drop { s.seen.removeValue(forKey: k) }
-        }
+        s.seen = pruned(s.seen)
         let enc = JSONEncoder()
         enc.dateEncodingStrategy = .iso8601
         guard let data = try? enc.encode(s) else { return }

@@ -155,12 +155,38 @@ enum Dates {
 }
 
 enum Plain {
-    private static let entities: [String: String] = ["&nbsp;": " ", "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": "\"", "&#39;": "'", "&#039;": "'", "&apos;": "'", "&#8217;": "’", "&#8216;": "‘", "&#8220;": "“", "&#8221;": "”", "&#8230;": "…", "&#8211;": "–", "&#8212;": "—"]
+    private static let named: [String: String] = ["nbsp": " ", "amp": "&", "lt": "<", "gt": ">", "quot": "\"", "apos": "'",
+        "rsquo": "’", "lsquo": "‘", "ldquo": "“", "rdquo": "”", "hellip": "…", "ndash": "–", "mdash": "—",
+        "middot": "·", "bull": "•", "laquo": "«", "raquo": "»", "copy": "©", "reg": "®", "trade": "™"]
+    private static let entity = try! NSRegularExpression(pattern: "&(#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[a-zA-Z]{2,8});")
 
     static func clean(_ s: String) -> String {
-        var out = s.replacingOccurrences(of: "<[^>]*>", with: " ", options: .regularExpression)
-        for (k, v) in entities { out = out.replacingOccurrences(of: k, with: v) }
+        let out = decodeEntities(s.replacingOccurrences(of: "<[^>]*>", with: " ", options: .regularExpression))
         return out.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces)
+    }
+
+    // 한 번에 훑어 푼다(&amp;lt; 가 '<' 로 두 번 풀리지 않게). 숫자 표기(&#8217; · &#x2019;)는 모두, 이름 표기는 흔한 것만.
+    static func decodeEntities(_ s: String) -> String {
+        guard s.contains("&") else { return s }
+        let ns = s as NSString
+        var out = ""
+        var last = 0
+        for m in entity.matches(in: s, range: NSRange(location: 0, length: ns.length)) {
+            out += ns.substring(with: NSRange(location: last, length: m.range.location - last))
+            let body = ns.substring(with: m.range(at: 1))
+            var rep: String?
+            if body.hasPrefix("#") {
+                let hex = body.dropFirst().first.map { $0 == "x" || $0 == "X" } ?? false
+                let digits = hex ? body.dropFirst(2) : body.dropFirst()
+                if let v = UInt32(digits, radix: hex ? 16 : 10), v != 0, let u = Unicode.Scalar(v) { rep = String(Character(u)) }
+            } else {
+                rep = named[body] ?? named[body.lowercased()]
+            }
+            out += rep ?? ns.substring(with: m.range)
+            last = m.range.location + m.range.length
+        }
+        out += ns.substring(from: last)
+        return out
     }
 
     static func titleFromSlug(_ url: String) -> String {

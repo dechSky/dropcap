@@ -33,7 +33,6 @@ actor Translator {
         let src = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard Self.looksForeign(src) else { return text }
         if let c = cache[src] { return c }
-        if cache.count > 4000 { cache.removeAll(keepingCapacity: true) } // 오래 켜 둬도 무한히 커지지 않게
         let out = await translateMany([src]).first ?? src
         return out
     }
@@ -47,7 +46,7 @@ actor Translator {
 
         let sample = todo.prefix(5).map { texts[$0] }.joined(separator: " ")
         if let apple = await appleTranslate(todo.map { texts[$0] }, sample: sample) {
-            for (k, i) in todo.enumerated() { result[i] = apple[k]; cache[texts[i]] = apple[k] }
+            for (k, i) in todo.enumerated() { result[i] = apple[k]; remember(texts[i], apple[k]) }
             lastEngine = .apple
             return result
         }
@@ -74,11 +73,19 @@ actor Translator {
                 }
             }
             for await pairs in group {
-                for (i, t) in pairs { result[i] = t; cache[texts[i]] = t }
+                for (i, t) in pairs { result[i] = t; remember(texts[i], t) }
             }
         }
         lastEngine = .google
         return result
+    }
+
+    // 오래 켜 둬도 무한히 커지지 않게 4000개를 넘으면 비운다(기사 본문 번역도 여기로 모이므로 이 한 곳에서 지킨다)
+    static let cacheLimit = 4000
+    var cacheCount: Int { cache.count }
+    func remember(_ source: String, _ translated: String) {
+        if cache.count >= Self.cacheLimit { cache.removeAll(keepingCapacity: true) }
+        cache[source] = translated
     }
 
     private func appleTranslate(_ texts: [String], sample: String) async -> [String]? {

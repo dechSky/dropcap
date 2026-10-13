@@ -65,7 +65,8 @@ final class ArticleService {
         let t = Task { await self.run(item, interactive: interactive) }
         inflight[item.link] = t
         let r = await t.value
-        inflight[item.link] = nil
+        // 그 사이 실패한 미리 받기를 치우고 다시 시작한 작업이 있으면 그것은 지우지 않는다
+        if inflight[item.link] == t { inflight[item.link] = nil }
         return r
     }
 

@@ -58,6 +58,7 @@ final class Magazine: ObservableObject {
     @Published var preparing = false             // 첫 호를 엮는 중
     var grown: [(Database.Cluster, NewsItem)] = [] // 이번에 팔로우한 스토리에 붙은 새 보도(알림 뒤 비움)
     private var enriching = false
+    private var enrichTried: Set<String> = [] // 이번 실행에서 이미 찾아본 기사(사진이 없던 곳을 확인마다 다시 받지 않게)
 
     private init() {
         archive = db.issues()
@@ -147,12 +148,12 @@ final class Magazine: ObservableObject {
     func enrichImages() {
         guard !enriching else { return }
         enriching = true
-        let todo = db.items(from: Date().addingTimeInterval(-3 * 24 * 3600), limit: 300)
-            .filter { $0.item.image == nil && !$0.item.link.isEmpty }
-            .prefix(12)
+        if enrichTried.count > 5000 { enrichTried.removeAll() } // 오래 켜 둬도 끝없이 커지지 않게
+        let todo = Self.toEnrich(db.items(from: Date().addingTimeInterval(-3 * 24 * 3600), limit: 300), tried: enrichTried)
         Task {
             var changed = false
             for s in todo {
+                enrichTried.insert(s.item.key)
                 if let img = await FeedService.shared.ogImage(s.item.link) {
                     db.setImage(s.item.key, img)
                     changed = true
@@ -161,6 +162,12 @@ final class Magazine: ObservableObject {
             enriching = false
             if changed { imageRevision += 1 }
         }
+    }
+
+    // 사진 없는 기사 중 아직 찾아보지 않은 것 12개. 이미 찾아본 것을 빼지 않으면 사진이 없는 최신 12건만
+    // 확인마다(5분) 다시 받고, 그 뒤의 기사는 영영 사진을 찾지 못했다.
+    nonisolated static func toEnrich(_ items: [Database.StoredItem], tried: Set<String>) -> [Database.StoredItem] {
+        Array(items.filter { $0.item.image == nil && !$0.item.link.isEmpty && !tried.contains($0.item.key) }.prefix(12))
     }
 
     // MARK: 점수

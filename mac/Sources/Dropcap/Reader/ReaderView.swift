@@ -65,8 +65,9 @@ final class ReaderModel: ObservableObject {
     var translatedPageURL: URL? {
         guard let u = URL(string: item.link), let host = u.host else { return nil }
         let h = host.replacingOccurrences(of: "-", with: "--").replacingOccurrences(of: ".", with: "-")
-        let q = (u.query.map { $0 + "&" } ?? "") + "_x_tr_sl=auto&_x_tr_tl=ko&_x_tr_hl=ko"
-        return URL(string: "https://\(h).translate.goog\(u.path)?\(q)")
+        let q = (u.query(percentEncoded: true).map { $0 + "&" } ?? "") + "_x_tr_sl=auto&_x_tr_tl=ko&_x_tr_hl=ko"
+        // path 는 퍼센트 인코딩을 풀어 돌려주므로(공백·한글) 인코딩된 그대로 써야 주소가 만들어진다
+        return URL(string: "https://\(h).translate.goog\(u.path(percentEncoded: true))?\(q)")
     }
 }
 

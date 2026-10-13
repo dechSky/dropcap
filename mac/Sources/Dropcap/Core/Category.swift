@@ -47,9 +47,24 @@ enum NewsCategory: String, Codable, CaseIterable, Identifiable {
         (.model, ["model", "gpt", "claude", "gemini", "llama", "release", "launch", "introducing", "announc", "api", "agent", "app", "feature", "update", "open-source", "open source", "weights", "모델", "출시", "공개", "발표", "업데이트", "에이전트", "오픈소스", "기능"]),
     ]
 
+    // 영어는 낱말 경계로(짧은 말은 온전한 낱말만, 긴 어간은 낱말 앞부분) — 'impact'의 act, 'capital'의 api 에 걸리지 않게(A-08).
+    // 한국어는 조사가 붙으므로 부분 일치
+    private static let compiled: [(NewsCategory, NSRegularExpression?, [String])] = rules.map { cat, words in
+        let english = words.map { $0.trimmingCharacters(in: .whitespaces) }.filter { $0.unicodeScalars.allSatisfy { $0.isASCII } }
+        let korean = words.filter { !$0.unicodeScalars.allSatisfy { $0.isASCII } }
+        let parts = english.map { w -> String in
+            let e = NSRegularExpression.escapedPattern(for: w)
+            return w.count <= 4 ? "\\b\(e)\\b" : "\\b\(e)"
+        }
+        return (cat, try? NSRegularExpression(pattern: parts.joined(separator: "|")), korean)
+    }
+
     static func classify(_ text: String) -> NewsCategory {
-        let t = " " + text.lowercased() + " "
-        for (cat, words) in rules where words.contains(where: { t.contains($0) }) { return cat }
+        let t = text.lowercased()
+        let range = NSRange(t.startIndex..., in: t)
+        for (cat, re, korean) in compiled {
+            if re?.firstMatch(in: t, range: range) != nil || korean.contains(where: { t.contains($0) }) { return cat }
+        }
         return .other
     }
 }

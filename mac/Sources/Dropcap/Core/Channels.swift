@@ -161,7 +161,9 @@ enum ChannelResolver {
                 }
             }
         }
-        url = URL(string: "\(url.scheme ?? "https")://\(host)")!
+        var root = URLComponents(); root.scheme = url.scheme ?? "https"; root.host = host.contains(":") ? "[\(host)]" : host; root.port = url.port
+        guard let r = root.url else { throw Failure.notFound } // IPv6 주소에서 강제 언랩으로 꺼지던 문제(A-01)
+        url = r
         for p in ["/feed", "/rss", "/feed.xml", "/atom.xml", "/index.xml", "/rss.xml", "/blog/feed", "/blog/rss.xml"] {
             if let f = try? await check(url.absoluteString + p, kind: .article, home: url.absoluteString) { return f }
         }

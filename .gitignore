@@ -37,3 +37,4 @@ xcuserdata/
 .swiftpm/
 .claude/
 *.log
+.playwright-mcp/

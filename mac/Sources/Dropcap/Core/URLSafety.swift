@@ -102,6 +102,7 @@ enum URLSafety {
         if b[0..<15].allSatisfy({ $0 == 0 }) { return false }                   // :: 와 ::1
         if b[0] & 0xFE == 0xFC { return false }                                  // fc00::/7 고유 로컬
         if b[0] == 0xFE && b[1] & 0xC0 == 0x80 { return false }                  // fe80::/10 링크 로컬
+        if b[0] == 0xFE && b[1] & 0xC0 == 0xC0 { return false }                  // fec0::/10 사이트 로컬(폐지됐지만 내부망에 남아 있음)
         if b[0] == 0xFF { return false }                                         // 멀티캐스트
         if b[0..<10].allSatisfy({ $0 == 0 }) && b[10] == 0xFF && b[11] == 0xFF { // ::ffff:a.b.c.d
             return isPublic(v4: Array(b[12..<16]))

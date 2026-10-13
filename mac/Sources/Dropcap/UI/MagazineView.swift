@@ -288,6 +288,7 @@ private struct CoverStory: View {
     let stored: Database.StoredItem
     let issue: Issue
     let onStory: (String) -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var drift = false
     @State private var hover = false
     @State private var frame: CGRect = .zero
@@ -359,6 +360,8 @@ private struct CoverStory: View {
         .onHover { hover = $0 }
         .background(ScreenFrame(frame: $frame))
         .onAppear {
+            // 움직임 줄이기를 켠 사람에게는 끝없이 흐르는 켄 번스를 돌리지 않는다
+            guard !reduceMotion else { return }
             withAnimation(.easeInOut(duration: 22).repeatForever(autoreverses: true)) { drift = true }
         }
     }

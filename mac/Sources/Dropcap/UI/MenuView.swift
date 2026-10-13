@@ -112,7 +112,7 @@ struct MenuView: View {
                     if snapshot {
                         VStack(spacing: 2) {
                             let list = items
-                            ForEach(Array(list.enumerated()), id: \.element.id) { i, it in
+                            ForEach(Array(list.enumerated()), id: \.element.key) { i, it in
                                 // 출처별일 때는 출처가 바뀌는 곳에 이름표
                                 if sortRaw == "source", i == 0 || list[i - 1].sourceName != it.sourceName {
                                     HStack(spacing: 6) {
@@ -143,7 +143,7 @@ struct MenuView: View {
                     ScrollView {
                         LazyVStack(spacing: 2) {
                             let list = items
-                            ForEach(Array(list.enumerated()), id: \.element.id) { i, it in
+                            ForEach(Array(list.enumerated()), id: \.element.key) { i, it in
                                 // 출처별일 때는 출처가 바뀌는 곳에 이름표
                                 if sortRaw == "source", i == 0 || list[i - 1].sourceName != it.sourceName {
                                     HStack(spacing: 6) {

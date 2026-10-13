@@ -63,13 +63,16 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
 
     // 1) 빠른 길: HTML 만 받아 스크립트·그림·글꼴 없이 바로 본문을 추린다(대부분의 언론사는 여기서 끝남)
     // 2) 느린 길: 스크립트로 본문을 그리는 사이트만 실제로 띄운다. 그림·동영상·글꼴은 막고, 본문이 생기는 대로 바로 꺼낸다.
-    func extract(_ url: URL) async -> Article? {
+    // allowScripts: 사용자가 직접 연 기사일 때만 true. 미리 받기에서는 사이트의 스크립트를 돌리지 않는다.
+    func extract(_ url: URL, allowScripts: Bool = true) async -> Article? {
+        guard URLSafety.isPublicHTTP(url) else { return nil }
         let t0 = Date()
         if let got = try? await FeedService.shared.fetchWithEncoding(url.absoluteString),
            let art = await run(data: got.data, encoding: got.encoding ?? Self.sniffCharset(got.data), base: url) {
             NSLog("[기사] 빠른 길 %.2f초 %@", Date().timeIntervalSince(t0), url.host ?? "")
             return art
         }
+        guard allowScripts else { return nil }
         let art = await run(url: url)
         NSLog("[기사] 느린 길 %.2f초 %@ %@", Date().timeIntervalSince(t0), url.host ?? "", art == nil ? "실패" : "성공")
         return art
@@ -169,6 +172,13 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { finishWait() }
+
+    // 페이지가 내부망 주소로 이동하거나 넘기려 하면 막는다(about:blank·data 는 허용)
+    func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
+        guard let u = action.request.url else { return .cancel }
+        if u.scheme == "about" || u.scheme == "data" { return .allow }
+        return URLSafety.isPublicHTTP(u) ? .allow : .cancel
+    }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { finishWait() }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { finishWait() }
 }

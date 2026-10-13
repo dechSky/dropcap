@@ -155,3 +155,18 @@ import Testing
         #expect(NewsCategory.classify("Weekend reading list") == .other)
     }
 }
+
+@Suite struct URLSafetyTests {
+    @Test func allowsPublic() {
+        for u in ["https://openai.com/news/x", "http://www.aitimes.com/a?b=1", "https://8.8.8.8/x", "https://[2606:4700::1111]/"] {
+            #expect(URLSafety.isPublicHTTP(URL(string: u)), "\(u)")
+        }
+    }
+    @Test func blocksPrivateAndOddSchemes() {
+        for u in ["http://localhost:8080/", "http://127.0.0.1/", "http://192.168.0.1/admin", "http://10.1.2.3/", "http://172.20.0.5/",
+                  "http://169.254.169.254/latest/meta-data", "http://router.local/", "http://intranet/", "http://[::1]/", "http://[fd00::1]/",
+                  "http://[::ffff:192.168.1.1]/", "file:///etc/passwd", "smb://server/share", "javascript:alert(1)", "http://0.0.0.0/"] {
+            #expect(!URLSafety.isPublicHTTP(URL(string: u)), "\(u)")
+        }
+    }
+}

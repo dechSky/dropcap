@@ -48,11 +48,20 @@ final class ArticleService {
     }
 
     // 이미 준비 중이면 같은 작업을 기다린다
+    // interactive: 사용자가 연 기사(스크립트가 필요한 사이트도 띄움). 미리 받기는 false — 스크립트 없이 빠른 길만.
     @discardableResult
-    func prepare(_ item: NewsItem) async -> PreparedArticle {
+    func prepare(_ item: NewsItem, interactive: Bool = true) async -> PreparedArticle {
         if let c = cached(item.link) { return c }
-        if let t = inflight[item.link] { return await t.value }
-        let t = Task { await self.run(item) }
+        if let t = inflight[item.link] {
+            let r = await t.value
+            // 미리 받기가 스크립트 없이 실패했으면, 사용자가 열었을 때는 제대로 다시 시도
+            if r.stage == .failed, interactive {
+                if inflight[item.link] == t { inflight[item.link] = nil } // 끝난 실패 작업을 치우고 한 번만 다시
+                return await prepare(item, interactive: true)
+            }
+            return r
+        }
+        let t = Task { await self.run(item, interactive: interactive) }
         inflight[item.link] = t
         let r = await t.value
         inflight[item.link] = nil
@@ -63,7 +72,7 @@ final class ArticleService {
     func prefetch(_ items: [NewsItem]) {
         Task {
             for it in items where it.id != AppModel.previewID && !it.link.isEmpty {
-                await prepare(it)
+                await prepare(it, interactive: false)
             }
         }
     }
@@ -79,10 +88,14 @@ final class ArticleService {
         listeners[link]?.values.forEach { $0(a) }
     }
 
-    private func run(_ item: NewsItem) async -> PreparedArticle {
+    private func run(_ item: NewsItem, interactive: Bool) async -> PreparedArticle {
         var a = PreparedArticle(title: item.displayTitle, originalTitle: item.title)
         emit(item.link, a)
-        guard let url = URL(string: item.link), let art = await ArticleExtractor().extract(url) else {
+        guard let url = URL(string: item.link), let art = await ArticleExtractor().extract(url, allowScripts: interactive) else {
+            if !interactive { // 미리 받기 실패는 조용히 넘기고, 열 때 다시 시도
+                memory.removeValue(forKey: item.link)
+                return PreparedArticle(stage: .failed, title: item.displayTitle, originalTitle: item.title)
+            }
             a.fallback = await Translator.shared.translate(item.summary)
             a.stage = .failed
             emit(item.link, a)

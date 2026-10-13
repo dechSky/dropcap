@@ -21,7 +21,7 @@ actor FeedService {
 
     // 본문과 함께 문자 인코딩 이름(헤더 기준)을 돌려준다
     func fetchWithEncoding(_ url: String, conditional: Bool = false) async throws -> (data: Data, encoding: String?)? {
-        guard let u = URL(string: url), ["http", "https"].contains(u.scheme?.lowercased() ?? "") else { throw FeedError.badFormat }
+        guard let u = URL(string: url), URLSafety.isPublicHTTP(u) else { throw FeedError.badFormat }
         var req = URLRequest(url: u)
         req.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
         req.setValue("application/rss+xml, application/atom+xml, application/xml, text/xml, text/html;q=0.8", forHTTPHeaderField: "Accept")
@@ -29,7 +29,7 @@ actor FeedService {
             if let e = v.etag { req.setValue(e, forHTTPHeaderField: "If-None-Match") }
             if let m = v.modified { req.setValue(m, forHTTPHeaderField: "If-Modified-Since") }
         }
-        let (data, resp) = try await session.data(for: req)
+        let (data, resp) = try await session.data(for: req, delegate: RedirectGuard.shared)
         let http = resp as? HTTPURLResponse
         if http?.statusCode == 304 { return nil }
         if let code = http?.statusCode, !(200..<300).contains(code) { throw FeedError.http(code) }
@@ -51,8 +51,7 @@ actor FeedService {
         if let v = pending.removeValue(forKey: source.url) { validators[source.url] = v }
         // http(s) 링크만: file:// · smb:// 같은 주소는 열지 않는다
         return entries.filter { e in
-            guard let u = URL(string: e.link), let sch = u.scheme?.lowercased() else { return false }
-            return sch == "http" || sch == "https"
+            URLSafety.isPublicHTTP(URL(string: e.link))
         }.map {
             NewsItem(id: $0.id, title: $0.title, titleKo: nil, link: $0.link, date: $0.date, summary: $0.summary,
                      sourceId: source.id, sourceName: source.name, tier: source.tier)
@@ -99,5 +98,14 @@ enum Gzip {
             }
         }
         return n > 0 ? out.prefix(n) : data
+    }
+}
+
+// 공개 주소에서 내부망 주소로 넘기는 리다이렉트는 따라가지 않는다
+final class RedirectGuard: NSObject, URLSessionTaskDelegate {
+    static let shared = RedirectGuard()
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest) async -> URLRequest? {
+        URLSafety.isPublicHTTP(request.url) ? request : nil
     }
 }

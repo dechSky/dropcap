@@ -1,5 +1,7 @@
 # 맥 앱 버그 점검 (mac-audit)
 
+> 상태: 반영됨(2026-10-13 점검 · 2026-10-14 6절까지). 물병 관련 항목은 '물병 제거로 무효' 그대로. 이후 바뀜 — 2차에서 넣은 받는 크기 상한이 2xx 아닌 응답을 'IP 확인 안 됨'으로 바꾸던 회귀는 READSWEEP 에서 고침(9601e8d).
+
 - 범위: `mac/Sources/Dropcap/{Core,Toast,Reader,UI}`, `mac/Tests`, `mac/scripts`. 기준 문서 `docs/FEATURES.md`.
 - 방법: 모든 소스를 읽고 기능 번호(C·S·T·N·R·M·U·P·K·H·D·Q)별로 대조. 의심 가는 곳은 작은 시험·스크립트로 재현했다.
 - 조치: **고침** = 이 브랜치에서 고치고 `mac/Tests/DropcapTests/AuditTests.swift` 에 시험을 더함. **제안** = 고치지 않고 기록만(구조 변경이 크거나, 고치지 말라고 한 파일).

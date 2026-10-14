@@ -1,5 +1,7 @@
 # 일반 뉴스 전환 — 분야·출처 자료, 피드 날짜 내성, 출처 건강, OPML (작업자 B)
 
+> 상태: 반영됨(2026-10-13).
+
 브랜치 `wt/feeds-data`. 근거 자료: `docs/research/COMPETITIVE.md` (다)-2, `docs/research/feeds.json`.
 
 ## 1. 자료

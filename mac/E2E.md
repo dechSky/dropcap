@@ -13,7 +13,8 @@ bugak run --heavy -- mac/scripts/e2e/run.sh [결과 폴더]      # 기본: mac/.
 
 - 빌드(`swift build`) → 앱을 세 번 띄움: `main`(1~11단계) → `restart`(12-가) → 상태 파일·DB 를 깨뜨림 → `recover`(12-나·다).
 - 결과 폴더: `E2E-run.md`(단계 표) · `results-*.json` · `e2e.log`(시험 시계 시각 포함) · `shots/*.png` · `app-*.log` · `export.opml`/`import.opml` · `facts-*.json`.
-- 한 번 도는 데 약 6분(묶음 단계는 앱의 1분 점검을 실제로 기다린다). 실행 중 상단바 아이콘·물방울·매거진·읽기 창이 화면에 잠깐 뜬다.
+- 한 번 도는 데 약 6분(묶음 단계는 앱의 1분 점검을 실제로 기다린다).
+- **사용자 화면을 건드리지 않는다**(2026-10-14~): 시험 실행은 앱을 앞으로 띄우지 않고 창을 투명·마우스 통과로 둔다(`E2EQuietUI` — CLICKS.md '조용한 모드'). 상단바 아이콘·전역 단축키·물방울 소리도 끈다. 예전처럼 보이게 돌리려면 `DROPCAP_TEST_REAL_UI=1`.
 - 논리 부분은 `swift test` 에도 들어 있다: `Tests/DropcapTests/E2EScenarioTests.swift`(견본 이야기가 설계대로 묶이는지, 4·5·11단계 정책 순서, 묶음 시각·방해 금지, 견본 피드 해석, OPML 왕복, 시험 모드가 아닐 때 아무것도 안 바뀌는지).
 
 ## 시험 장치

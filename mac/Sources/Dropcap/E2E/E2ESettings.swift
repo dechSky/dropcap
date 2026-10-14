@@ -39,6 +39,7 @@ enum E2ESettings {
         NSApp.activate(ignoringOtherApps: true)
         // 앱이 쓰는 길(MenuView 의 @Environment(\.openSettings))과 같게: 작은 SwiftUI 화면을 띄워 openSettings() 를 부른다
         let opener = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1, height: 1), styleMask: [.borderless], backing: .buffered, defer: false)
+        opener.isReleasedWhenClosed = false // 코드로 만든 창은 닫을 때 스스로 풀려(기본값) Swift 참조와 겹쳐 두 번 풀리며 죽었다
         opener.contentView = NSHostingView(rootView: SettingsOpener())
         opener.orderFrontRegardless()
         var w: NSWindow?
@@ -71,9 +72,9 @@ enum E2ESettings {
         func walk(_ e: Any, _ depth: Int) -> Bool {
             guard depth < 40, let el = e as? NSAccessibilityElementProtocol else { return false }
             let obj = el as AnyObject
-            let name = [obj.accessibilityLabel?() ?? nil, obj.accessibilityTitle?() ?? nil].compactMap { $0 }.joined(separator: " ")
-            let role = obj.accessibilityRole?() ?? nil
-            if name.contains(label), ["AXCheckBox", "AXButton", "AXToggle", "AXSwitch"].contains(role?.rawValue ?? "") {
+            let name = E2EClickSweep.name(obj)
+            let role = E2EClickSweep.role(obj)
+            if name.contains(label), ["AXCheckBox", "AXButton", "AXToggle", "AXSwitch"].contains(role) {
                 return obj.accessibilityPerformPress?() ?? false
             }
             for c in (obj.accessibilityChildren?() ?? nil) ?? [] where walk(c, depth + 1) { return true }

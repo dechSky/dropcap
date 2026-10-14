@@ -7,8 +7,10 @@ struct DropcapApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @ObservedObject private var model = AppModel.shared
 
+    init() { E2EQuietUI.installEarly() } // 시험 실행만: 켜지는 순간 앞으로 나오지 않게(앱 기능에는 영향 없음)
+
     var body: some Scene {
-        MenuBarExtra {
+        MenuBarExtra(isInserted: .constant(!E2EFeeds.active)) { // 시험 실행은 상단바 아이콘을 두지 않는다(설치된 앱과 겹치지 않게)
             MenuView()
         } label: {
             // 안 읽은 소식이 있으면 채워진 아이콘

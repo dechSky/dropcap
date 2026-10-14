@@ -13,9 +13,13 @@ enum E2ERunner {
         let env = ProcessInfo.processInfo.environment
         guard let out = env["DROPCAP_TEST_E2E"] else { return }
         E2EFeeds.installOffline()
+        E2EQuietUI.install() // 사용자 화면·포커스를 건드리지 않게(DROPCAP_TEST_REAL_UI=1 이면 끔)
         let run = E2ERun(out: URL(fileURLWithPath: out, isDirectory: true), phase: env["DROPCAP_TEST_E2E_PHASE"] ?? "main")
         E2ERun.current = run
         run.prepareClock()
+        if run.phase == "clicks" { // 창이 생기기 전에 손쉬운 사용 나무를 켜 둔다
+            E2EClickSweep.primeAccessibility()
+        }
         Task { await run.start() }
     }
 }
@@ -233,6 +237,7 @@ final class E2ERun {
 
     // MARK: 시작
     func start() async {
+        model.update { $0.sound = false } // 시험 물방울이 소리를 내지 않게(사용자 작업 방해 금지)
         watchToasts()
         note("=== \(phase) 시작 · 시험 시계 \(clock.working ? "작동" : "없음(실제 시각)") · 데이터 \(Store.dir.path)")
         baseDay = cal.startOfDay(for: Date())
@@ -244,6 +249,7 @@ final class E2ERun {
         switch phase {
         case "restart": await E2EPhases.restart(self)
         case "recover": await E2EPhases.recover(self)
+        case "clicks": await E2EClickPhase.run(self)
         default: await E2EPhases.main(self)
         }
         note("=== \(phase) 끝: \(steps.filter { $0.pass == true }.count) 통과 · \(steps.filter { $0.pass == false }.count) 실패 · \(steps.filter { $0.pass == nil }.count) 확인 못 함")

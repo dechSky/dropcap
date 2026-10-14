@@ -76,6 +76,11 @@ enum E2EFeeds {
     }
     static func customURL(_ name: String) -> String { "https://feeds.\(host)/\(name).xml" }
 
+    // 바깥(브라우저)으로 열려던 주소 — 클릭 시험이 '눌렀더니 열렸다'를 판단할 때 쓴다
+    nonisolated(unsafe) private static var externals: [String] = []
+    static func noteExternal(_ u: String) { lock.lock(); externals.append(u); lock.unlock(); TestLog.write("[바깥 열기] \(u)") }
+    static var externalCount: Int { lock.lock(); defer { lock.unlock() }; return externals.count }
+
     static func allPosts() -> [String: [Post]] { lock.lock(); defer { lock.unlock() }; return posts }
     static func servedCounts() -> [String: Int] { lock.lock(); defer { lock.unlock() }; return served }
 

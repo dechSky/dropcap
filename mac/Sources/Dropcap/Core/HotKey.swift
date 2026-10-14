@@ -13,6 +13,7 @@ enum HotKey {
     nonisolated(unsafe) static var unavailable: Set<UInt32> = [] // 다른 앱이 먼저 써서 등록하지 못한 키(설정에 표시)
 
     @MainActor static func register(key: Key, _ action: @escaping () -> Void) {
+        if E2EFeeds.active { return } // 시험 실행은 설치된 Dropcap 의 ⌥⌘N·⌥⌘M 과 겹치지 않게 전역 단축키를 쓰지 않는다
         guard handlers[key.rawValue] == nil else { return }
         handlers[key.rawValue] = action
         if !installed {

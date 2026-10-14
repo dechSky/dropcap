@@ -1394,7 +1394,10 @@ private struct ScrapRow: View {
                     .onChange(of: editing) { _, now in if !now { saveMemo() } }
                     .onAppear { memo = scrap.memo }
                     .onChange(of: scrap.memo) { _, v in if !editing { memo = v } }
-                Spacer()
+                    // 메모 줄 어디를 눌러도 쓰기 시작(예전엔 글자 위만 눌려 줄의 빈 곳을 누르면 아무 일 없었다 — 클릭 시험)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture { editing = true }
                 Menu {
                     ForEach(Scrapbook.shared.collections.filter { $0 != scrap.collection }, id: \.self) { c in
                         Button("‘\(c)’로 옮기기") { var n = scrap; n.collection = c; n.memo = memo; Scrapbook.shared.update(n) }

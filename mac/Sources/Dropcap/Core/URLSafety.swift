@@ -137,6 +137,7 @@ enum ExternalLink {
     @discardableResult
     static func open(_ link: String?) -> Bool {
         guard let link, let u = URL(string: link), URLSafety.isPublicHTTP(u) else { return false }
+        if E2EFeeds.active { E2EFeeds.noteExternal(u.absoluteString); return true } // 시나리오·클릭 시험: 브라우저를 실제로 열지 않고 기록만
         return NSWorkspace.shared.open(u)
     }
 }

@@ -37,7 +37,9 @@ internal sealed class Extractor(nint parent, DispatcherQueue ui) : IArticleExtra
 
     public Task<Article?> FromHtmlAsync(string html, Uri baseUri) => OnUi(() => SandboxExtract(html, baseUri));
 
-    public Task<Article?> FromLiveAsync(Uri url) => OnUi(() => LiveExtract(url));
+    public Task<Article?> FromLiveAsync(Uri url) => FromLiveAsync(url, TimeSpan.FromSeconds(15));
+
+    public Task<Article?> FromLiveAsync(Uri url, TimeSpan maxWait) => OnUi(() => LiveExtract(url, maxWait));
 
     private static async Task<CoreWebView2Controller> Create(nint parent, string profile)
     {
@@ -121,8 +123,8 @@ internal sealed class Extractor(nint parent, DispatcherQueue ui) : IArticleExtra
         return inner is null ? null : Json.Decode<Article>(inner);
     }
 
-    // MARK: 느린 길(R-02): 실제로 띄우고 0.6초 뒤부터 0.4초마다 추출 시도, 두 번 같으면 끝, 최대 15초
-    private async Task<Article?> LiveExtract(Uri url)
+    // MARK: 느린 길(R-02): 실제로 띄우고 0.6초 뒤부터 0.4초마다 추출 시도, 두 번 같으면 끝, 최대 15초(접근 거부 사이트는 6초)
+    private async Task<Article?> LiveExtract(Uri url, TimeSpan maxWait)
     {
         if (!await UrlSafety.ResolvesPublicAsync(url.AbsoluteUri)) return null;
         var c = await Create(parent, "dropcap-live");
@@ -165,7 +167,7 @@ internal sealed class Extractor(nint parent, DispatcherQueue ui) : IArticleExtra
                 });
             };
             core.Navigate(url.AbsoluteUri);
-            var deadline = DateTime.UtcNow.AddSeconds(15);
+            var deadline = DateTime.UtcNow.Add(maxWait);
             await Task.Delay(600);
             var last = 0;
             Article? best = null;

@@ -44,6 +44,8 @@ pub struct Source {
     pub lang: Option<String>, // 글의 언어(ko·en …). 없으면 en
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub region: Option<String>, // kr(국내) · intl(해외). 없으면 tier 로 정함
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paywall: Option<String>, // hard(구독해야만) · metered(한 달 몇 건 무료). 없으면 무료로 봄
 }
 
 fn default_color() -> String {
@@ -159,6 +161,8 @@ pub struct NewsItem {
     pub kind: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub important: Option<bool>, // '꼭 알림' 낱말에 걸림
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watch: Option<String>, // 걸린 '지켜볼 낱말'(★ 와 겹치면 표시는 ★, N-27)
 }
 
 impl NewsItem {
@@ -178,6 +182,7 @@ impl NewsItem {
             title_en: None,
             kind: None,
             important: None,
+            watch: None,
         }
     }
     pub fn key(&self) -> String {

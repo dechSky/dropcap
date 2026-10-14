@@ -109,3 +109,7 @@ main > * { flex: none; }
 .fb { padding: 5px 8px; border-radius: 7px; font-size: 13px; display: inline-flex; }
 .fb:hover { background: var(--fill); }
 .fb:active { background: var(--fill-2); }
+
+/* 유료 자물쇠(G-14): 큰 카드의 흰 글자 위에서는 같은 흰색 */
+.hero .pw { color: inherit; opacity: .85; }
+.meta .pw { margin-left: -1px; }

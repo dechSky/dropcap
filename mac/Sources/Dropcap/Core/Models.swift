@@ -79,6 +79,7 @@ struct NewsItem: Codable, Identifiable, Hashable {
     var kind: String? = nil        // ItemKind
     var itemKind: ItemKind { ItemKind(rawValue: kind ?? "article") ?? .article }
     var important: Bool? = nil      // '꼭 알림' 낱말에 걸림
+    var watch: String? = nil        // 걸린 '지켜볼 낱말'(★ 와 겹치면 표시는 ★)
 
     var key: String { "\(sourceId)|\(id)" }
     var displayTitle: String { titleKo ?? title }

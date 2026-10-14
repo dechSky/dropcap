@@ -2,7 +2,7 @@
 // 분야 카드(기호·색·이름·대표 출처 2~3곳), 주요 뉴스 스위치(기본 켬), '더 보기'(기후·환경).
 // 고르면 그 분야 기본 출처만 켜지고 최근 3일 소식으로 매거진을 채운다(core.choose_sections). 설정 › 분야에서 다시 연다.
 use crate::app::ui;
-use crate::widgets::{icon, label, lines};
+use crate::widgets::{icon, label};
 use adw::prelude::*;
 use dropcap_core::sections::{self, NewsSection};
 use std::cell::RefCell;
@@ -41,7 +41,8 @@ pub fn open() {
     let show_more = now.as_ref().map(|c| c.iter().any(|id| sections::by_id(id).map(|s| s.is_more()).unwrap_or(false))).unwrap_or(false);
     let st = Rc::new(RefCell::new(State { picked, show_more }));
 
-    let window = gtk::Window::builder().title("관심 분야 고르기").default_width(640).default_height(640).resizable(false).build();
+    let window = gtk::Window::builder().title("관심 분야 고르기").default_width(680).default_height(680).resizable(false).build();
+    crate::section_photos::load(); // 분야마다 오늘의 사진(처음 실행이면 피드를 바로 받아 옴)
     window.set_application(Some(&u.app));
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
 
@@ -109,7 +110,7 @@ pub fn open() {
     }
 
     // 분야 카드 격자
-    let grid = gtk::FlowBox::builder().selection_mode(gtk::SelectionMode::None).min_children_per_line(3).max_children_per_line(3).column_spacing(12).row_spacing(12).homogeneous(true).build();
+    let grid = gtk::FlowBox::builder().selection_mode(gtk::SelectionMode::None).min_children_per_line(3).max_children_per_line(3).column_spacing(14).row_spacing(14).homogeneous(true).build();
     body.append(&grid);
     let more_btn = gtk::Button::builder().css_classes(["flat"]).halign(gtk::Align::Start).build();
     let mb = gtk::Box::new(gtk::Orientation::Horizontal, 6);
@@ -202,54 +203,18 @@ pub fn open() {
     WINDOW.with(|w| *w.borrow_mut() = Some(window.clone()));
     window.present();
     crate::shots::shot_later(&window, "onboarding", 3000);
+    crate::shots::shot_later(&window, "onboarding-15s", 15000); // 분야 사진이 채워진 뒤
 }
 
-// 분야 카드: 기호 · 이름 · 대표 출처 2~3곳(처음 고르면 켜질 곳 먼저) · 고름 표시
+// 분야 유리 카드(나-3 · 맥 SectionGlassCard): 흐린 오늘의 사진 + 분야색 유리판 + 영문·한글 이름 + 대표 출처 2~3곳(처음 고르면 켜질 곳 먼저) + 고름 표시
 fn section_card(sec: &NewsSection, on: bool) -> gtk::Button {
-    let (r, g, b) = rgb(&sec.color);
-    let v = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    let top = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    let ib = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    ib.set_size_request(34, 34);
-    ib.set_hexpand(false);
-    ib.set_halign(gtk::Align::Start);
-    let ic = icon(sec.icon(), 16);
-    ic.set_vexpand(true);
-    ib.append(&ic);
-    if on {
-        css(&ib, &format!("box {{ background: rgb({r},{g},{b}); border-radius: 10px; }}"));
-        css(&ic, "image { color: white; }");
-    } else {
-        css(&ib, &format!("box {{ background: rgba({r},{g},{b},0.14); border-radius: 10px; }}"));
-        css(&ic, &format!("image {{ color: rgb({r},{g},{b}); }}"));
-    }
-    top.append(&ib);
-    let sp = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    sp.set_hexpand(true);
-    top.append(&sp);
-    let check = icon(if on { "object-select-symbolic" } else { "radio-symbolic" }, 17);
-    css(&check, &if on { format!("image {{ color: rgb({r},{g},{b}); }}") } else { "image { opacity: 0.5; }".to_string() });
-    top.append(&check);
-    v.append(&top);
-    v.append(&label(&sec.name, 15.0, 700, &[]));
     let mut srcs = sections::sources_in(&sec.id, &sections::META);
     srcs.sort_by_key(|m| if m.default_on == Some(true) { 0 } else { 1 });
     let names: Vec<String> = srcs.iter().take(3).map(|m| m.name.clone().unwrap_or_else(|| m.id.clone())).collect();
-    let sub = if names.is_empty() {
-        if sec.id == sections::AI { "OpenAI · Anthropic · AI타임스 등".to_string() } else { "출처 준비 중".to_string() }
-    } else {
-        names.join(" · ")
-    };
-    let sl = label(&sub, 11.5, 400, &["dc-secondary"]);
-    lines(&sl, 2);
-    v.append(&sl);
-    let btn = gtk::Button::builder().child(&v).build();
-    let style = if on {
-        format!("button {{ background: rgba({r},{g},{b},0.10); border: 1.5px solid rgba({r},{g},{b},0.6); border-radius: 14px; padding: 14px; min-height: 90px; box-shadow: none; }}")
-    } else {
-        "button { background: alpha(@window_fg_color, 0.035); border: 0.5px solid alpha(@window_fg_color, 0.08); border-radius: 14px; padding: 14px; min-height: 90px; box-shadow: none; } button:hover { background: alpha(@window_fg_color, 0.06); }".to_string()
-    };
-    css(&btn, &style);
-    btn.set_tooltip_text(Some(&format!("{}{}", sec.name, if on { ", 고름" } else { "" })));
+    let sub = if names.is_empty() { (sec.id == sections::AI).then(|| "OpenAI · Anthropic · AI타임스".to_string()) } else { Some(names.join(" · ")) };
+    let card = crate::section_photos::glass_card(sec, sub, 130, true, on);
+    let btn = gtk::Button::builder().child(&card.area).build();
+    css(&btn, "button { background: none; border: none; padding: 0; box-shadow: none; min-height: 130px; } button:hover { background: none; }");
+    btn.update_property(&[gtk::accessible::Property::Label(&format!("{}{}", sec.name, if on { ", 고름" } else { "" }))]);
     btn
 }

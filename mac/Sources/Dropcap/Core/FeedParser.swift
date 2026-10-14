@@ -29,9 +29,10 @@ private final class TreeBuilder: NSObject, XMLParserDelegate {
 }
 
 enum FeedError: LocalizedError {
-    case badFormat, http(Int), blocked(String)
+    case badFormat, http(Int), blocked(String), tooLarge(Int)
     var errorDescription: String? {
         switch self {
+        case .tooLarge(let limit): return "응답이 너무 커서 받다가 멈춤(\(limit >> 20)MB 넘음)"
         case .blocked(let why): return "안전하지 않은 주소라 막음: \(why)"
         case .badFormat: return "RSS/Atom 형식을 알아볼 수 없음"
         case .http(let c): return "HTTP \(c)"
@@ -95,12 +96,21 @@ enum FeedParser {
         return b.root
     }
 
+    // guid·link 가 모두 빈 글의 id: 제목+날짜로 만든 고정 값(A-31: 빈 id 로 key 가 `출처|` 로 겹쳐 하나만 남던 문제). 실행마다 같다
+    static func fallbackID(_ title: String, _ date: String) -> String {
+        var h: UInt64 = 0xcbf29ce484222325 // FNV-1a
+        for b in (title.trimmingCharacters(in: .whitespacesAndNewlines) + "|" + date.trimmingCharacters(in: .whitespacesAndNewlines)).utf8 {
+            h = (h ^ UInt64(b)) &* 0x100000001b3
+        }
+        return "noid-" + String(h, radix: 36)
+    }
+
     static func parseFeed(_ data: Data) throws -> [Entry] {
         let root = try tree(data)
         if let channel = root.child("rss")?.child("channel") {
             return channel.all("item").map { it in
                 let link = it.value("link")
-                return Entry(id: it.value("guid").nonEmpty ?? link, title: Plain.clean(it.value("title")), link: link,
+                return Entry(id: it.value("guid").nonEmpty ?? link.nonEmpty ?? fallbackID(it.value("title"), it.value("pubDate")), title: Plain.clean(it.value("title")), link: link,
                              date: Dates.parse(it.value("pubDate").nonEmpty ?? it.value("dc:date")),
                              summary: String(Plain.clean(it.value("description")).prefix(300)), image: image(it))
             }
@@ -110,14 +120,14 @@ enum FeedParser {
                 let links = it.all("link")
                 let alt = links.first { ($0.attrs["rel"] ?? "alternate") == "alternate" } ?? links.first
                 let link = alt?.attrs["href"] ?? alt?.text ?? ""
-                return Entry(id: it.value("id").nonEmpty ?? link, title: Plain.clean(it.value("title")), link: link,
+                return Entry(id: it.value("id").nonEmpty ?? link.nonEmpty ?? fallbackID(it.value("title"), it.value("updated")), title: Plain.clean(it.value("title")), link: link,
                              date: Dates.parse(it.value("published").nonEmpty ?? it.value("updated")),
                              summary: String(Plain.clean(it.value("summary").nonEmpty ?? it.value("content")).prefix(300)), image: image(it))
             }
         }
         if let rdf = root.child("rdf:RDF") {
             return rdf.all("item").map { it in
-                Entry(id: it.value("link"), title: Plain.clean(it.value("title")), link: it.value("link"),
+                Entry(id: it.value("link").nonEmpty ?? fallbackID(it.value("title"), it.value("dc:date")), title: Plain.clean(it.value("title")), link: it.value("link"),
                       date: Dates.parse(it.value("dc:date")), summary: String(Plain.clean(it.value("description")).prefix(300)))
             }
         }

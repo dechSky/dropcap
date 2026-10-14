@@ -11,6 +11,7 @@ use chrono::{Datelike, Local, Timelike};
 use dropcap_core::app_model::UiEvent;
 use dropcap_core::article::{self, body_cleanup, image_key, Block, BlockKind, PreparedArticle, Stage};
 use dropcap_core::models::{resources, NewsItem};
+use dropcap_core::paywall::{self, PaywallKind};
 use dropcap_core::translator::looks_foreign;
 use gtk::{gdk, gio, glib, pango};
 use std::cell::{Cell, RefCell};
@@ -40,6 +41,30 @@ struct Model {
     summarizing: bool,
     engine: String,
     cover: Option<String>, // 표지 사진(피드 → 매거진 기록 → 기사 머리 대표 사진)
+    paywalled: bool,                // 맛보기만 나옴(유료벽 뒤, G-14)
+    paywall: Option<PaywallKind>,   // 출처가 유료로 알려졌거나 자주 막히는 곳
+    alternatives: Vec<NewsItem>,    // 같은 스토리의 무료 보도(G-15)
+}
+
+impl Model {
+    fn new(item: &NewsItem) -> Model {
+        Model {
+            phase: Phase::Loading,
+            title: item.display_title().to_string(),
+            original_title: item.title.clone(),
+            blocks: vec![],
+            translated: false,
+            show_original: false,
+            summary: String::new(),
+            key_points: None,
+            summarizing: false,
+            engine: String::new(),
+            cover: None,
+            paywalled: false,
+            paywall: None,
+            alternatives: vec![],
+        }
+    }
 }
 
 // 스크랩할 수 있는 문단 줄
@@ -52,8 +77,9 @@ struct Row {
 }
 
 pub struct ReaderWindow {
-    item: NewsItem,
-    accent: String,
+    item: RefCell<NewsItem>,
+    sequence: Vec<NewsItem>, // 이 기사를 연 목록(J/K 로 다음·이전, H-05)
+    accent: RefCell<String>,
     win: adw::ApplicationWindow,
     toasts: adw::ToastOverlay,
     scroller: gtk::ScrolledWindow,
@@ -130,7 +156,7 @@ fn icon_label_button(icon: &str, tip: &str) -> gtk::Button {
 }
 
 impl ReaderWindow {
-    pub fn new(item: NewsItem, others: usize) -> Rc<ReaderWindow> {
+    pub fn new(item: NewsItem, others: usize, sequence: Vec<NewsItem>) -> Rc<ReaderWindow> {
         let app_ui = ui();
         let accent = widgets::source_color(&item.source_id);
         let win = adw::ApplicationWindow::builder()
@@ -215,21 +241,10 @@ impl ReaderWindow {
         style(&scroller, "background-color: @view_bg_color;");
 
         let me = Rc::new(ReaderWindow {
-            accent,
-            model: RefCell::new(Model {
-                phase: Phase::Loading,
-                title: item.display_title().to_string(),
-                original_title: item.title.clone(),
-                blocks: vec![],
-                translated: false,
-                show_original: false,
-                summary: String::new(),
-                key_points: None,
-                summarizing: false,
-                engine: String::new(),
-                cover: None,
-            }),
-            item,
+            accent: RefCell::new(accent),
+            model: RefCell::new(Model::new(&item)),
+            item: RefCell::new(item),
+            sequence,
             win,
             toasts,
             scroller,
@@ -282,7 +297,7 @@ impl ReaderWindow {
         let w = Rc::downgrade(&me);
         me.save_btn.connect_clicked(move |_| {
             if let Some(me) = w.upgrade() {
-                ui().core.toggle_saved(&me.item);
+                ui().core.toggle_saved(&me.item());
                 me.update_tools();
             }
         });
@@ -320,9 +335,11 @@ impl ReaderWindow {
                 me.update_find(false);
             }
         });
-        let link = me.item.link.clone();
+        let w = Rc::downgrade(&me);
         browser_btn.connect_clicked(move |_| {
-            open_external(&link);
+            if let Some(me) = w.upgrade() {
+                open_external(&me.item().link);
+            }
         });
         let w = Rc::downgrade(&me);
         share_btn.connect_clicked(move |_| {
@@ -331,7 +348,7 @@ impl ReaderWindow {
             }
         });
         // 주소가 이상하면 공유 단추를 숨김(맥 A-37)
-        share_btn.set_visible(dropcap_core::url_safety::external_link(&me.item.link).is_some());
+        share_btn.set_visible(dropcap_core::url_safety::external_link(&me.item().link).is_some());
         let w = Rc::downgrade(&me);
         me.scrap_btn.connect_clicked(move |_| {
             if let Some(me) = w.upgrade() {
@@ -360,6 +377,48 @@ impl ReaderWindow {
         &self.win
     }
 
+    fn item(&self) -> std::cell::Ref<'_, NewsItem> {
+        self.item.borrow()
+    }
+
+    fn accent(&self) -> String {
+        self.accent.borrow().clone()
+    }
+
+    // 같은 창에서 연 목록의 다음·이전 기사로(H-05 · 맥 ReaderController.step): 영상·팟캐스트는 건너뛰고, 끝이면 경고음
+    pub fn step(self: &Rc<Self>, d: i64) {
+        let list: Vec<&NewsItem> = self.sequence.iter().filter(|i| !i.item_kind().opens_externally()).collect();
+        let key = self.item().key();
+        let next = list
+            .iter()
+            .position(|i| i.key() == key)
+            .map(|i| i as i64 + d)
+            .filter(|j| *j >= 0 && (*j as usize) < list.len())
+            .map(|j| list[j as usize].clone());
+        let Some(next) = next else {
+            self.win.error_bell();
+            return;
+        };
+        ui().core.mark_opened(&next);
+        // 지금 기사의 관찰·소리를 끊고 내용만 바꿔 끼운다
+        self.speaker.stop();
+        if let Some(id) = self.observe.take() {
+            ui().core.articles.stop_observing(&self.item().link, id);
+        }
+        *self.accent.borrow_mut() = widgets::source_color(&next.source_id);
+        *self.model.borrow_mut() = Model::new(&next);
+        self.win.set_title(Some(&next.source_name));
+        *self.item.borrow_mut() = next;
+        self.mode_original.set_active(false);
+        self.mode_box.set_visible(false);
+        self.find_bar.set_search_mode(false);
+        self.update_tools();
+        self.update_speak();
+        self.render();
+        self.scroller.vadjustment().set_value(0.0);
+        self.load();
+    }
+
     // 누른 카드 자리에서 커져 나온다(R-14). GTK4 는 창 위치·크기를 앱이 움직일 수 없어
     // 0.38초 동안 창이 옅은 데서 또렷해지며 내용이 살짝 커지는 것으로 대신한다.
     pub fn present(&self, from: Option<Origin>) {
@@ -383,14 +442,14 @@ impl ReaderWindow {
         self.alive.set(false);
         self.speaker.stop();
         if let Some(id) = self.observe.take() {
-            ui().core.articles.stop_observing(&self.item.link, id);
+            ui().core.articles.stop_observing(&self.item().link, id);
         }
     }
 
     // MARK: 불러오기
     // 기사 주소 복사(Ctrl+Shift+C · 공유 단추)
     fn copy_link(&self) {
-        if let Some(u) = dropcap_core::url_safety::external_link(&self.item.link) {
+        if let Some(u) = dropcap_core::url_safety::external_link(&self.item().link) {
             copy_text(&u);
             self.flash("기사 주소를 복사했어요");
         }
@@ -400,18 +459,18 @@ impl ReaderWindow {
     // 그때 본문의 첫 그림(기자 프로필 등)을 표지로 쓰던 문제가 있어, 대표 사진을 먼저 찾는다(맥 ReaderModel.findCover).
     fn find_cover(self: &Rc<Self>) {
         let junk = |u: &str| image_key::is_junk(Some(u));
-        if let Some(i) = self.item.image.clone().filter(|i| !junk(i)) {
+        if let Some(i) = self.item().image.clone().filter(|i| !junk(i)) {
             self.model.borrow_mut().cover = Some(i);
             return;
         }
-        if let Some(s) = ui().core.db.image(&self.item.key()).filter(|i| !junk(i)) {
+        if let Some(s) = ui().core.db.image(&self.item().key()).filter(|i| !junk(i)) {
             self.model.borrow_mut().cover = Some(s);
             return;
         }
-        if self.item.link.is_empty() {
+        if self.item().link.is_empty() {
             return;
         }
-        let link = self.item.link.clone();
+        let link = self.item().link.clone();
         let w = Rc::downgrade(self);
         bg(async move { dropcap_core::feed_service::SHARED.og_image(&link).await }, move |og| {
             let Some(og) = og.filter(|o| !image_key::is_junk(Some(o))) else { return };
@@ -426,8 +485,32 @@ impl ReaderWindow {
 
     pub fn load(self: &Rc<Self>) {
         self.find_cover();
+        // 유료 표시·같은 스토리의 무료 보도(DB 를 읽으므로 뒤에서)
+        {
+            let core = ui().core.clone();
+            let item = self.item().clone();
+            let w = Rc::downgrade(self);
+            bg(
+                async move {
+                    let hidden: std::collections::HashSet<String> = core.state().hidden_sources.into_iter().collect();
+                    (core.paywall.kind(&item), core.paywall.alternatives(&item, &hidden), item.key())
+                },
+                move |(kind, alts, key)| {
+                    let Some(me) = w.upgrade() else { return };
+                    if !me.alive.get() || me.item().key() != key {
+                        return;
+                    }
+                    {
+                        let mut m = me.model.borrow_mut();
+                        m.paywall = kind;
+                        m.alternatives = alts;
+                    }
+                    me.render();
+                },
+            );
+        }
         let svc = ui().core.articles.clone();
-        if let Some(c) = svc.cached(&self.item.link) {
+        if let Some(c) = svc.cached(&self.item().link) {
             self.apply(&c);
             if !c.summarizing {
                 return;
@@ -435,30 +518,36 @@ impl ReaderWindow {
         }
         let (tx, rx) = async_channel::unbounded::<PreparedArticle>();
         let id = svc.observe(
-            &self.item.link,
+            &self.item().link,
             Box::new(move |a| {
                 let _ = tx.send_blocking(a.clone());
             }),
         );
         self.observe.set(Some(id));
         let w = Rc::downgrade(self);
+        let link = self.item().link.clone();
         glib::spawn_future_local(async move {
             while let Ok(a) = rx.recv().await {
                 match w.upgrade() {
-                    Some(me) if me.alive.get() => me.apply(&a),
+                    // J/K 로 다른 기사로 바뀌었으면 그만
+                    Some(me) if me.alive.get() && me.item().link == link => me.apply(&a),
                     _ => break,
                 }
             }
         });
-        let item = self.item.clone();
+        let item = self.item().clone();
+        let link = item.link.clone();
         let w = Rc::downgrade(self);
         bg(async move { svc.prepare(item, true).await }, move |a| {
             if let Some(me) = w.upgrade() {
+                if me.item().link != link {
+                    return; // J/K 로 다른 기사로 바뀜
+                }
                 if me.alive.get() {
                     me.apply(&a);
                 }
                 if let Some(id) = me.observe.take() {
-                    ui().core.articles.stop_observing(&me.item.link, id);
+                    ui().core.articles.stop_observing(&me.item().link, id);
                 }
             }
         });
@@ -469,13 +558,14 @@ impl ReaderWindow {
             let mut m = self.model.borrow_mut();
             let before = (m.phase, m.blocks.len(), m.translated, m.key_points.clone(), m.summarizing, m.title.clone());
             // 예전에 저장한 기사에도 적용: 제목 끝의 사이트 이름은 출처가 이미 보이므로 뗀다
-            m.title = strip_site_name(&a.title, &self.item.source_name, &self.item.title);
-            m.original_title = strip_site_name(&a.original_title, &self.item.source_name, &self.item.title);
+            m.title = strip_site_name(&a.title, &self.item().source_name, &self.item().title);
+            m.original_title = strip_site_name(&a.original_title, &self.item().source_name, &self.item().title);
             m.translated = a.translated;
             m.engine = a.engine.clone();
             m.key_points = a.summary.clone();
             m.summarizing = a.summarizing;
             m.summary = a.fallback.clone();
+            m.paywalled = a.paywalled == Some(true);
             let blocks_changed = !a.blocks.is_empty() && a.blocks != m.blocks;
             if !a.blocks.is_empty() {
                 m.blocks = a.blocks.clone();
@@ -594,9 +684,21 @@ impl ReaderWindow {
             self.column.append(&self.cover(&u));
         }
         self.column.append(&self.header());
+        if let Some(b) = self.free_box() {
+            b.set_margin_top(18);
+            self.column.append(&b);
+        }
         let phase = self.model.borrow().phase;
         match phase {
             Phase::Loading => {
+                // 본문을 받는 동안에도 빈 화면 대신 피드가 준 요약을 먼저 보여 준다
+                if let Some(lede) = feed_summary(&self.item()) {
+                    let l = text(&lede, 16.0, 400, 1.45, false, false);
+                    l.add_css_class("dc-secondary");
+                    l.set_margin_top(24);
+                    l.set_margin_start(38);
+                    self.column.append(&l);
+                }
                 let s = skeleton("기사를 불러오는 중");
                 s.set_margin_top(28);
                 s.set_margin_start(38);
@@ -650,8 +752,8 @@ impl ReaderWindow {
         frame.set_height_request(340);
         style(&frame, "border-radius: 16px;");
         let bgd = gtk::DrawingArea::builder().hexpand(true).height_request(340).build();
-        let accent = self.accent.clone();
-        let cat = self.item.category().color(theme::is_dark()).to_string();
+        let accent = self.accent();
+        let cat = self.item().category().color(theme::is_dark()).to_string();
         bgd.set_draw_func(move |_, cr, w, h| {
             let g = gtk::cairo::LinearGradient::new(0.0, 0.0, w as f64, h as f64);
             let (ar, ag, ab) = dropcap_core::models::hex_rgb(&accent);
@@ -689,12 +791,12 @@ impl ReaderWindow {
         let v = gtk::Box::new(gtk::Orientation::Vertical, 10);
         v.set_margin_start(38);
         let top = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        top.append(&monogram(&self.item, 22));
-        top.append(&text(&self.item.source_name, 13.0, 600, 0.0, false, false));
-        let tier = widgets::chip(&resources::tier_label(&self.item.tier), &self.accent);
+        top.append(&monogram(&self.item(), 22));
+        top.append(&text(&self.item().source_name, 13.0, 600, 0.0, false, false));
+        let tier = widgets::chip(&resources::tier_label(&self.item().tier), &self.accent());
         style(&tier, "border-radius: 5px; font-size: 11px;");
         top.append(&tier);
-        if let Some(d) = self.item.date {
+        if let Some(d) = self.item().date {
             let l = text(&date_text(d), 12.0, 400, 0.0, false, false);
             l.add_css_class("dc-secondary");
             top.append(&l);
@@ -750,7 +852,7 @@ impl ReaderWindow {
             return None;
         }
         let fs = self.font_size();
-        let (r, g, b) = rgb(&self.accent);
+        let (r, g, b) = rgb(&self.accent());
         let v = gtk::Box::new(gtk::Orientation::Vertical, 9);
         v.set_margin_start(38);
         style(
@@ -812,7 +914,7 @@ impl ReaderWindow {
 
     fn block_view(&self, b: &Block, t: &str, prev_li: bool) -> (gtk::Widget, Option<gtk::Label>) {
         let fs = self.font_size();
-        let (r, g, bl) = rgb(&self.accent);
+        let (r, g, bl) = rgb(&self.accent());
         match b.kind {
             BlockKind::H => {
                 let l = text(t, fs + 4.0, 700, 0.0, false, false);
@@ -830,7 +932,7 @@ impl ReaderWindow {
                 let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
                 let dot = gtk::DrawingArea::builder().content_width(5).content_height(5).valign(gtk::Align::Start).build();
                 dot.set_margin_top((fs * 0.62) as i32);
-                let accent = self.accent.clone();
+                let accent = self.accent();
                 dot.set_draw_func(move |_, cr, w, h| {
                     let (rr, gg, bb) = dropcap_core::models::hex_rgb(&accent);
                     cr.set_source_rgba(rr, gg, bb, 0.8);
@@ -880,34 +982,98 @@ impl ReaderWindow {
         let m = self.model.borrow();
         let v = gtk::Box::new(gtk::Orientation::Vertical, 14);
         v.set_margin_start(38);
-        if !m.summary.is_empty() {
-            v.append(&text(&m.summary, 17.0, 400, 1.5, false, false));
+        let lede = if m.summary.is_empty() { feed_summary(&self.item()) } else { Some(m.summary.clone()) };
+        if let Some(t) = lede {
+            v.append(&text(&t, 17.0, 400, 1.5, false, false));
         }
-        let note = text("이 기사는 본문을 추리지 못했습니다(유료 기사·차단 등).", 13.0, 400, 0.0, false, false);
+        let blocked = article::is_blocked_host(&self.item().link);
+        let note = text(
+            if blocked {
+                "이 사이트는 앱에서 본문을 가져가지 못하게 막아 두었습니다. 위는 피드가 준 요약입니다."
+            } else {
+                "이 기사는 본문을 추리지 못했습니다(유료 기사·차단 등). 위는 피드가 준 요약입니다."
+            },
+            13.0,
+            400,
+            0.0,
+            false,
+            false,
+        );
         note.add_css_class("dc-secondary");
         v.append(&note);
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        if let Some(u) = article::translate_goog(&self.item.link) {
-            let b = gtk::Button::with_label("번역된 웹페이지로 보기");
-            b.add_css_class("suggested-action");
-            b.add_css_class("pill");
-            b.connect_clicked(move |_| {
-                open_external(&u);
-            });
-            row.append(&b);
-        }
         let o = gtk::Button::with_label("원문 열기");
+        o.add_css_class("suggested-action");
         o.add_css_class("pill");
-        let link = self.item.link.clone();
+        let link = self.item().link.clone();
         o.connect_clicked(move |_| {
             open_external(&link);
         });
         row.append(&o);
+        // 번역된 웹페이지는 외국어 기사일 때만
+        if looks_foreign(&m.original_title) {
+            if let Some(u) = article::translate_goog(&self.item().link) {
+                let b = gtk::Button::with_label("번역된 웹페이지로 보기");
+                b.add_css_class("pill");
+                b.connect_clicked(move |_| {
+                    open_external(&u);
+                });
+                row.append(&b);
+            }
+        }
         v.append(&row);
         v.upcast()
     }
 
-    // MARK: 문단 스크랩(R-11): 마우스를 올리면 왼쪽에 ✂︎, 누르면 그 문단(+번역문이면 원문), 스크랩한 문단은 노란 띠
+    // 막힌 기사면 같은 스토리의 열리는 보도를 먼저 권한다(G-15 · 맥 FreeAlternativesBox). 원문 링크는 그대로 남는다
+    fn free_box(&self) -> Option<gtk::Widget> {
+        let m = self.model.borrow();
+        let reason = paywall::free_reason(!m.alternatives.is_empty(), m.phase == Phase::Failed, m.paywalled, m.paywall)?;
+        let v = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        v.set_margin_start(38);
+        v.add_css_class("dc-free-box");
+        let head = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        head.append(&widgets::icon("changes-prevent-symbolic", 11));
+        head.append(&text(reason, 12.5, 600, 0.0, false, false));
+        head.add_css_class("dc-secondary");
+        v.append(&head);
+        let names: Vec<&str> = m.alternatives.iter().map(|a| a.source_name.as_str()).collect();
+        v.append(&text(&format!("같은 소식을 무료로 읽기: {}", names.join("·")), 13.5, 600, 0.0, false, false));
+        let list = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        for alt in &m.alternatives {
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            let src = text(&alt.source_name, 12.0, 700, 0.0, false, false);
+            src.set_selectable(false);
+            src.set_wrap(false);
+            let (r, g, b) = rgb(&widgets::source_color(&alt.source_id));
+            style(&src, &format!("color: rgb({r},{g},{b});"));
+            row.append(&src);
+            let t = text(alt.display_title(), 13.0, 400, 0.0, false, false);
+            t.set_selectable(false);
+            t.set_wrap(false);
+            t.set_ellipsize(pango::EllipsizeMode::End);
+            t.set_hexpand(true);
+            row.append(&t);
+            let arrow = widgets::icon("go-next-symbolic", 10);
+            arrow.add_css_class("dc-tertiary");
+            row.append(&arrow);
+            let btn = gtk::Button::builder().child(&row).css_classes(["flat"]).build();
+            let a = alt.clone();
+            btn.connect_clicked(move |_| crate::app::open_from_magazine(&a, None));
+            list.append(&btn);
+        }
+        v.append(&list);
+        let orig = gtk::LinkButton::with_label(&self.item().link, "원문 그대로 열기");
+        orig.set_halign(gtk::Align::Start);
+        let link = self.item().link.clone();
+        orig.connect_activate_link(move |_| {
+            open_external(&link);
+            glib::Propagation::Stop
+        });
+        v.append(&orig);
+        Some(v.upcast())
+    }
+
     fn scrap_row(self: &Rc<Self>, content: gtk::Widget, label: Option<gtk::Label>, t: String, original: Option<String>, enabled: bool) -> gtk::Widget {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         let gutter = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -985,7 +1151,7 @@ impl ReaderWindow {
     fn scrap_of(&self, idx: usize) -> Option<dropcap_core::scrapbook::Scrap> {
         let rows = self.rows.borrow();
         let r = rows.get(idx)?;
-        let key = self.item.key();
+        let key = self.item().key();
         ui().scrapbook.borrow().scraps.iter().find(|s| s.item.key() == key && s.quote.as_deref() == Some(r.text.as_str())).cloned()
     }
 
@@ -1001,7 +1167,7 @@ impl ReaderWindow {
         }
         {
             let mut book = ui.scrapbook.borrow_mut();
-            ui.core.scrap(&mut book, &self.item, Some(t), o, collection);
+            ui.core.scrap(&mut book, &self.item(), Some(t), o, collection);
         }
         self.refresh_scrap_marks();
         self.update_tools();
@@ -1175,7 +1341,7 @@ impl ReaderWindow {
     fn refresh_scrap_marks(&self) {
         let ui = ui();
         let book = ui.scrapbook.borrow();
-        let key = self.item.key();
+        let key = self.item().key();
         for r in self.rows.borrow().iter() {
             let on = book.scraps.iter().any(|s| s.item.key() == key && s.quote.as_deref() == Some(r.text.as_str()));
             if on {
@@ -1196,7 +1362,7 @@ impl ReaderWindow {
         let ui = ui();
         {
             let mut book = ui.scrapbook.borrow_mut();
-            ui.core.scrap(&mut book, &self.item, None, None, collection);
+            ui.core.scrap(&mut book, &self.item(), None, None, collection);
         }
         let c = collection.map(|s| s.to_string()).unwrap_or_else(|| ui.scrapbook.borrow().last_collection());
         self.flash(&format!("‘{c}’에 스크랩했어요"));
@@ -1279,6 +1445,23 @@ impl ReaderWindow {
         add("<Control><Shift>g", Box::new(|me| me.find_step(false)));
         add("<Control>w", Box::new(|me| me.win.close()));
         self.win.add_controller(sc);
+        // 같은 목록의 다음·이전 기사(J/K), Esc 로 닫기 — 찾기 칸이 열려 있으면 쓰지 않음(H-05)
+        let keys = gtk::EventControllerKey::new();
+        let w = Rc::downgrade(self);
+        keys.connect_key_pressed(move |_, key, _, state| {
+            let Some(me) = w.upgrade() else { return glib::Propagation::Proceed };
+            if me.find_bar.is_search_mode() || state.intersects(gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::ALT_MASK | gdk::ModifierType::SUPER_MASK) {
+                return glib::Propagation::Proceed;
+            }
+            match key {
+                gdk::Key::j | gdk::Key::J => me.step(1),
+                gdk::Key::k | gdk::Key::K => me.step(-1),
+                gdk::Key::Escape => me.win.close(),
+                _ => return glib::Propagation::Proceed,
+            }
+            glib::Propagation::Stop
+        });
+        self.win.add_controller(keys);
     }
 
     fn ask_new_folder(self: &Rc<Self>) {
@@ -1323,7 +1506,7 @@ impl ReaderWindow {
         let ui = ui();
         {
             let mut book = ui.scrapbook.borrow_mut();
-            ui.core.scrap(&mut book, &self.item, Some(t), original, None);
+            ui.core.scrap(&mut book, &self.item(), Some(t), original, None);
         }
         let c = ui.scrapbook.borrow().last_collection();
         self.flash(&format!("고른 부분을 ‘{c}’에 스크랩했어요"));
@@ -1343,10 +1526,10 @@ impl ReaderWindow {
 
     fn update_tools(&self) {
         let ui = ui();
-        let saved = ui.core.is_saved(&self.item);
+        let saved = ui.core.is_saved(&self.item());
         self.save_btn.set_icon_name(if saved { "user-bookmarks-symbolic" } else { "bookmark-new-symbolic" });
         self.save_btn.set_tooltip_text(Some(if saved { "저장 취소" } else { "나중에 읽기로 저장" }));
-        let scrapped = ui.scrapbook.borrow().is_scrapped(&self.item, None);
+        let scrapped = ui.scrapbook.borrow().is_scrapped(&self.item(), None);
         if scrapped {
             self.scrap_btn.add_css_class("accent");
         } else {
@@ -1556,4 +1739,24 @@ mod tests {
         assert_eq!(strip_site_name("Feed title · Something", "S", "Feed title"), "Feed title");
         assert_eq!(strip_site_name("A - B story", "Nope", "x"), "A - B story");
     }
+}
+
+// 피드 요약(HTML 꼬리표·여분 공백 제거, 제목과 같거나 너무 짧으면 없음 — 맥 ReaderView.feedSummary)
+pub fn feed_summary(it: &NewsItem) -> Option<String> {
+    let mut plain = String::with_capacity(it.summary.len());
+    let mut in_tag = false;
+    for c in it.summary.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' if in_tag => {
+                in_tag = false;
+                plain.push(' ');
+            }
+            _ if !in_tag => plain.push(c),
+            _ => {}
+        }
+    }
+    let t = plain.split_whitespace().collect::<Vec<_>>().join(" ");
+    let head: String = t.chars().take(25).collect();
+    (t.chars().count() > 30 && !it.title.starts_with(&head)).then_some(t)
 }

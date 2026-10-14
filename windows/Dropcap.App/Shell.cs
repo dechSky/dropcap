@@ -31,7 +31,9 @@ internal sealed class Shell : IAppUi
     private WebWindow? settings;
     private WebWindow? onboarding;
     private WebWindow? magazine;
-    private readonly List<(WebWindow Window, string Key)> readers = new();
+    // 열린 읽기 창과 지금 보여 주는 기사(J·K 로 같은 창에서 기사가 바뀐다)
+    private sealed class ReaderSlot(WebWindow window, string key) { public WebWindow Window { get; } = window; public string Key { get; set; } = key; }
+    private readonly List<ReaderSlot> readers = new();
 
     public const int HotKeyLatest = 1, HotKeyMagazine = 2;
 
@@ -46,11 +48,16 @@ internal sealed class Shell : IAppUi
         Model = new AppModel(this, Magazine);
         Articles = new ArticleService(new Extractor(messages.Handle, ui), () => Model.State.Saved.Select(s => s.Link));
         ArticleService.Shared = Articles;
+        // 회의·발표 중 자동 조용히(N-25) 감지 · 사진 점수(M-24): 글자 인식은 윈도우 OCR, 표지·분야 사진 고르기에 씀
+        Model.Focus.Probe = new FocusProbe();
+        PhotoScorer.TextRatio = PhotoOcr.TextRatioAsync;
+        Magazine.PhotoScorer = PhotoScorer.ScoreAsync;
+        PaywallBook.Shared = new PaywallBook(db);   // 유료 기사 표시(G-14): 출처별 본문 추리기 기록
         ExternalLink.Opener = u => { _ = Windows.System.Launcher.LaunchUriAsync(u); return true; };
 
         Bridge.Register(new MenuPage(Model, platform));
         Bridge.Register(new SettingsPage(Model, platform));
-        Bridge.Register(new OnboardingPage(Model, platform));
+        Bridge.Register(new OnboardingPage(Model, platform, Bridge));   // 분야 사진이 오면 밀어 줌
         readerPage = new ReaderPage(Model, Articles, Scrapbook, platform, Bridge);
         Bridge.Register(readerPage);
         magazinePage = new MagazinePage(Model, Magazine, Scrapbook, platform, Bridge);
@@ -120,7 +127,7 @@ internal sealed class Shell : IAppUi
     public nint OwnerHwnd()
     {
         var fg = GetForegroundWindow();
-        return AllWindows().FirstOrDefault(w => w.Hwnd == fg)?.Hwnd ?? magazine?.Hwnd ?? readers.LastOrDefault().Window?.Hwnd ?? messages.Handle;
+        return AllWindows().FirstOrDefault(w => w.Hwnd == fg)?.Hwnd ?? magazine?.Hwnd ?? readers.LastOrDefault()?.Window.Hwnd ?? messages.Handle;
     }
 
     // MARK: 트레이 창(U 절)
@@ -185,7 +192,7 @@ internal sealed class Shell : IAppUi
         if (page.StartsWith("reader:", StringComparison.Ordinal))
         {
             var key = page["reader:".Length..];
-            readers.FirstOrDefault(r => r.Key == key).Window?.Window.Close();
+            readers.FirstOrDefault(r => r.Key == key)?.Window.Window.Close();
             return;
         }
         switch (page)
@@ -196,7 +203,7 @@ internal sealed class Shell : IAppUi
             case "onboarding": onboarding?.Window.Close(); break;
             case "reader":
                 var fg = GetForegroundWindow();
-                readers.FirstOrDefault(r => r.Window.Hwnd == fg).Window?.Window.Close();
+                readers.FirstOrDefault(r => r.Window.Hwnd == fg)?.Window.Window.Close();
                 break;
         }
     }
@@ -215,7 +222,7 @@ internal sealed class Shell : IAppUi
     public void OpenOnboarding()
     {
         if (onboarding is not null) { onboarding.Window.Activate(); return; }
-        onboarding = new WebWindow(Bridge, "onboarding", "", "관심 분야 고르기", new SizeInt32(720, 640));
+        onboarding = new WebWindow(Bridge, "onboarding", "", "관심 분야 고르기", new SizeInt32(680, 680));
         if (onboarding.AppWindow.Presenter is OverlappedPresenter p) { p.IsResizable = false; p.IsMaximizable = false; }
         Center(onboarding);
         onboarding.Closed += () => onboarding = null;
@@ -245,21 +252,33 @@ internal sealed class Shell : IAppUi
         var w = new WebWindow(Bridge, "reader", "key=" + Uri.EscapeDataString(item.Key), item.SourceName, new SizeInt32(760, 860));
         Center(w);
         // 여러 창은 24pt 씩 비켜서
-        if (readers.LastOrDefault(r => r.Window.AppWindow.IsVisible).Window is { } last)
+        if (readers.LastOrDefault(r => r.Window.AppWindow.IsVisible)?.Window is { } last)
         {
             var k = w.Scale;
             var pos = last.AppWindow.Position;
             w.AppWindow.Move(new PointInt32(pos.X + (int)(24 * k), pos.Y + (int)(24 * k)));
         }
-        var entry = (w, item.Key);
+        var entry = new ReaderSlot(w, item.Key);
         readers.Add(entry);
         w.Closed += () =>
         {
             readers.Remove(entry);
-            readerPage.Closed(item.Key);   // 관찰을 끊고 말하기를 멈춤
+            readerPage.Closed(entry.Key);   // 관찰을 끊고 말하기를 멈춤
         };
         var target = new RectInt32(w.AppWindow.Position.X, w.AppWindow.Position.Y, w.AppWindow.Size.Width, w.AppWindow.Size.Height);
         if (from is { } f) w.GrowFrom(f, target); else w.Window.Activate();
+    }
+
+    // 읽기 창 J·K(H-05): 그 창에서 같은 목록의 다음·이전 기사로. 이미 열린 기사면 그 창을 앞으로
+    public void ReplaceReader(string fromKey, NewsItem next)
+    {
+        if (readers.FirstOrDefault(r => r.Key == next.Key) is { } open) { open.Window.Window.Activate(); return; }
+        if (readers.FirstOrDefault(r => r.Key == fromKey) is not { } slot) { OpenReader(next, null); return; }
+        readerPage.Closed(fromKey);
+        readerPage.Opening(next);
+        slot.Key = next.Key;
+        slot.Window.Window.Title = next.SourceName;
+        slot.Window.Go("key=" + Uri.EscapeDataString(next.Key));
     }
 
     private static void Center(WebWindow w)

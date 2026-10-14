@@ -262,6 +262,26 @@ pub fn feed_title(data: &[u8]) -> Option<String> {
     t.map(|t| plain::clean(&t))
 }
 
+// guid·link 가 모두 빈 글의 id: 제목+날짜로 만든 고정 값(A-31 · 맥 FeedParser.fallbackID 와 같은 FNV-1a·36진수).
+// 빈 id 로 key 가 `출처|` 로 겹쳐 하나만 남던 문제. 실행마다·기기마다 같다
+pub fn fallback_id(title: &str, date: &str) -> String {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in format!("{}|{}", title.trim(), date.trim()).bytes() {
+        h = (h ^ b as u64).wrapping_mul(0x100000001b3);
+    }
+    let digits = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let mut out = vec![];
+    loop {
+        out.push(digits[(h % 36) as usize]);
+        h /= 36;
+        if h == 0 {
+            break;
+        }
+    }
+    out.reverse();
+    format!("noid-{}", String::from_utf8(out).unwrap())
+}
+
 pub fn parse_feed(data: &[u8]) -> Result<Vec<Entry>, FeedError> {
     let root = tree(data)?;
     if let Some(channel) = root.child("rss").and_then(|r| r.child("channel")) {
@@ -270,7 +290,7 @@ pub fn parse_feed(data: &[u8]) -> Result<Vec<Entry>, FeedError> {
             .map(|it| {
                 let link = it.value("link");
                 Entry {
-                    id: non_empty(it.value("guid")).unwrap_or_else(|| link.clone()),
+                    id: non_empty(it.value("guid")).or_else(|| non_empty(link.clone())).unwrap_or_else(|| fallback_id(&it.value("title"), &it.value("pubDate"))),
                     title: plain::clean(&it.value("title")),
                     date: dates::parse(&non_empty(it.value("pubDate")).unwrap_or_else(|| it.value("dc:date"))),
                     summary: prefix(&plain::clean(&it.value("description")), 300),
@@ -288,7 +308,7 @@ pub fn parse_feed(data: &[u8]) -> Result<Vec<Entry>, FeedError> {
                 let alt = links.iter().find(|l| l.attr("rel").unwrap_or("alternate") == "alternate").or(links.first());
                 let link = alt.map(|l| l.attr("href").map(|s| s.to_string()).unwrap_or_else(|| l.text.trim().to_string())).unwrap_or_default();
                 Entry {
-                    id: non_empty(it.value("id")).unwrap_or_else(|| link.clone()),
+                    id: non_empty(it.value("id")).or_else(|| non_empty(link.clone())).unwrap_or_else(|| fallback_id(&it.value("title"), &it.value("updated"))),
                     title: plain::clean(&it.value("title")),
                     date: dates::parse(&non_empty(it.value("published")).unwrap_or_else(|| it.value("updated"))),
                     summary: prefix(&plain::clean(&non_empty(it.value("summary")).unwrap_or_else(|| it.value("content"))), 300),
@@ -302,7 +322,7 @@ pub fn parse_feed(data: &[u8]) -> Result<Vec<Entry>, FeedError> {
         return Ok(rdf
             .all("item")
             .map(|it| Entry {
-                id: it.value("link"),
+                id: non_empty(it.value("link")).unwrap_or_else(|| fallback_id(&it.value("title"), &it.value("dc:date"))),
                 title: plain::clean(&it.value("title")),
                 link: it.value("link"),
                 date: dates::parse(&it.value("dc:date")),

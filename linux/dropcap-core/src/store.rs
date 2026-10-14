@@ -42,6 +42,8 @@ pub struct Settings {
     pub must_keywords: Vec<String>, // 꼭 알림(중요 표시)
     #[serde(rename = "muteKeywords")]
     pub mute_keywords: Vec<String>, // 알리지 않음
+    #[serde(rename = "watchKeywords")]
+    pub watch_keywords: Vec<String>, // 지켜볼 낱말(회사·인물·법안) — 스토리마다 한 번 알림 + 하루 정리(N-27)
     #[serde(rename = "digestEnabled")]
     pub digest_enabled: bool, // 아침 브리핑
     #[serde(rename = "digestHour")]
@@ -54,6 +56,12 @@ pub struct Settings {
     pub intl_threshold: i64, // 해외 n곳 이상
     #[serde(rename = "bigThreshold")]
     pub big_threshold: i64, // 국내 n곳 이상이면 상한 무시
+    #[serde(rename = "autoQuietFullscreen")]
+    pub auto_quiet_fullscreen: bool, // 전체 화면 앱 사용 중에는 조용히(고임, N-25)
+    #[serde(rename = "autoQuietSharing")]
+    pub auto_quiet_sharing: bool, // 화면 공유·기록 중
+    #[serde(rename = "autoQuietCalendar")]
+    pub auto_quiet_calendar: bool, // 캘린더 일정 중(리눅스는 감지하지 않음 — 상태 파일 호환용)
 }
 
 impl Settings {
@@ -79,12 +87,16 @@ impl Default for Settings {
             quiet_end: 7,
             must_keywords: vec![],
             mute_keywords: vec![],
+            watch_keywords: vec![],
             digest_enabled: true,
             digest_hour: 9,
             total_daily_cap: 10,
             kr_threshold: 3,
             intl_threshold: 2,
             big_threshold: 8,
+            auto_quiet_fullscreen: true,
+            auto_quiet_sharing: true,
+            auto_quiet_calendar: false,
         }
     }
 }
@@ -120,12 +132,16 @@ impl<'de> Deserialize<'de> for Settings {
             quiet_end: field(m, "quietEnd").unwrap_or(def.quiet_end),
             must_keywords: field(m, "mustKeywords").unwrap_or_default(),
             mute_keywords: field(m, "muteKeywords").unwrap_or_default(),
+            watch_keywords: field(m, "watchKeywords").unwrap_or_default(),
             digest_enabled: field(m, "digestEnabled").unwrap_or(def.digest_enabled),
             digest_hour: field(m, "digestHour").unwrap_or(def.digest_hour),
             total_daily_cap: field(m, "totalDailyCap").unwrap_or(def.total_daily_cap),
             kr_threshold: field(m, "krThreshold").unwrap_or(def.kr_threshold),
             intl_threshold: field(m, "intlThreshold").unwrap_or(def.intl_threshold),
             big_threshold: field(m, "bigThreshold").unwrap_or(def.big_threshold),
+            auto_quiet_fullscreen: field(m, "autoQuietFullscreen").unwrap_or(def.auto_quiet_fullscreen),
+            auto_quiet_sharing: field(m, "autoQuietSharing").unwrap_or(def.auto_quiet_sharing),
+            auto_quiet_calendar: field(m, "autoQuietCalendar").unwrap_or(def.auto_quiet_calendar),
         })
     }
 }
@@ -148,6 +164,8 @@ pub struct AppState {
     pub snooze_until: Option<DateTime<Utc>>, // 알림 잠시 끄기
     #[serde(rename = "lastDigest", with = "iso::opt", skip_serializing_if = "Option::is_none")]
     pub last_digest: Option<DateTime<Utc>>, // 마지막 아침 브리핑
+    #[serde(rename = "lastWatchDigest", with = "iso::opt", skip_serializing_if = "Option::is_none")]
+    pub last_watch_digest: Option<DateTime<Utc>>, // 마지막 '지켜볼 낱말' 하루 정리
     #[serde(rename = "interestCategory")]
     pub interest_category: HashMap<String, f64>, // 분야별로 연 횟수(관심사)
     #[serde(rename = "interestSource")]
@@ -173,6 +191,7 @@ pub struct AppState {
     pub notified_stories: HashMap<String, f64>, // 알린 스토리 → 시각(같은 이야기 한 번만)
     #[serde(rename = "lastBundle", with = "iso_map")]
     pub last_bundle: HashMap<String, DateTime<Utc>>, // 분야 → 마지막으로 묶음을 보낸 때
+    pub briefs: HashMap<String, crate::brief::SectionBrief>, // 분야 → 마지막 저녁 정리(묶음 시각에 기기 안 요약, N-26)
     pub settings: Settings,
 }
 
@@ -199,6 +218,7 @@ impl<'de> Deserialize<'de> for AppState {
             custom_sources: list_field(m, "customSources"),
             snooze_until: date_field(m, "snoozeUntil"),
             last_digest: date_field(m, "lastDigest"),
+            last_watch_digest: date_field(m, "lastWatchDigest"),
             interest_category: field(m, "interestCategory").unwrap_or_default(),
             interest_source: field(m, "interestSource").unwrap_or_default(),
             magazine_backfilled: field(m, "magazineBackfilled").unwrap_or(false),
@@ -215,6 +235,11 @@ impl<'de> Deserialize<'de> for AppState {
                 .get("lastBundle")
                 .and_then(|v| v.as_object())
                 .map(|o| o.iter().filter_map(|(k, v)| v.as_str().and_then(iso::parse).map(|d| (k.clone(), d))).collect())
+                .unwrap_or_default(),
+            briefs: m
+                .get("briefs")
+                .and_then(|v| v.as_object())
+                .map(|o| o.iter().filter_map(|(k, v)| serde_json::from_value(v.clone()).ok().map(|b| (k.clone(), b))).collect())
                 .unwrap_or_default(),
             settings: m.get("settings").and_then(|s| serde_json::from_value(s.clone()).ok()).unwrap_or_default(),
         })
@@ -428,6 +453,8 @@ pub struct Prefs {
     pub launch_at_login: bool,
     #[serde(rename = "storyRuleVersion")]
     pub story_rule_version: i64, // 같은 소식 판정 기준 버전(바뀌면 한 번 다시 묶음)
+    #[serde(rename = "todayIssueDone", skip_serializing_if = "Option::is_none")]
+    pub today_issue_done: Option<String>, // 오늘 호를 다 읽은 날(M-23)
 }
 
 impl Default for Prefs {
@@ -441,6 +468,7 @@ impl Default for Prefs {
             last_scrap_collection: None,
             launch_at_login: false,
             story_rule_version: 0,
+            today_issue_done: None,
         }
     }
 }
@@ -459,6 +487,7 @@ impl<'de> Deserialize<'de> for Prefs {
             last_scrap_collection: field(m, "lastScrapCollection"),
             launch_at_login: field(m, "launchAtLogin").unwrap_or(false),
             story_rule_version: field(m, "storyRuleVersion").unwrap_or(0),
+            today_issue_done: field(m, "todayIssueDone"),
         })
     }
 }

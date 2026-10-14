@@ -11,6 +11,9 @@ public interface IPlatform
     void OpenSettings(string? tab = null);
     void OpenOnboarding();                                         // 관심 분야 고르기(G-03, 첫 실행·설정에서 다시)
     void OpenReader(NewsItem item);
+    // 읽기 창 J·K(H-05): 열린 창(fromKey)에서 같은 목록의 다음·이전 기사로 바꾼다. 기본은 새 창으로 열기
+    void ReplaceReader(string fromKey, NewsItem next) => OpenReader(next);
+    void Beep() { }                                                // 끝이면 경고음(H-04·H-05)
     void CloseWindow(string page);
     void Quit();
     void CopyText(string text);

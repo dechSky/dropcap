@@ -8,6 +8,7 @@ actor Translator {
     static let shared = Translator()
     private let target = Locale.Language(identifier: "ko")
     private var cache: [String: String] = [:]
+    private var cacheEngine: [String: Engine] = [:] // 캐시에서 꺼낸 번역도 어느 엔진 것인지 알게(A-24)
 
     enum Engine: String { case apple = "기기 내 번역(Apple)", google = "Google 번역", none = "번역 안 함" }
     private(set) var lastEngine: Engine = .none
@@ -38,17 +39,28 @@ actor Translator {
     }
 
     // 여러 문단을 한 번에. 순서를 지킨다.
-    func translateMany(_ texts: [String]) async -> [String] {
+    func translateMany(_ texts: [String]) async -> [String] { await translateManyReporting(texts).texts }
+
+    // 번역과 함께 '이번 번역에 쓴 엔진'을 돌려준다(A-24: 앱 전체에 하나인 lastEngine 은 다른 번역이 동시에 돌거나
+    // 캐시로 끝나면 틀리게 보였다). 새로 번역한 것이 있으면 그 엔진, 모두 캐시면 캐시에 남긴 엔진, 번역할 것이 없으면 none.
+    func translateManyReporting(_ texts: [String]) async -> (texts: [String], engine: Engine) {
+        let cachedEngines = texts.compactMap { cache[$0] != nil ? cacheEngine[$0] : nil }
+        let out = await translateManyRaw(texts)
+        if let fresh = out.engine { return (out.texts, fresh) }
+        return (out.texts, cachedEngines.contains(.google) ? .google : cachedEngines.first ?? .none)
+    }
+
+    private func translateManyRaw(_ texts: [String]) async -> (texts: [String], engine: Engine?) {
         var result = texts
         let todo = texts.indices.filter { Self.looksForeign(texts[$0]) && cache[texts[$0]] == nil }
         for i in texts.indices where cache[texts[i]] != nil { result[i] = cache[texts[i]]! }
-        guard !todo.isEmpty else { return result }
+        guard !todo.isEmpty else { return (result, nil) }
 
         let sample = todo.prefix(5).map { texts[$0] }.joined(separator: " ")
         if let apple = await appleTranslate(todo.map { texts[$0] }, sample: sample) {
-            for (k, i) in todo.enumerated() { result[i] = apple[k]; remember(texts[i], apple[k]) }
+            for (k, i) in todo.enumerated() { result[i] = apple[k]; remember(texts[i], apple[k], engine: .apple) }
             lastEngine = .apple
-            return result
+            return (result, .apple)
         }
         // 구글: 문단 여러 개를 빈 줄로 이어 한 번에 보내고(요청 수를 줄여 빠르게), 묶음들은 동시에 보낸다.
         // 돌아온 문단 수가 안 맞으면 그 묶음만 문단별로 다시 보낸다.
@@ -73,19 +85,20 @@ actor Translator {
                 }
             }
             for await pairs in group {
-                for (i, t) in pairs { result[i] = t; remember(texts[i], t) }
+                for (i, t) in pairs { result[i] = t; remember(texts[i], t, engine: .google) }
             }
         }
         lastEngine = .google
-        return result
+        return (result, .google)
     }
 
     // 오래 켜 둬도 무한히 커지지 않게 4000개를 넘으면 비운다(기사 본문 번역도 여기로 모이므로 이 한 곳에서 지킨다)
     static let cacheLimit = 4000
     var cacheCount: Int { cache.count }
-    func remember(_ source: String, _ translated: String) {
-        if cache.count >= Self.cacheLimit { cache.removeAll(keepingCapacity: true) }
+    func remember(_ source: String, _ translated: String, engine: Engine = .google) {
+        if cache.count >= Self.cacheLimit { cache.removeAll(keepingCapacity: true); cacheEngine.removeAll(keepingCapacity: true) }
         cache[source] = translated
+        cacheEngine[source] = engine
     }
 
     private func appleTranslate(_ texts: [String], sample: String) async -> [String]? {
@@ -113,10 +126,50 @@ actor Translator {
         return await LanguageAvailability().status(from: Locale.Language(identifier: "en"), to: Locale.Language(identifier: "ko")) == .installed
     }
 
+    // 한 번에 보낼 수 있는 길이(구글 공개 엔드포인트). 이보다 긴 문단은 문장 단위로 나눠 보내고 이어 붙인다(A-25: 예전엔 뒤가 잘렸다)
+    static let requestLimit = 4500
+
     private static func google(_ text: String, target: String = "ko") async -> String? {
+        guard text.count > requestLimit else { return await googleOnce(text, target: target) }
+        var parts: [String] = []
+        for chunk in sentenceChunks(text, max: requestLimit) {
+            guard let t = await googleOnce(chunk, target: target) else { return nil }
+            parts.append(t)
+        }
+        return parts.joined(separator: " ")
+    }
+
+    // 문장 경계에서 max 글자 이하로 묶는다. 한 문장이 max 보다 길면 그 문장만 max 씩 자른다. 이어 붙이면 원문 그대로
+    static func sentenceChunks(_ text: String, max: Int) -> [String] {
+        guard text.count > max else { return [text] }
+        let tok = NLTokenizer(unit: .sentence)
+        tok.string = text
+        var sentences: [String] = []
+        tok.enumerateTokens(in: text.startIndex..<text.endIndex) { r, _ in sentences.append(String(text[r])); return true }
+        // 토크나이저가 놓친 앞뒤 공백 등은 마지막 조각에 붙여 원문 길이를 지킨다
+        let covered = sentences.joined()
+        if covered.count < text.count, text.hasPrefix(covered) { sentences.append(String(text.dropFirst(covered.count))) }
+        var out: [String] = [], cur = ""
+        for s in sentences {
+            if s.count > max {
+                if !cur.isEmpty { out.append(cur); cur = "" }
+                var rest = Substring(s)
+                while rest.count > max { out.append(String(rest.prefix(max))); rest = rest.dropFirst(max) }
+                cur = String(rest)
+            } else if cur.count + s.count > max {
+                out.append(cur); cur = s
+            } else {
+                cur += s
+            }
+        }
+        if !cur.isEmpty { out.append(cur) }
+        return out
+    }
+
+    private static func googleOnce(_ text: String, target: String = "ko") async -> String? {
         var c = URLComponents(string: "https://translate.googleapis.com/translate_a/single")!
         c.queryItems = [.init(name: "client", value: "gtx"), .init(name: "sl", value: "auto"), .init(name: "tl", value: target),
-                        .init(name: "dt", value: "t"), .init(name: "q", value: String(text.prefix(4500)))]
+                        .init(name: "dt", value: "t"), .init(name: "q", value: String(text.prefix(requestLimit)))]
         guard let url = c.url else { return nil }
         var req = URLRequest(url: url, timeoutInterval: 15)
         req.setValue(FeedService.userAgent, forHTTPHeaderField: "User-Agent")

@@ -26,11 +26,38 @@
     draw();
   }
 
+  // 분야 유리 카드(맥 SectionGlassCard): 흐린 사진 바탕 + 분야색 유리판 + 기울인 사진 + 영문·한글 이름 + 대표 출처, 왼쪽 아래 체크
+  function glass(c) {
+    const src = c.photo ? bridge.img(c.photo) : '';
+    return `${src ? `<img class="bg" src="${esc(src)}" alt="" draggable="false">` : ''}<span class="gl"></span><span class="panel"></span>
+      ${src ? `<span class="tilt"><img src="${esc(src)}" alt="" draggable="false"></span>` : ''}
+      <span class="tx"><small class="en">${esc(c.english)}</small><b>${esc(c.label)}</b>${c.sources ? `<span class="gs">${esc(c.sources)}</span>` : ''}</span>
+      <span class="chk">${ic('check')}</span>`;
+  }
+
   function card(c, fresh) {
     const on = picked.has(c.id);
     return `<button class="card${on ? ' on' : ''}${fresh ? ' new' : ''}" data-id="${esc(c.id)}" style="--c:${esc(c.color)}" aria-pressed="${on}" aria-label="${esc(c.label)}${on ? ', 고름' : ''}">
-      <span class="top-row"><span class="sym">${ic(c.icon)}</span><span class="tick">${ic('check')}</span></span>
-      <b>${esc(c.label)}</b><small>${esc(c.sources)}</small></button>`;
+      <span class="gcard">${glass(c)}</span></button>`;
+  }
+
+  // 분야 사진을 찾으면 그 카드의 유리판만 바꿔 끼운다(고른 상태는 그대로)
+  function patchPhotos(map) {
+    if (!view || !map) return;
+    view.cards.forEach((c) => {
+      if (c.photo || !map[c.id]) return;
+      c.photo = map[c.id];
+      const g = document.querySelector(`.card[data-id="${CSS.escape(c.id)}"] .gcard`);
+      if (g) g.innerHTML = glass(c);
+    });
+  }
+  bridge.on('photos', patchPhotos);
+  // 앱이 알려 주지 않는 판이면 잠깐씩 물어본다(처음 실행이면 피드를 받아 고르느라 몇 초 걸림, 최대 1분)
+  let polls = 0;
+  async function poll() {
+    if (!view || view.cards.every((c) => c.photo) || ++polls > 40) return;
+    try { patchPhotos(await bridge.send('photos')); } catch (e) { return; }
+    setTimeout(poll, 1500);
   }
 
   function draw(fresh = false) {
@@ -78,5 +105,5 @@
     if (e.key === 'Escape') bridge.send('close');
   });
 
-  bridge.send('ready').then(render);
+  bridge.send('ready').then((v) => { render(v); setTimeout(poll, 1500); });
 })();

@@ -185,8 +185,10 @@ pub fn make_issue(db: &Database, kind: IssueKind, from: DateTime<Utc>, to: DateT
     ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal).then_with(|| a.0.item.key().cmp(&b.0.item.key())));
     let limit = if kind == IssueKind::Weekly { 60 } else { 90 };
     let picked: Vec<&(StoredItem, f64)> = ranked.iter().filter(|r| r.0.item.item_kind() == ItemKind::Article).take(limit).collect();
-    // 표지: 사진이 있는 기사 중 점수 1등(없으면 그냥 1등)
-    let cover = picked.iter().find(|r| r.0.item.image.is_some()).or(picked.first()).map(|r| r.0.item.key());
+    // 표지: 사진이 있는 기사 중 점수 1등(없으면 그냥 1등). 화면 캡처·글자 그림·로고로 잰 사진은 건너뛴다(M-24)
+    let photo_scores = db.image_scores(&picked.iter().take(30).filter_map(|r| r.0.item.image.clone()).collect::<Vec<_>>());
+    let ranked_items: Vec<NewsItem> = picked.iter().map(|r| r.0.item.clone()).collect();
+    let cover = crate::photo_quality::pick_cover(&ranked_items, &photo_scores).or_else(|| picked.first().map(|r| r.0.item.key()));
     let articles: Vec<StoredItem> = picked.iter().filter(|r| Some(r.0.item.key()) != cover).map(|r| r.0.clone()).collect();
     let mut sections = section_pages(&articles, &stored, ed.chosen.as_deref(), ed.limits, if kind == IssueKind::Weekly { 8 } else { 12 }, &sections::META);
     // 구독 채널 지면: 종류별, 채널 하나당 4개까지(논문처럼 많은 곳이 지면을 덮지 않게)

@@ -96,6 +96,8 @@ pub struct SourceMeta {
     pub default_on: Option<bool>,
     #[serde(default)]
     pub name: Option<String>,
+    #[serde(default)]
+    pub paywall: Option<String>, // hard · metered(유료 기사 표시, G-14)
 }
 
 #[derive(Deserialize)]

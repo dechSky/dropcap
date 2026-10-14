@@ -122,18 +122,24 @@ final class ArticleService {
             emit(item.link, a)
             let idx = art.blocks.indices.filter { art.blocks[$0].text != nil && art.blocks[$0].type != .pre }
             let first = Array(idx.prefix(8)), rest = Array(idx.dropFirst(8))
+            var done = 0, total = 0 // 실제로 바뀐(번역된) 문단 수 — 번역이 모두 실패하면 원문이 그대로 돌아온다
             for (n, chunk) in [first, rest].enumerated() where !chunk.isEmpty || n == 0 {
                 let inputs = (n == 0 ? [artTitle] : []) + chunk.map { art.blocks[$0].text! }
-                var out = await Translator.shared.translateMany(inputs)
+                let (translatedTexts, usedEngine) = await Translator.shared.translateManyReporting(inputs)
+                var out = translatedTexts
+                if usedEngine != .none { a.engine = usedEngine.rawValue } // 이 기사에 실제로 쓴 엔진(A-24)
                 if n == 0 { a.title = out.removeFirst() }
-                for (k, i) in chunk.enumerated() {
+                for (k, i) in chunk.enumerated() where Translator.looksForeign(art.blocks[i].text!) {
+                    total += 1
+                    guard out[k] != art.blocks[i].text else { continue } // 번역 안 된 문단은 원문 그대로(원문 보기 대상 아님)
+                    done += 1
                     a.blocks[i].original = art.blocks[i].text
                     a.blocks[i].text = out[k]
                 }
-                a.translated = true
+                a.translated = done > 0
                 emit(item.link, a)
             }
-            a.engine = await Translator.shared.lastEngine.rawValue
+            a.engine = Self.engineLabel(done: done, total: total, engine: a.engine)
         } else {
             a.title = artTitle
         }
@@ -176,6 +182,12 @@ final class ArticleService {
 }
 
 extension ArticleService {
+    // 읽기 창의 번역 표시: 번역된 문단이 없으면 표시 없음, 일부만 됐으면 '일부 번역'
+    nonisolated static func engineLabel(done: Int, total: Int, engine: String) -> String {
+        guard done > 0 else { return "" }
+        return done < total ? engine + " · 일부 번역" : engine
+    }
+
     // 웹 문서 제목 끝의 사이트 이름(" - AI타임스", " | The Verge")은 출처가 이미 위에 보이므로 뗀다
     nonisolated static func stripSiteName(_ title: String, source: String, feedTitle: String) -> String {
         let norm: (String) -> String = { $0.lowercased().filter { $0.isLetter || $0.isNumber } }

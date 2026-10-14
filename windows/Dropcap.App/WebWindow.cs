@@ -28,7 +28,7 @@ internal sealed class WebWindow
     public event Action? Closed;
 
     private readonly Bridge bridge;
-    private readonly string query;
+    private string query;
     private IDisposable? attach;
     private CoreWebView2? core;
     private static CoreWebView2Environment? env;
@@ -98,6 +98,13 @@ internal sealed class WebWindow
         attach = bridge.Attach(Page, json => q.TryEnqueue(() => core?.PostWebMessageAsJson(json)));
         core.NavigationCompleted += (_, _) => SendAppearance();
         core.Navigate($"https://{AppHost}/{Page}.html{(query.Length == 0 ? "" : query.StartsWith('#') ? query : "?" + query)}");
+    }
+
+    // 같은 창에서 다른 주소로(읽기 창 J·K, H-05)
+    public void Go(string newQuery)
+    {
+        query = newQuery;
+        core?.Navigate($"https://{AppHost}/{Page}.html{(query.Length == 0 ? "" : "?" + query)}");
     }
 
     public void SendAppearance() =>

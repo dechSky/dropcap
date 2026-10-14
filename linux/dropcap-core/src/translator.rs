@@ -75,9 +75,24 @@ impl Translator {
         self.translate_many(&[src.to_string()]).await.into_iter().next().unwrap_or_else(|| src.to_string())
     }
 
-    // 문단 여러 개를 빈 줄로 이어 한 번에 보내고(요청 수를 줄여 빠르게), 묶음들은 동시에 보낸다.
-    // 돌아온 문단 수가 안 맞으면 그 묶음만 문단별로 다시 보낸다. 순서를 지킨다.
     pub async fn translate_many(&self, texts: &[String]) -> Vec<String> {
+        self.translate_many_reporting(texts).await.0
+    }
+
+    // 번역과 함께 '이번 번역에 쓴 엔진'을 돌려준다(T-08 · A-24: 앱 전체에 하나인 last_engine 은 다른 번역이 동시에 돌거나
+    // 캐시로 끝나면 틀리게 보였다). 새로 번역했거나 캐시에서 꺼낸 것이 있으면 그 엔진(리눅스는 Google 뿐), 번역할 것이 없으면 None
+    pub async fn translate_many_reporting(&self, texts: &[String]) -> (Vec<String>, Engine) {
+        let from_cache = {
+            let cache = self.cache.lock().unwrap();
+            texts.iter().any(|t| cache.contains_key(t))
+        };
+        let (out, fresh) = self.translate_many_raw(texts).await;
+        (out, if fresh || from_cache { Engine::Google } else { Engine::None })
+    }
+
+    // 문단 여러 개를 빈 줄로 이어 한 번에 보내고(요청 수를 줄여 빠르게), 묶음들은 동시에 보낸다.
+    // 돌아온 문단 수가 안 맞으면 그 묶음만 문단별로 다시 보낸다. 순서를 지킨다. (결과, 새로 번역했나)
+    async fn translate_many_raw(&self, texts: &[String]) -> (Vec<String>, bool) {
         let mut result = texts.to_vec();
         let todo: Vec<usize> = {
             let cache = self.cache.lock().unwrap();
@@ -89,7 +104,7 @@ impl Translator {
             (0..texts.len()).filter(|&i| looks_foreign(&texts[i]) && !cache.contains_key(&texts[i])).collect()
         };
         if todo.is_empty() {
-            return result;
+            return (result, false);
         }
         let batches = batches(texts, &todo, BATCH_CHARS);
         let jobs = batches.into_iter().map(|batch| async move {
@@ -116,7 +131,7 @@ impl Translator {
             }
         }
         *self.last.lock().unwrap() = Engine::Google;
-        result
+        (result, true)
     }
 }
 
@@ -137,8 +152,70 @@ pub fn batches(texts: &[String], todo: &[usize], limit: usize) -> Vec<Vec<usize>
     out
 }
 
+// 한 번에 보낼 수 있는 길이(구글 공개 엔드포인트). 이보다 긴 문단은 문장 단위로 나눠 보내고 이어 붙인다(A-25: 예전엔 뒤가 잘렸다)
+pub const REQUEST_LIMIT: usize = 4500;
+
+// 문장 경계(. ! ? 。 ！ ？ 뒤 공백, 줄바꿈)에서 max 글자 이하로 묶는다. 한 문장이 max 보다 길면 그 문장만 max 씩 자른다.
+// 이어 붙이면 원문 그대로
+pub fn sentence_chunks(text: &str, max: usize) -> Vec<String> {
+    if text.chars().count() <= max {
+        return vec![text.to_string()];
+    }
+    // 문장으로 나누기: 끝 표시 다음의 공백까지 그 문장에 붙인다
+    let chars: Vec<char> = text.chars().collect();
+    let mut sentences: Vec<String> = vec![];
+    let mut cur = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        cur.push(c);
+        let ends = (matches!(c, '.' | '!' | '?' | '。' | '！' | '？') && chars.get(i + 1).map(|n| n.is_whitespace()).unwrap_or(true)) || c == '\n';
+        if ends {
+            while i + 1 < chars.len() && chars[i + 1].is_whitespace() {
+                i += 1;
+                cur.push(chars[i]);
+            }
+            sentences.push(std::mem::take(&mut cur));
+        }
+        i += 1;
+    }
+    if !cur.is_empty() {
+        sentences.push(cur);
+    }
+    let mut out: Vec<String> = vec![];
+    let mut cur = String::new();
+    let mut cur_len = 0;
+    for s in sentences {
+        let n = s.chars().count();
+        if n > max {
+            if !cur.is_empty() {
+                out.push(std::mem::take(&mut cur));
+            }
+            let sc: Vec<char> = s.chars().collect();
+            let mut rest: &[char] = &sc;
+            while rest.len() > max {
+                out.push(rest[..max].iter().collect());
+                rest = &rest[max..];
+            }
+            cur = rest.iter().collect();
+            cur_len = rest.len();
+        } else if cur_len + n > max {
+            out.push(std::mem::take(&mut cur));
+            cur = s;
+            cur_len = n;
+        } else {
+            cur.push_str(&s);
+            cur_len += n;
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
 pub fn google_url(text: &str, target: &str) -> String {
-    let q: String = text.chars().take(4500).collect();
+    let q: String = text.chars().take(REQUEST_LIMIT).collect();
     let mut u = url::Url::parse("https://translate.googleapis.com/translate_a/single").unwrap();
     u.query_pairs_mut()
         .append_pair("client", "gtx")
@@ -161,6 +238,17 @@ pub fn parse_google(data: &[u8]) -> Option<String> {
 }
 
 async fn google(text: &str, target: &str) -> Option<String> {
+    if text.chars().count() <= REQUEST_LIMIT {
+        return google_once(text, target).await;
+    }
+    let mut parts = vec![];
+    for chunk in sentence_chunks(text, REQUEST_LIMIT) {
+        parts.push(google_once(&chunk, target).await?);
+    }
+    Some(parts.join(" "))
+}
+
+async fn google_once(text: &str, target: &str) -> Option<String> {
     let r = tokio::time::timeout(std::time::Duration::from_secs(15), net::get(&google_url(text, target), &[], MAX_BODY)).await.ok()?.ok()?;
     if r.status != 200 {
         return None;

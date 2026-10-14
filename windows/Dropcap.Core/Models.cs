@@ -33,6 +33,7 @@ public sealed record Source
     public string? Section { get; init; }        // 분야 id(shared/categories.json). 없으면 AI(예전 출처·직접 추가)
     public string? Lang { get; init; }           // 글의 언어(ko·en …). 없으면 en
     public string? Region { get; init; }         // kr(국내) · intl(해외). 없으면 tier 로 정함
+    public string? Paywall { get; init; }        // hard(구독해야만) · metered(한 달 몇 건 무료). 없으면 무료로 봄
 
     [JsonIgnore] public string SectionId => Section ?? "ai";
     [JsonIgnore] public string Language => Lang ?? "en";

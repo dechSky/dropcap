@@ -50,6 +50,14 @@
     setSwitch('sound', g.sound);
     setSwitch('pretendard', g.pretendard);
     setSwitch('launchAtLogin', g.launchAtLogin);
+    // 회의·발표 중에는 조용히(N-25): 캘린더는 지원하지 않으면 꺼 두고 이유를
+    setSwitch('autoQuietFullscreen', g.autoQuietFullscreen);
+    setSwitch('autoQuietSharing', g.autoQuietSharing);
+    setSwitch('autoQuietCalendar', g.autoQuietCalendar);
+    enable('autoQuietCalendar', g.calendarSupported);
+    $('#calendarNote').hidden = !g.calendarNote;
+    $('#calendarNote').textContent = g.calendarNote || '';
+    $('#autoQuietNote').textContent = g.autoQuietNote;
     $('#engine').textContent = g.translation;
     $('#engineNote').textContent = g.translationNote;
     $('#summary').textContent = g.summary;
@@ -77,6 +85,8 @@
     fillSelect('digestHour', f.digestHours, f.digestHour);
     enable('digestHour', f.digestEnabled);
     $('#hotkeys').innerHTML = f.hotkeys.map((h) => `<div class="row"><span class="lb">${esc(h.label)}</span><span class="keys">${esc(h.keys)}</span></div>`).join('');
+    // 목록·매거진·읽기 창 키(H-03~H-05)
+    $('#navkeys').innerHTML = f.navKeys.map((h) => `<div class="row"><span class="lb">${esc(h.label)}</span><span class="keys">${esc(h.keys)}</span></div>`).join('');
   }
 
   // 분야 탭: 고른 분야마다 묶음 하나(모드 나눔 단추 + 즉시·묶음이면 묶음 시각, 즉시면 하루 상한)
@@ -230,17 +240,25 @@
     });
   });
 
-  // 낱말 저장(C-14): Enter 또는 저장 단추
-  function saveKeywords() {
+  // 낱말 저장(C-14): 입력이 멈추고 0.6초 뒤 저장·이미 받은 목록에도 적용. Enter·저장 단추·칸을 떠날 때는 바로(정리한 글자로 다시 채움)
+  let kwTimer;
+  function saveKeywords(tidy = true) {
+    clearTimeout(kwTimer);
     bridge.send('keywords', { must: $('#must').value, mute: $('#mute').value }).then((r) => {
-      $('#must').value = r.must;
-      $('#mute').value = r.mute;
-      ui.toast('저장했습니다');
+      if (tidy) {
+        $('#must').value = r.must;
+        $('#mute').value = r.mute;
+        ui.toast('저장했습니다');
+      }
       refresh();
     });
   }
-  $$('.kw').forEach((el) => el.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveKeywords(); } }));
-  $('#saveKw').addEventListener('click', saveKeywords);
+  $$('.kw').forEach((el) => {
+    el.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveKeywords(); } });
+    el.addEventListener('input', () => { clearTimeout(kwTimer); kwTimer = setTimeout(() => saveKeywords(false), 600); });
+    el.addEventListener('blur', () => { if (kwTimer) saveKeywords(false); });
+  });
+  $('#saveKw').addEventListener('click', () => saveKeywords());
 
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !document.querySelector('.pop')) bridge.send('close'); });
 

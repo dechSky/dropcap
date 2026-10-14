@@ -34,3 +34,12 @@
 - 메뉴: `ui.popMenu(x, y, items)` · `ui.popUnder(el, items)`.
 - 맥 SwiftUI 의 크기·간격·문구를 그대로(맥 코드가 기준). 단축키 표기는 Ctrl(맥 ⌘ 대신), 맥 ⌥⌘M → Ctrl+Alt+M.
 - 움직임은 CSS 로. `html.reduce-motion` 이면 모든 움직임이 꺼진다.
+
+## 추가 지시 4 에서 늘어난 것
+
+- 공용 `ui.js`: `ui.lock(it)`(유료 자물쇠, `it.paywall`·`it.paywallHelp`), `ui.navKey(e)`·`ui.navMove`·`ui.scrollToCenter`(키보드 탐색 H-03). `base.css`: `.pw`, `.kbsel`(고른 줄·카드 테두리).
+- `ItemView.Paywall`·`PaywallHelp`. `IPlatform.ReplaceReader(fromKey, next)`·`Beep()`(기본 구현 있음). 읽기 창 J·K 목록은 `ReadingList.Remember`(여는 쪽)·`Step`(읽기 창).
+- menu: `open`(보이는 목록을 기억), `browser`{read}, 머리 `autoQuiet`·`autoQuietHelp`.
+- settings: `set` 키 `autoQuietFullscreen`·`autoQuietSharing`·`autoQuietCalendar`, 보기 `general.calendarSupported`·`calendarNote`·`autoQuietNote`, `filters.navKeys`. `keywords` 는 바뀐 때만 저장하고 목록에 다시 적용.
+- magazine: `todayProgress`, `flip`, `toggleRead`, `open`{seq}, `browser`{read}, 알림 `photos`. onboarding: 알림 `photos`.
+- reader: `step`{dir}, `openAlternative`, 보기 `paywall`·`paywalled`·`alternatives`·`freeReason`.

@@ -43,6 +43,8 @@ internal sealed class Platform(Shell shell) : IPlatform
     public void OpenSettings(string? tab = null) => shell.OpenSettings(tab);
     public void OpenOnboarding() => shell.OpenOnboarding();
     public void OpenReader(NewsItem item) => shell.OpenReader(item, null);
+    public void ReplaceReader(string fromKey, NewsItem next) => shell.ReplaceReader(fromKey, next);
+    public void Beep() => Win32.MessageBeep(0);   // 끝이면 경고음(H-04·H-05) — 시스템 기본 소리
     public void CloseWindow(string page) => shell.Close(page);
     public void Quit() => shell.Quit();
 

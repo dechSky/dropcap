@@ -8,6 +8,9 @@ public sealed class MenuPage(AppModel model, IPlatform platform) : IPage
 {
     public string Name => "menu";
 
+    // 지금 보이는 목록(읽기 창 J·K 가 이 순서로 넘김, H-05)
+    private List<NewsItem> shown = new();
+
     public enum Tab { All, Unread, Saved }
 
     // 목록 거르기·정렬(맥 MenuView.items 와 같은 규칙). section: 분야 칩(주요 뉴스는 여러 곳이 다룬 소식·공식 발표·꼭 알림 낱말),
@@ -174,6 +177,7 @@ public sealed class MenuPage(AppModel model, IPlatform platform) : IPage
         var sort = a.StrOrNull("sort") ?? Prefs.Get("listSort", "newest");
         if (a.StrOrNull("sort") is { } s) Prefs.Set("listSort", s);
         var items = Items(model, tab, query, section, topic, sort);
+        shown = items;
         var empty = Empty(tab, query.Trim().Length > 0 || section is not null || topic is not null);
         var now = model.Now();
         return new
@@ -184,6 +188,9 @@ public sealed class MenuPage(AppModel model, IPlatform platform) : IPage
                 checking = model.Checking,
                 status = model.Checking ? "확인하는 중…" : $"마지막 확인 {RelativeTime.Clock(model.State.LastCheck)}",
                 quiet = model.IsQuietTime,
+                // 회의·발표 중 자동 조용히(N-25): 방해 금지 달 자리에 이유
+                autoQuiet = model.AutoQuietReason?.Label(),
+                autoQuietHelp = model.AutoQuietReason is { } why ? $"{why.Label()}이라 알림을 띄우지 않고 모아 둡니다" : null,
                 snoozed = model.IsSnoozed,
                 snoozeHelp = model.IsSnoozed ? $"알림 꺼짐 — {RelativeTime.Clock(model.State.SnoozeUntil)}까지" : "알림 잠시 끄기",
             },
@@ -209,10 +216,23 @@ public sealed class MenuPage(AppModel model, IPlatform platform) : IPage
                 model.MarkRead(); // U-08: 창을 열면 안 읽음 수 초기화
                 return View(a);
             case "view": return View(a);
-            case "open": model.Open(Item()); platform.CloseWindow(Name); return null;
+            case "open":
+            {
+                var it = Item();
+                ReadingList.Remember(it, shown);
+                model.Open(it);
+                platform.CloseWindow(Name);
+                return null;
+            }
             case "toggleSaved": model.ToggleSaved(Item()); return null;
             case "setRead": model.SetRead(Item(), a.Bool("on")); return null;
-            case "browser": ExternalLink.Open(Item().Link); return null;
+            case "browser":
+            {
+                var it = Item();
+                ExternalLink.Open(it.Link);
+                if (a.Bool("read")) model.SetRead(it, true); // 키보드 O(H-03): 브라우저로 열고 읽음 처리
+                return null;
+            }
             case "copyLink": platform.CopyText(Item().Link); return null;
             // 바로 줄이기(G-11)
             case "reduceInfo": return ReduceInfo(Item());

@@ -11,7 +11,10 @@ enum Integrations {
     static func start() {
         guard bag.isEmpty else { return }
         AppModel.shared.$state
-            .map { WidgetTrigger(lastCheck: $0.lastCheck, unread: $0.unread, top: $0.recent.first?.key) }
+            // 위젯이 보이는 목록(꺼진·해지한·숨긴 출처를 뺀 앞쪽)이 바뀌어도 다시 쓴다 — 예전엔 맨 앞 key 만 봐서 출처를 꺼도 위젯에 남았다(E2E 13)
+            .map { st in WidgetTrigger(lastCheck: st.lastCheck, unread: st.unread,
+                                       top: SourceFilter.make(state: st, sources: Resources.config.sources + st.customSources)
+                                           .visible(st.recent).prefix(WidgetExporter.latestCount + 1).map(\.key).joined(separator: "\n")) }
             .removeDuplicates()
             .sink { _ in WidgetExporter.shared.scheduleExport() }
             .store(in: &bag)

@@ -108,7 +108,11 @@ impl Ui {
     }
 
     pub fn save_prefs(&self) {
-        self.prefs.borrow().save(&self.core.store.dir);
+        // 핵심이 직접 쓰는 값(같은 소식 판정 기준 버전)은 디스크 쪽이 더 새로우면 살린다(화면 사본이 덮어쓰지 않게)
+        let disk = Prefs::load(&self.core.store.dir);
+        let mut p = self.prefs.borrow_mut();
+        p.story_rule_version = p.story_rule_version.max(disk.story_rule_version);
+        p.save(&self.core.store.dir);
     }
 
     pub fn update_prefs(&self, f: impl FnOnce(&mut Prefs)) {
@@ -152,6 +156,11 @@ pub fn bg_run(fut: impl Future<Output = ()> + Send + 'static) {
 
 // 기사 열기: 영상·팟캐스트는 원래 앱·브라우저로, 나머지는 읽기 창(R-17). from = 누른 자리(화면 좌표, R-14)
 pub fn open_item(item: &NewsItem, from: Option<crate::reader::Origin>) {
+    open_item_in(item, from, vec![]);
+}
+
+// sequence: 연 목록(읽기 창 J/K 로 다음·이전, H-05)
+pub fn open_item_in(item: &NewsItem, from: Option<crate::reader::Origin>, sequence: Vec<NewsItem>) {
     let ui = ui();
     if !ui.core.open(item) {
         return; // 미리 보기 견본은 아무것도 열지 않음(N-15)
@@ -159,19 +168,22 @@ pub fn open_item(item: &NewsItem, from: Option<crate::reader::Origin>) {
     if item.item_kind().opens_externally() {
         open_external(&item.link);
     } else {
-        crate::reader::open(item, from);
+        crate::reader::open_in(item, from, sequence);
     }
 }
 
 // 매거진에서 연 기사(읽음·관심사만 기록하고 읽기 창은 같은 방식으로)
-#[allow(dead_code)] // 매거진 화면(새 FEATURES 까지 보류)에서 씀
 pub fn open_from_magazine(item: &NewsItem, from: Option<crate::reader::Origin>) {
+    open_from_magazine_in(item, from, vec![]);
+}
+
+pub fn open_from_magazine_in(item: &NewsItem, from: Option<crate::reader::Origin>, sequence: Vec<NewsItem>) {
     let ui = ui();
     ui.core.mark_opened(item);
     if item.item_kind().opens_externally() {
         open_external(&item.link);
     } else {
-        crate::reader::open(item, from);
+        crate::reader::open_in(item, from, sequence);
     }
 }
 

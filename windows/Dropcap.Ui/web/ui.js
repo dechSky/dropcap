@@ -17,6 +17,15 @@
     bookmark: '<path d="M7 3.5h10v17l-5-3.5-5 3.5z"/>',
     'bookmark.fill': '<path fill="currentColor" d="M7 3.5h10v17l-5-3.5-5 3.5z"/>',
     moon: '<path fill="currentColor" d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>',
+    // 유료 기사(G-14): 잠긴 자물쇠(구독해야만·자주 막힘) · 열린 자물쇠(무료 건수 제한)
+    'lock.fill': '<rect x="5.5" y="10.5" width="13" height="9.5" rx="2" fill="currentColor"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/>',
+    'lock.open': '<rect x="5.5" y="10.5" width="13" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 6.8-1.2"/>',
+    // 회의·발표 중 자동 조용히(N-25)
+    'person.wave': '<circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><path d="M17 7.5a4 4 0 0 1 0 5M19.5 5.5a7 7 0 0 1 0 9"/>',
+    'checkmark.seal': '<path fill="currentColor" d="M12 2.8l2.1 1.6 2.6-.2.9 2.5 2.3 1.2-.4 2.6 1.3 2.3-1.8 1.9-.1 2.6-2.5.7-1.4 2.2-2.5-.8-2.4 1.1-1.7-2-2.6-.4-.5-2.6-2-1.7.9-2.4-.6-2.6 2.2-1.4.8-2.5 2.6.1z"/><path stroke="#fff" stroke-width="2" d="M8.5 12.3l2.4 2.4 4.6-5"/>',
+    'moon.stars': '<path fill="currentColor" d="M17 15.5A7 7 0 0 1 8.5 5a7 7 0 1 0 8.5 10.5z"/><path d="M17.5 3.5v3M16 5h3M20 9v2M19 10h2"/>',
+    sparkles: '<path d="M10 4l1.6 4.4L16 10l-4.4 1.6L10 16l-1.6-4.4L4 10l4.4-1.6zM18 14l.8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8z"/>',
+    'arrow.up.right': '<path d="M7 17L17 7M9 7h8v8"/>',
     filter: '<path d="M4 6h16M7 12h10M10 18h4"/>',
     sort: '<path d="M8 4v16M4 8l4-4 4 4M16 20V4M12 16l4 4 4-4"/>',
     clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
@@ -118,6 +127,36 @@
     setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, 1600);
   }
 
-  window.ui = { ic, esc, fillIcons, popMenu, popUnder, closeMenu, toast };
+  // 유료 기사 자물쇠(G-14): 앱이 보낸 it.paywall(hard·metered·learned)·it.paywallHelp(이유). 없으면 빈 글자
+  const lock = (it) => it && it.paywall
+    ? `<span class="pw" title="${esc(it.paywallHelp || '')}" aria-label="${esc(it.paywallHelp || '')}">${ic(it.paywall === 'metered' ? 'lock.open' : 'lock.fill')}</span>` : '';
+
+  // 키보드 탐색(H-03, 맥 NavKey): ↓/J 다음 · ↑/K 이전 · ⏎ 열기 · S 나중에 읽기 · O 브라우저 · M 읽음/안 읽음.
+  // Ctrl·Alt·Meta 가 함께면 탐색 키가 아니다(Ctrl+S 같은 다른 단축키와 겹치지 않게). 입력 칸에서 쓰는 글자도 아니다.
+  function navKey(e) {
+    if (e.ctrlKey || e.altKey || e.metaKey) return null;
+    const t = e.target;
+    const typing = t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+    if (e.key === 'ArrowDown') return typing && t.tagName !== 'INPUT' ? null : 'next';
+    if (e.key === 'ArrowUp') return typing ? null : 'prev';
+    if (typing) return null;
+    if (e.key === 'Enter') return 'open';
+    return { j: 'next', k: 'prev', s: 'save', o: 'browser', m: 'toggleRead' }[(e.key || '').toLowerCase()] || null;
+  }
+  // 목록 안에서 선택을 옮긴다(끝에서는 멈춤). 선택이 없으면 처음(또는 끝)부터
+  function navMove(selected, keys, step) {
+    if (!keys.length) return null;
+    const i = keys.indexOf(selected);
+    if (i < 0) return step > 0 ? keys[0] : keys[keys.length - 1];
+    return keys[Math.min(Math.max(i + step, 0), keys.length - 1)];
+  }
+  // 고른 것을 화면 가운데로(움직임 줄이기면 애니메이션 없이)
+  function scrollToCenter(el) {
+    if (!el) return;
+    const reduce = document.documentElement.classList.contains('reduce-motion') || matchMedia('(prefers-reduced-motion: reduce)').matches;
+    el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: reduce ? 'auto' : 'smooth' });
+  }
+
+  window.ui = { ic, esc, fillIcons, popMenu, popUnder, closeMenu, toast, lock, navKey, navMove, scrollToCenter };
   document.addEventListener('DOMContentLoaded', () => fillIcons());
 })();

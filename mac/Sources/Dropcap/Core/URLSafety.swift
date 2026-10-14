@@ -33,6 +33,7 @@ enum URLSafety {
 
     // 이름을 실제로 풀어 모든 주소가 공개 주소일 때만 true. 결과는 5분간 기억.
     static func resolvesPublic(_ url: URL?) async -> Bool {
+        if E2EFeeds.allows(url) { return true } // 시나리오 시험(DROPCAP_TEST_E2E)에서만 견본 호스트(*.e2e.example)
         guard isPublicHTTP(url), let host = url?.host?.lowercased() else { return false }
         let bare = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
         if parseV4(bare) != nil || bare.contains(":") { return true } // IP 글자는 1단계에서 이미 판단

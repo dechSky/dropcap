@@ -5,7 +5,7 @@ use crate::models::{ItemKind, NewsItem};
 use crate::scrapbook::Scrap;
 use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -36,6 +36,23 @@ pub enum KindFilter {
     Channels,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct ExtractStat {
+    pub tries: i64,
+    pub fails: i64,
+    pub blocked: i64,
+}
+
+impl ExtractStat {
+    pub fn fail_rate(&self) -> f64 {
+        if self.tries == 0 {
+            0.0
+        } else {
+            (self.fails + self.blocked) as f64 / self.tries as f64
+        }
+    }
+}
+
 pub struct Database {
     conn: Mutex<Connection>,
     pub file: PathBuf,
@@ -63,6 +80,10 @@ CREATE TABLE IF NOT EXISTS issues(
 CREATE TABLE IF NOT EXISTS scraps(
   id TEXT PRIMARY KEY, collection TEXT NOT NULL, created REAL NOT NULL, json TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS scraps_collection ON scraps(collection, created);
+CREATE TABLE IF NOT EXISTS extract_stats(
+  source TEXT PRIMARY KEY, tries INTEGER NOT NULL, fails INTEGER NOT NULL, blocked INTEGER NOT NULL, updated REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS image_scores(
+  url TEXT PRIMARY KEY, score REAL NOT NULL, text REAL NOT NULL, colors REAL NOT NULL, flat REAL NOT NULL, updated REAL NOT NULL);
 ";
 
 impl Database {
@@ -284,6 +305,52 @@ impl Database {
                last=MAX(clusters.last, excluded.last), size=excluded.size",
             params![cl.id, cl.title, toks, ts(cl.first), ts(cl.last), cl.size],
         );
+    }
+
+    // MARK: 본문 추리기 기록(출처별 실패율 → 유료 기사 표시, G-14)
+    // 사용자가 연 기사 하나의 결과를 더한다. 50번이 넘으면 반으로 줄여 최근 결과가 더 크게 보이게.
+    pub fn record_extract(&self, source: &str, failed: bool, blocked: bool) {
+        let c = self.conn.lock().unwrap();
+        let _ = c.execute(
+            "INSERT INTO extract_stats(source,tries,fails,blocked,updated) VALUES(?,1,?,?,?)
+             ON CONFLICT(source) DO UPDATE SET tries=tries+1, fails=fails+excluded.fails, blocked=blocked+excluded.blocked, updated=excluded.updated",
+            params![source, failed as i64, blocked as i64, ts(Utc::now())],
+        );
+        let _ = c.execute("UPDATE extract_stats SET tries=tries/2, fails=fails/2, blocked=blocked/2 WHERE source=? AND tries>50", params![source]);
+    }
+
+    pub fn extract_stats(&self) -> HashMap<String, ExtractStat> {
+        let c = self.conn.lock().unwrap();
+        let Ok(mut st) = c.prepare("SELECT source,tries,fails,blocked FROM extract_stats") else { return HashMap::new() };
+        st.query_map([], |r| Ok((r.get::<_, String>(0)?, ExtractStat { tries: r.get(1)?, fails: r.get(2)?, blocked: r.get(3)? })))
+            .map(|rows| rows.flatten().collect())
+            .unwrap_or_default()
+    }
+
+    // MARK: 사진 점수(분야 대표 사진 고르기, M-24) — 30일 지난 것은 지운다
+    pub fn save_image_score(&self, url: &str, s: &crate::photo_quality::Score) {
+        let c = self.conn.lock().unwrap();
+        let now = Utc::now();
+        let _ = c.execute(
+            "INSERT OR REPLACE INTO image_scores(url,score,text,colors,flat,updated) VALUES(?,?,?,?,?,?)",
+            params![url, s.total, s.text_ratio, s.color_variety, s.flatness, ts(now)],
+        );
+        let _ = c.execute("DELETE FROM image_scores WHERE updated < ?", params![ts(now - chrono::Duration::days(30))]);
+    }
+
+    pub fn image_scores(&self, urls: &[String]) -> HashMap<String, f64> {
+        let mut out = HashMap::new();
+        let c = self.conn.lock().unwrap();
+        for chunk in urls.chunks(400) {
+            let q = format!("SELECT url, score FROM image_scores WHERE url IN ({})", vec!["?"; chunk.len()].join(","));
+            let Ok(mut st) = c.prepare(&q) else { continue };
+            let rows: Vec<(String, f64)> = st
+                .query_map(rusqlite::params_from_iter(chunk.iter()), |r| Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?)))
+                .map(|rows| rows.flatten().collect())
+                .unwrap_or_default();
+            out.extend(rows);
+        }
+        out
     }
 
     // MARK: 스크랩

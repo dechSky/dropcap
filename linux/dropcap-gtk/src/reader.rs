@@ -20,6 +20,18 @@ thread_local! {
     static WINDOWS: RefCell<Vec<Rc<ReaderWindow>>> = const { RefCell::new(Vec::new()) };
 }
 
+// 시험용: 가장 나중에 연 읽기 창에서 J/K(DROPCAP_TEST_KEYNAV)
+pub fn test_step(d: i64) {
+    if let Some(w) = WINDOWS.with(|w| w.borrow().last().cloned()) {
+        w.step(d);
+    }
+}
+
+// 가장 나중에 연 읽기 창(시험 찍기)
+pub fn last_window() -> Option<adw::ApplicationWindow> {
+    WINDOWS.with(|w| w.borrow().last().map(|x| x.window().clone()))
+}
+
 // 웹 엔진(WebKitGTK)이 있으면 빠른 길·느린 길을 맡긴다. 없으면 핵심의 Rust 판 빠른 길만.
 pub fn install_extractor() {
     #[cfg(feature = "webkit")]
@@ -28,12 +40,17 @@ pub fn install_extractor() {
 
 // 영상·팟캐스트는 읽기 창 대신 원래 앱·브라우저로(R-17)
 pub fn open(item: &NewsItem, from: Option<Origin>) {
+    open_in(item, from, vec![]);
+}
+
+// sequence: 이 기사를 연 목록(상단바 목록·매거진 지면 순서) — 읽기 창에서 J/K 로 다음·이전(H-05)
+pub fn open_in(item: &NewsItem, from: Option<Origin>, sequence: Vec<NewsItem>) {
     if item.item_kind().opens_externally() {
         crate::app::open_external(&item.link);
         return;
     }
     let others = WINDOWS.with(|w| w.borrow().len());
-    let win = ReaderWindow::new(item.clone(), others);
+    let win = ReaderWindow::new(item.clone(), others, sequence);
     WINDOWS.with(|w| w.borrow_mut().push(win.clone()));
     // 창을 닫으면 목록에서 빼고 관찰·소리를 끊는다
     let weak = Rc::downgrade(&win);

@@ -52,6 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // 이름이 바뀌기 전 앱(AI News Alert)이 떠 있으면 같은 소식을 두 번 알리므로 끈다
         for old in NSRunningApplication.runningApplications(withBundleIdentifier: "io.github.neulloopa.ainewsalert") { old.terminate() }
         MainActor.assumeIsolated {
+            E2ERunner.startIfNeeded() // 시험용: 사용자 흐름 시나리오(DROPCAP_TEST_E2E, mac/scripts/e2e/run.sh)
             AppModel.shared.start()
             SectionStartup.run() // 첫 실행 분야 고르기 + 시험 훅
             Integrations.start() // 위젯·Spotlight(Integrations/)
@@ -145,7 +146,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             if let u = env["DROPCAP_TEST_IMAGE"] { // 시험용: 사진 하나를 안전 로더로 받아 결과를 기록
                 Task {
                     do {
-                        let data = try await FeedService.shared.fetch(u)
+                        let data = try await FeedService.shared.fetch(u, limit: .image)
                         NSLog("[사진 시험] 받음 %d바이트", data?.count ?? -1)
                     } catch { NSLog("[사진 시험] 받기 실패: %@", String(describing: error)) }
                     let img = await ImageLoader.shared.image(u)
@@ -184,6 +185,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 }
             }
             if let dir = env["DROPCAP_TEST_ICONLAB"] { SectionIconLab.render(to: dir) } // 시험용: 분야 아이콘 시안
+            if let spec = env["DROPCAP_TEST_CLICK"] {
+                TestLog.write("[클릭 시험] 예약 \(spec)") // 시험용: "초:창제목일부:x,y;…" 창 안 좌표(왼쪽 위 원점)에 진짜 마우스 클릭 이벤트를 보낸다
+                for part in spec.split(separator: ";") {
+                    let f = part.split(separator: ":"); guard f.count == 3, let t = Double(f[0]) else { continue }
+                    let xy = f[2].split(separator: ",").compactMap { Double($0) }; guard xy.count == 2 else { continue }
+                    let title = String(f[1])
+                    DispatchQueue.main.asyncAfter(deadline: .now() + t) {
+                        guard let w = NSApp.windows.first(where: { $0.isVisible && $0.title.contains(title) }) ?? NSApp.windows.first(where: { $0.isVisible && $0.frame.width > 600 }) else { TestLog.write("[클릭 시험] 창 없음 \(title) · 창: \(NSApp.windows.map { "\($0.title)(\($0.isVisible))" }.joined(separator: ", "))"); return }
+                        let h = w.contentView?.bounds.height ?? w.frame.height
+                        let p = NSPoint(x: xy[0], y: h - xy[1])
+                        // 실제 마우스처럼 이벤트 대기열에 누름·뗌을 차례로(직접 전달하면 표 같은 뷰가 '뗌'을 기다리며 멈춘다)
+                        if let y = env["DROPCAP_TEST_SCROLLY"].flatMap(Double.init), let cv = w.contentView {
+                            func all(_ v: NSView) -> [NSScrollView] { (v as? NSScrollView).map { [$0] } ?? [] + v.subviews.flatMap(all) }
+                            if let sv = all(cv).max(by: { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }) {
+                                sv.contentView.scroll(to: NSPoint(x: 0, y: y)); sv.reflectScrolledClipView(sv.contentView)
+                            }
+                        }
+                        if env["DROPCAP_TEST_RESIZE"] != nil { var f = w.frame; f.size.height += 1; w.setFrame(f, display: true); f.size.height -= 1; w.setFrame(f, display: true) }
+                        func scrolls(_ v: NSView) -> [NSView] { (v is NSScrollView ? [v] : []) + v.subviews.flatMap(scrolls) }
+                        if let cv = w.contentView { TestLog.write("[클릭 시험] 뷰 크기: " + ([cv] + scrolls(cv)).map { "\(type(of: $0)) frame \($0.frame) bounds \($0.bounds) 문서 \(($0 as? NSScrollView)?.documentView?.frame ?? .zero) 내용 \(($0 as? NSScrollView)?.contentView.bounds ?? .zero)" }.joined(separator: " | ")) }
+                        let wasActive = NSApp.isActive
+                        NSApp.activate(ignoringOtherApps: true) // 시험 앱이 앞에 없으면 첫 클릭이 '창 활성화'로만 쓰여 결과가 들쭉날쭉했다
+                        w.makeKeyAndOrderFront(nil)
+                        func fire(_ tries: Int) {
+                            guard NSApp.isActive && w.isKeyWindow || tries > 20 else { DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { fire(tries + 1) }; return }
+                            TestLog.write("[클릭 시험] 활성 \(wasActive)→\(NSApp.isActive) 키창 \(w.isKeyWindow)" + (NSApp.isActive ? "" : " · 비활성이라 결과 무효"))
+                            if env["DROPCAP_TEST_WARP"] != nil, let scr = NSScreen.screens.first { // 진짜 커서도 그 자리로(SwiftUI 가 커서 위치를 함께 보는지 확인용)
+                                let g = w.convertPoint(toScreen: p)
+                                CGWarpMouseCursorPosition(CGPoint(x: g.x, y: scr.frame.maxY - g.y))
+                            }
+                            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                                if let e = NSEvent.mouseEvent(with: type, location: p, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) { NSApp.postEvent(e, atStart: false) }
+                            }
+                        }
+                        fire(0)
+                        if let fv = w.contentView?.superview {
+                            func dump(_ v: NSView, _ d: Int) -> [String] { d > 3 ? [] : ["\(String(repeating: "  ", count: d))\(type(of: v)) \(v.frame) 숨김\(v.isHidden)"] + v.subviews.flatMap { dump($0, d + 1) } }
+                            TestLog.write("[클릭 시험] 틀 뷰 맞음: \(fv.hitTest(p).map { "\(type(of: $0)) \($0.frame)" } ?? "없음")\n" + dump(fv, 0).joined(separator: "\n"))
+                        }
+                        if let cv = w.contentView {
+                            let sp = w.convertPoint(toScreen: p)
+                            var el: Any? = cv.accessibilityHitTest(sp); var chain: [String] = []
+                            while let e = el as? NSAccessibilityElementProtocol, chain.count < 8 {
+                                let o = e as AnyObject
+                                chain.append("\((o.accessibilityRole?() ?? nil)?.rawValue ?? "?")'\((o.accessibilityLabel?() ?? nil) ?? "")' \(o.accessibilityFrame?() ?? .zero)")
+                                el = o.accessibilityParent?()
+                            }
+                            TestLog.write("[클릭 시험] 접근성 맞음: " + chain.joined(separator: " ← "))
+                        }
+                        let hv = w.contentView?.hitTest(p)
+                        var chain: [String] = []; var v = hv
+                        while let x = v, chain.count < 6 { chain.append("\(type(of: x))[\(Int(x.frame.width))×\(Int(x.frame.height)) sub \(x.subviews.count)]"); v = x.superview }
+                        let hit = chain.joined(separator: " ← ") + " | 자식: " + (hv?.subviews.map { "\(type(of: $0))[\(Int($0.frame.width))×\(Int($0.frame.height))]" }.joined(separator: ", ") ?? "")
+                        TestLog.write("[클릭 시험] \(w.title) (\(Int(xy[0])), \(Int(xy[1]))) 클릭 · 창틀 \(w.frame) 화면 \(w.screen?.visibleFrame ?? .zero) · 맞은 뷰 \(hit) · 창: \(NSApp.windows.filter(\.isVisible).map(\.title).joined(separator: ", "))")
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            TestLog.write("[클릭 시험] 1.5초 뒤 창: " + NSApp.windows.filter(\.isVisible).map { "\(type(of: $0))'\($0.title)' \($0.frame) 층\($0.level.rawValue) 통과\($0.ignoresMouseEvents) 투명\($0.alphaValue)" }.joined(separator: " | "))
+                            if let dir = env["DROPCAP_TEST_CLICK_SHOT"], let v = w.contentView, let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) {
+                                v.cacheDisplay(in: v.bounds, to: rep)
+                                try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "\(dir)/click-\(Int(t)).png"))
+                            }
+                        }
+                    }
+                }
+            }
             if let dir = env["DROPCAP_TEST_CARDLAB"] { // 시험용: 분야 카드 세 방식(피드를 받은 뒤 그림)
                 Task { try? await Task.sleep(for: .seconds(Double(env["DROPCAP_TEST_CARDLAB_WAIT"] ?? "90") ?? 90)); await SectionCardLab.render(to: dir) }
             }
@@ -204,7 +269,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let key = response.notification.request.content.userInfo["key"] as? String
         await MainActor.run {
-            if let sec = response.notification.request.content.userInfo["section"] as? String { // 묶음 알림
+            if let w = response.notification.request.content.userInfo["search"] as? String { // 지켜볼 낱말 하루 정리
+                MagazineController.search(w)
+            } else if let sec = response.notification.request.content.userInfo["section"] as? String { // 묶음 알림
                 MagazineController.open(page: .section(sec))
             } else if let key, let item = AppModel.shared.state.recent.first(where: { $0.key == key }) {
                 AppModel.shared.open(item)

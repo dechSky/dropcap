@@ -81,3 +81,13 @@
 - **R-4 고침**: `Core/StoryGrouper.swift` 한 곳(알림 목록 묶기·매거진 스토리 배정). 기준은 그대로(시험 `StoryGrouperTests`).
 - **A-20·A-21·A-23·A-26·A-27·A-28·A-29·A-33·A-34·A-35 고침**. A-37 은 읽기 창 작업(C)에서 이미 고침.
 - **A-36 일부**: 상단바 목록의 같은 그리기 코드 두 벌을 하나로 합침. 그릴 때마다 다시 거르는 계산은 그대로.
+
+## 6. 후속 처리(wt/extras 2차)
+
+- **R-2·A-10 고침**: `FeedService.fetchOnce` 를 `URLSession.bytes(for:)` 로, 종류별 상한(`FetchLimit` 피드 10MB·페이지 2MB·사진 8MB)을 넘으면 받는 도중 끊음. `ImageLoader` 도 같은 상한. 내 Mac 안 시험 서버로 확인(`FetchLimitTests`).
+- **A-22 고침**: `RequestGuard` 는 시간 초과로 기다리기를 끝내면 표시해 두고 늦게 등록된 기다림을 바로 깨움. `ArticleExtractor.waitForLoad` 도 '이번 로드 끝남' 표시로 같은 문제를 막음.
+- **A-24 고침**: `Translator.translateManyReporting` 이 이번 번역에 쓴 엔진을 돌려줌(캐시에 엔진도 함께 기억). 읽기 창은 그 값을 씀.
+- **A-25 고침**: 4500자 넘는 문단은 문장 단위로 나눠 보내고 이어 붙임(`Translator.sentenceChunks`).
+- **A-31 고침**: guid·link 가 모두 빈 글은 제목+날짜로 만든 고정 id(`noid-…`).
+- **A-32 고침**: 예전 폴더 옮기기 중 `.migrating` 표시를 두고, 실패하면 다음 실행에서 빠진 것만 다시 옮김(덮어쓰지 않음). 이미 옮긴 폴더는 건드리지 않음.
+- **A-37**: 이미 고쳐져 있음(읽기 창이 공개 http(s) 주소일 때만 공유 단추를 보임) — 표시만.

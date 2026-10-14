@@ -52,6 +52,7 @@ enum MenuStyles {
                             Text(item.sourceName).fontWeight(.semibold)
                             PaywallMark(item: item)
                             Text(item.topicLabel).foregroundStyle(item.topicColor)
+                            if let x = item.extraTopic { Text(Sections.name(x)).foregroundStyle(Sections.byID(x)?.tint ?? .gray) }
                             Text(RelativeTime.string(item.date)).foregroundStyle(.tertiary)
                             if saved { Image(systemName: "bookmark.fill").foregroundStyle(item.accent) }
                         }
@@ -87,6 +88,11 @@ enum MenuStyles {
                             Text(item.topicLabel).font(.app(10.5, .bold))
                                 .padding(.horizontal, 7).padding(.vertical, 2)
                                 .background(item.topicColor.opacity(0.85), in: Capsule())
+                            if let x = item.extraTopic {
+                                Text(Sections.name(x)).font(.app(10.5, .bold))
+                                    .padding(.horizontal, 7).padding(.vertical, 2)
+                                    .background((Sections.byID(x)?.tint ?? .gray).opacity(0.85), in: Capsule())
+                            }
                             Text("\(item.sourceName) · \(RelativeTime.string(item.date))").font(.app(11, .medium)).opacity(0.85)
                             PaywallMark(item: item)
                         }

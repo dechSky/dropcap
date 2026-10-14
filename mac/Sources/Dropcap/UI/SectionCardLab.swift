@@ -9,9 +9,8 @@ enum SectionCardLab {
         var out: [String: (NewsItem, NSImage)] = [:]
         let items = Database.shared.items(from: Date().addingTimeInterval(-3 * 86400), limit: 3000).map(\.item)
         for s in Sections.all {
-            guard let it = items.first(where: { $0.inSection(s.id) && $0.image != nil && !ImageKey.isJunk($0.image) }),
-                  let img = await ImageLoader.shared.image(it.image!) else { continue }
-            out[s.id] = (it, img)
+            guard let got = await SectionPhoto.pick(items.filter { $0.inSection(s.id) }) else { continue }
+            out[s.id] = (got.item, got.image)
         }
         return out
     }
@@ -143,7 +142,7 @@ enum SectionCardLab {
     }
 
     static func tilted(_ img: NSImage, frame: Bool) -> some View {
-        Image(nsImage: img).resizable().aspectRatio(contentMode: .fill).frame(width: 90, height: 90)
+        Image(nsImage: img).resizable().aspectRatio(contentMode: .fill).allowsHitTesting(false).frame(width: 90, height: 90)
             .clipShape(RoundedRectangle(cornerRadius: frame ? 4 : 7))
             .padding(frame ? 4 : 0).background(frame ? Color.white : .clear, in: RoundedRectangle(cornerRadius: 6))
             .shadow(color: .black.opacity(0.35), radius: 8, y: 4)

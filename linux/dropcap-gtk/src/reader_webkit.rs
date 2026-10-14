@@ -28,7 +28,23 @@ const SLOW_BLOCK: [&str; 5] = ["image", "media", "font", "popup", "websocket"];
 const SCRIPT: &str = r#"(() => {
   const doc = document.cloneNode(true);
   doc.querySelectorAll('.sr-only, .visually-hidden, .screen-reader-text, [class*="sr-only"], [class*="visually-hidden"]').forEach((n) => n.remove());
-  const art = new Readability(doc).parse();
+  // 기본 기준(500자)으로 못 찾으면 짧은 글(GeekNews 소개글 등)을 위해 100자 기준으로 한 번 더(parse 가 문서를 고치므로 새 사본으로)
+  const fresh = doc.cloneNode(true);
+  let art = new Readability(doc).parse();
+  if (!art || !art.content) art = new Readability(fresh.cloneNode(true), { charThreshold: 100 }).parse();
+  // 그래도 못 찾으면: 본문으로 보이는 영역(id·class 에 content·article·topic·post·entry·body 가 든 것) 가운데 글이 가장 많은 곳
+  if (!art || !art.content) {
+    let best = null, bestLen = 0;
+    fresh.querySelectorAll('article, main, [id*="content" i], [class*="content" i], [id*="topic" i], [class*="article" i], [class*="post" i], [class*="entry" i], [itemprop="articleBody"]').forEach((el) => {
+      if (el.closest('nav, header, footer, aside')) return;
+      const len = (el.textContent || '').replace(/\s+/g, ' ').trim().length;
+      if (len > bestLen && len < 40000) { best = el; bestLen = len; }
+    });
+    if (best && bestLen >= 80) {
+      best.querySelectorAll('script, style, nav, form, button, .related-topics, [class*="related" i], [class*="share" i]').forEach((n) => n.remove());
+      art = { title: document.title, content: '<div>' + best.innerHTML + '</div>' };
+    }
+  }
   if (!art || !art.content) return null;
   const box = new DOMParser().parseFromString(art.content, 'text/html').body;
   const blocks = [];
@@ -76,6 +92,10 @@ const SCRIPT: &str = r#"(() => {
     }
   };
   walk(box);
+  // 문단 태그 없이 맨 글자로 든 본문(GeekNews 등): 줄 단위로 문단을 만든다
+  if (!blocks.some((b) => b.type === 'p' || b.type === 'li')) {
+    (box.innerText || box.textContent || '').split(/\n+/).map(clean).filter((t) => t.length > 1).forEach((t) => blocks.push({ type: 'p', text: t }));
+  }
   return JSON.stringify({ title: art.title, byline: art.byline, siteName: art.siteName, blocks });
 })();"#;
 
@@ -109,7 +129,10 @@ impl Extract for WebExtract {
         on_main(move || run_fast(html, base))
     }
     fn slow(&self, url: String) -> Fut {
-        on_main(move || run_slow(url))
+        on_main(move || run_slow(url, 15))
+    }
+    fn slow_for(&self, url: String, max_secs: u64) -> Fut {
+        on_main(move || run_slow(url, max_secs))
     }
 }
 
@@ -269,14 +292,14 @@ async fn run_fast(html: String, base: String) -> Option<Article> {
     try_extract(&web.view).await
 }
 
-async fn run_slow(url: String) -> Option<Article> {
+async fn run_slow(url: String, max_secs: u64) -> Option<Article> {
     if !dropcap_core::url_safety::is_public_http(&url) {
         return None;
     }
     let web = make_web(true, &SLOW_BLOCK, "dropcap-full").await?;
     web.view.load_uri(&url);
-    // 다 뜨기를 기다리지 않고, 0.6초 뒤부터 0.4초마다 본문이 생겼는지 본다(최대 15초)
-    let deadline = Instant::now() + Duration::from_secs(15);
+    // 다 뜨기를 기다리지 않고, 0.6초 뒤부터 0.4초마다 본문이 생겼는지 본다(최대 15초, 접근을 거부한 곳은 6초)
+    let deadline = Instant::now() + Duration::from_secs(max_secs);
     glib::timeout_future(Duration::from_millis(600)).await;
     let mut last = 0usize;
     while Instant::now() < deadline {

@@ -99,6 +99,14 @@ enum PhotoQuality {
                        textRatio: textRatio(cg), colorVariety: colorVariety(cg), flatness: flatness(cg))
     }
 
+    // 비동기에서는 이것만 쓴다: Vision 글자 읽기는 오래 막히는 동기 호출이라 Swift 동시성 공용 스레드에서 돌리면
+    // 분야 12개가 한꺼번에 재는 첫 실행에 공용 스레드가 모두 막혀 앱 전체의 비동기 일(확인·알림·Task.sleep)이 멈췄다(E2E).
+    // 전용 줄 하나에서 차례로 잰다.
+    private static let queue = DispatchQueue(label: "dropcap.photo-quality", qos: .utility)
+    static func scoreAsync(_ cg: CGImage) async -> Score {
+        await withCheckedContinuation { c in queue.async { c.resume(returning: score(cg)) } }
+    }
+
     static func good(_ score: Double?) -> Bool { (score ?? 1) >= threshold } // 아직 재지 않은 사진은 막지 않는다
 }
 
@@ -122,7 +130,7 @@ enum SectionPhoto {
             guard let img = await ImageLoader.shared.image(url), let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) else { continue }
             let s: Double
             if let k = known[url] { s = k } else {
-                let sc = await Task.detached(priority: .utility) { PhotoQuality.score(cg) }.value
+                let sc = await PhotoQuality.scoreAsync(cg)
                 Database.shared.saveImageScore(url, sc)
                 s = sc.total
             }

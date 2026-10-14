@@ -25,10 +25,10 @@ if (!(window.chrome && window.chrome.webview)) {
   const items = [
     { key: 'yna|1', title: '한은, 기준금리 연 2.50% 동결…"물가 경로 더 지켜봐야"', source: '연합뉴스 경제', sourceId: 'yna-economy', initial: '연', color: '#0F62FE', sec: 'economy', chips: ['economy', 'top'], related: 4, time: '5분 전', date: now - 5 * 60e3, important: true, read: false, saved: false, thumb: pic('#0f766e', '#1e3a8a') },
     { key: 'openai|2', title: 'OpenAI, 추론 기능 강화한 GPT-6 공개', source: 'OpenAI', sourceId: 'openai', initial: 'O', color: '#10A37F', sec: 'ai', sub: 'model', chips: ['ai'], related: 2, time: '32분 전', date: now - 32 * 60e3, read: false, saved: true, thumb: pic('#4c1d95', '#be185d') },
-    { key: 'bbc|3', title: '유엔 안보리, 가자 휴전 결의안 표결 연기', source: 'BBC World', sourceId: 'bbc-world', initial: 'B', color: '#BB1919', sec: 'world', chips: ['world'], related: 0, time: '2시간 전', date: now - 2 * H, read: true, saved: false },
+    { key: 'bbc|3', title: '유엔 안보리, 가자 휴전 결의안 표결 연기', source: 'BBC World', sourceId: 'bbc-world', initial: 'B', color: '#BB1919', sec: 'world', chips: ['world'], related: 0, time: '2시간 전', date: now - 2 * H, read: true, saved: false, paywall: 'hard', paywallHelp: '유료 기사 — 열면 같은 소식의 무료 보도를 먼저 권합니다' },
     { key: 'kr|4', title: '정부, AI 기본법 시행령 발표…고위험 AI 범위 확정', source: 'AI타임스', sourceId: 'aitimes', initial: 'A', color: '#0057B8', sec: 'ai', sub: 'policy', chips: ['ai', 'politics'], related: 1, time: '5시간 전', date: now - 5 * H, read: true, saved: false, thumb: pic('#334155', '#0ea5e9') },
     { key: 'sport|5', title: '손흥민 시즌 7호골…토트넘 3연승', source: '연합뉴스 스포츠', sourceId: 'yna-sports', initial: '연', color: '#0F62FE', sec: 'sports', chips: ['sports'], related: 0, time: '1일 전', date: now - 26 * H, read: false, saved: false },
-    { key: 'cnbc|6', title: '코스피 2,900 회복…외국인 사흘째 순매수', source: 'CNBC', sourceId: 'cnbc', initial: 'C', color: '#005594', sec: 'economy', chips: ['economy'], related: 0, time: '3일 전', date: now - 72 * H, read: true, saved: false },
+    { key: 'cnbc|6', title: '코스피 2,900 회복…외국인 사흘째 순매수', source: 'CNBC', sourceId: 'cnbc', initial: 'C', color: '#005594', sec: 'economy', chips: ['economy'], related: 0, time: '3일 전', date: now - 72 * H, read: true, saved: false, paywall: 'metered', paywallHelp: '일부 유료(무료 건수 제한)' },
     { key: 'arxiv|7', title: '작은 모델로 긴 문맥을 다루는 새 주의 방식', source: 'arXiv', sourceId: 'arxiv', initial: 'a', color: '#B31B1B', sec: 'ai', sub: 'research', chips: ['ai'], related: 0, time: '3일 전', date: now - 75 * H, read: false, saved: false },
   ].map((i) => ({ ...i, ...topic(i.sec, i.sub) }));
   const words = (t) => [...new Set(t.split(/[^\p{L}\p{N}-]+/u).filter((w) => w.length >= 2 && !/^\d+$/.test(w)))].slice(0, 12);
@@ -75,7 +75,8 @@ if (!(window.chrome && window.chrome.webview)) {
         topicLabel: it.topicLabel, topicIcon: it.topicIcon, topicLight: it.topicLight, topicDark: it.topicDark };
     });
     return {
-      header: { title: 'Dropcap', checking: false, status: '마지막 확인 오후 3:05', quiet: true, snoozed: false, snoozeHelp: '알림 잠시 끄기' },
+      header: { title: 'Dropcap', checking: false, status: '마지막 확인 오후 3:05', quiet: true, snoozed: false, snoozeHelp: '알림 잠시 끄기',
+        autoQuiet: location.hash === '#hush' ? '전체 화면 사용 중' : null, autoQuietHelp: '전체 화면 사용 중이라 알림을 띄우지 않고 모아 둡니다' },
       unread: items.filter((i) => !i.read).length, sort, sortLabel: sort === 'important' ? '중요순' : sort === 'source' ? '출처별' : null, rows,
       empty: { icon: a.tab === 'saved' ? 'bookmark' : 'newspaper', title: a.query || section ? '맞는 소식이 없습니다' : '저장한 소식이 없습니다', sub: '새 글이 올라오면 물방울이 떨어지듯 알려 드려요' },
       section, topic: sub, chips: chosen.map(chipOf),

@@ -33,6 +33,23 @@ pub enum Kind {
     More(usize),
     Digest(usize),
     Bundle(String, Vec<NewsItem>), // 묶음 카드: 분야 id · 고였던 소식
+    Watch(String, Vec<NewsItem>),  // 지켜볼 낱말 하루 정리: 낱말 · 걸린 소식(N-27)
+}
+
+// 묶음·지켜볼 낱말 카드의 머리: (이름, 건수, 오른쪽 안내, 색, 아이콘, 소식)
+fn group_head(kind: &Kind) -> Option<(String, String, &'static str, (f64, f64, f64), &'static str, &Vec<NewsItem>)> {
+    match kind {
+        Kind::Bundle(sec, items) => Some((
+            dropcap_core::sections::name(sec),
+            format!("{}건", items.len()),
+            "모아 보기",
+            bundle_color(sec),
+            dropcap_core::sections::by_id(sec).map(|s| s.icon()).unwrap_or("mail-unread-symbolic"),
+            items,
+        )),
+        Kind::Watch(word, items) => Some((format!("오늘 {word} 소식"), format!("{}건", items.len()), "검색 결과", accent_color(), "view-reveal-symbolic", items)),
+        _ => None,
+    }
 }
 
 // 시간에 따라 바뀌는 값 하나(시작·끝·길이·쉬움 곡선)
@@ -413,7 +430,7 @@ fn bundle_samples() -> Vec<NewsItem> {
 // 시험용(DROPCAP_TEST_SHOT_DIR + TOAST/BURST): 맥 App.swift 처럼 여러 시점의 알림 창을 PNG 로
 fn plan_shots() {
     let env = ui().env.clone();
-    if env.shot_dir.is_none() || !(env.test_toast || env.test_burst || std::env::var("DROPCAP_TEST_BUNDLE").is_ok()) {
+    if env.shot_dir.is_none() || !(env.test_toast || env.test_burst || std::env::var("DROPCAP_TEST_BUNDLE").is_ok() || std::env::var("DROPCAP_TEST_EXTRAS2").is_ok()) {
         return;
     }
     let first = CENTER.with(|c| !std::mem::replace(&mut c.borrow_mut().shots_planned, true));
@@ -1060,6 +1077,7 @@ fn click_at(x: f64, y: f64) {
                 }
                 Kind::Digest(_) => crate::magazine::open(),
                 Kind::Bundle(sec, _) => crate::magazine::open_section(sec), // 매거진의 그 분야 지면
+                Kind::Watch(word, _) => crate::magazine::search_for(word), // 그 낱말 검색 결과
                 _ => {}
             }
             leave(id, true);
@@ -1145,12 +1163,13 @@ fn measure(card: &mut Card, area: &gtk::DrawingArea) {
             card.texts.push(b);
             card.height = (12.0 + inner + 12.0).round();
         }
-        Kind::Bundle(sec, items) => {
-            // "경제 7건 … 모아 보기" + 제목 2줄
+        Kind::Bundle(..) | Kind::Watch(..) => {
+            // "경제 7건 … 모아 보기" · "오늘 엔비디아 소식 3건 … 검색 결과" + 제목 2줄
+            let (name_s, count_s, hint_s, _, _, items) = group_head(&card.kind).unwrap();
             let tw = CARD_W - 13.0 - 16.0 - 30.0 - 11.0;
-            let name = layout(area, &dropcap_core::sections::name(sec), 13.5, pango::Weight::Semibold, None, 1);
-            let count = layout(area, &format!("{}건", items.len()), 13.5, pango::Weight::Semibold, None, 1);
-            let hint = layout(area, "모아 보기", 11.0, pango::Weight::Normal, None, 1);
+            let name = layout(area, &name_s, 13.5, pango::Weight::Semibold, None, 1);
+            let count = layout(area, &count_s, 13.5, pango::Weight::Semibold, None, 1);
+            let hint = layout(area, hint_s, 11.0, pango::Weight::Normal, None, 1);
             let mut inner = lh(&name);
             card.texts.push(name);
             card.texts.push(count);
@@ -1380,10 +1399,9 @@ fn draw_content(cr: &cairo::Context, area: &gtk::DrawingArea, k: &Card, r: &R, t
                 y += lh(l) + 2.0;
             }
         }
-        Kind::Bundle(sec, _) => {
+        Kind::Bundle(..) | Kind::Watch(..) => {
             let (a0, d0) = rise(k, 0, t);
-            let col = bundle_color(sec);
-            let icon = dropcap_core::sections::by_id(sec).map(|s| s.icon()).unwrap_or("mail-unread-symbolic");
+            let (_, _, _, col, icon, _) = group_head(&k.kind).unwrap();
             draw_badge(cr, r.x + 13.0, r.y + 12.0 + d0, col, icon, a0);
             let tx = r.x + 13.0 + 30.0 + 11.0;
             let right_edge = r.x + r.w - 16.0;
@@ -1737,6 +1755,19 @@ pub fn snapshot(name: &str) {
 }
 
 // 묶음 한 방울(G-07): "경제 7건" + 제목 2줄, 누르면 매거진의 그 분야 지면(맥 ToastCenter.showBundle)
+// 지켜볼 낱말 하루 정리 물방울(N-27): "오늘 ○○ 소식 3건" + 제목 2줄 → 누르면 매거진 검색 결과
+pub fn show_watch(word: &str, items: Vec<NewsItem>, sound: bool) {
+    if items.is_empty() || !place::banners_allowed() {
+        return;
+    }
+    if !place::can_drip() {
+        let title = format!("오늘 {word} 소식 {}건", items.len());
+        system_fallback(&title, &items.iter().take(2).map(|i| i.display_title().to_string()).collect::<Vec<_>>().join("\n"));
+        return;
+    }
+    push(Kind::Watch(word.to_string(), items), sound, false);
+}
+
 pub fn show_bundle(section: &str, items: Vec<NewsItem>, sound: bool) {
     if items.is_empty() || !place::banners_allowed() {
         return;

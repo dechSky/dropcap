@@ -1,7 +1,7 @@
 // 출처 하나를 받아 와서 NewsItem 목록으로 바꾼다. ETag·Last-Modified 로 바뀐 것이 없으면 None.
 use crate::feed_parser::{self, plain, Entry};
 use crate::models::{NewsItem, Source};
-use crate::net::{self, FeedError, MAX_BODY};
+use crate::net::{self, FeedError};
 use crate::url_safety::is_public_http;
 use once_cell::sync::Lazy;
 use regex::{Regex, RegexBuilder};
@@ -25,6 +25,24 @@ pub struct FeedService {
 pub static SHARED: Lazy<FeedService> =
     Lazy::new(|| FeedService { validators: Mutex::new(HashMap::new()), pending: Mutex::new(HashMap::new()), first_seen: Mutex::new(HashMap::new()) });
 
+// 받는 크기 상한(S-12 · 맥 FetchLimit): 받는 도중 넘으면 바로 끊는다. gzip 을 푼 뒤에는 32MB 상한(gzip::LIMIT)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FetchLimit {
+    Feed,  // 피드·사이트맵·채널 찾기 10MB
+    Page,  // 기사 페이지(본문 추리기·사이트맵 제목·og:image) 2MB
+    Image, // 사진 8MB
+}
+
+impl FetchLimit {
+    pub fn bytes(self) -> usize {
+        match self {
+            FetchLimit::Feed => 10_485_760,
+            FetchLimit::Page => 2_097_152,
+            FetchLimit::Image => 8_388_608,
+        }
+    }
+}
+
 pub struct Body {
     pub data: Vec<u8>,
     pub encoding: Option<String>,
@@ -32,15 +50,20 @@ pub struct Body {
 
 impl FeedService {
     pub async fn fetch(&self, url: &str, conditional: bool) -> Result<Option<Vec<u8>>, FeedError> {
-        Ok(self.fetch_with_encoding(url, conditional).await?.map(|b| b.data))
+        Ok(self.fetch_with_encoding(url, conditional, FetchLimit::Feed).await?.map(|b| b.data))
+    }
+
+    // 기사 페이지(2MB 상한)
+    pub async fn fetch_page(&self, url: &str) -> Result<Option<Vec<u8>>, FeedError> {
+        Ok(self.fetch_with_encoding(url, false, FetchLimit::Page).await?.map(|b| b.data))
     }
 
     // 잠깐의 서버 오류(5xx·429, YouTube 피드의 간헐적 404)는 한 번 더 시도한다
-    pub async fn fetch_with_encoding(&self, url: &str, conditional: bool) -> Result<Option<Body>, FeedError> {
+    pub async fn fetch_with_encoding(&self, url: &str, conditional: bool, limit: FetchLimit) -> Result<Option<Body>, FeedError> {
         let youtube = url.contains("youtube.com/feeds");
         let mut attempt = 0u64;
         loop {
-            match self.fetch_once(url, conditional).await {
+            match self.fetch_once(url, conditional, limit).await {
                 Err(FeedError::Http(code)) if code == 429 || (500..=504).contains(&code) || (code == 404 && youtube) => {
                     attempt += 1;
                     if attempt > if youtube { 2 } else { 1 } {
@@ -54,7 +77,7 @@ impl FeedService {
         }
     }
 
-    async fn fetch_once(&self, url: &str, conditional: bool) -> Result<Option<Body>, FeedError> {
+    async fn fetch_once(&self, url: &str, conditional: bool, limit: FetchLimit) -> Result<Option<Body>, FeedError> {
         let mut headers = vec![("accept", "application/rss+xml, application/atom+xml, application/xml, text/xml, text/html;q=0.8".to_string())];
         if conditional {
             if let Some(v) = self.validators.lock().unwrap().get(url).cloned() {
@@ -66,7 +89,7 @@ impl FeedService {
                 }
             }
         }
-        let r = net::get(url, &headers, MAX_BODY).await?;
+        let r = net::get(url, &headers, limit.bytes()).await?;
         if r.status == 304 {
             return Ok(None);
         }
@@ -132,7 +155,7 @@ impl FeedService {
 
     // 사이트맵에서 찾은 새 글은 본문을 받아 제목·설명을 채운다
     pub async fn fill_title(&self, item: &mut NewsItem) {
-        let Ok(Some(data)) = self.fetch(&item.link, false).await else {
+        let Ok(Some(data)) = self.fetch_page(&item.link).await else {
             item.title = plain::title_from_slug(&item.link);
             return;
         };
@@ -158,7 +181,7 @@ impl FeedService {
 
     // 대표 사진이 없는 기사는 페이지 머리의 og:image 를 찾아 채운다(공개 주소만, 앞 64KB 만 읽음)
     pub async fn og_image(&self, link: &str) -> Option<String> {
-        let data = self.fetch(link, false).await.ok()??;
+        let data = self.fetch_page(link).await.ok()??;
         let head = String::from_utf8_lossy(&data[..data.len().min(65536)]).to_string();
         for p in [
             r#"<meta[^>]+property=["']og:image(?::url)?["'][^>]+content=["']([^"']+)"#,

@@ -1,6 +1,13 @@
 import Foundation
 import Compression
 
+// 받는 크기 상한(R-2 · A-10): 받는 도중 넘으면 바로 끊는다(다 받은 뒤 버리지 않음). gzip 을 푼 뒤에는 Gzip 의 32MB 상한
+enum FetchLimit: Int, Sendable {
+    case feed = 10_485_760   // 피드·사이트맵·채널 찾기 10MB
+    case page = 2_097_152    // 기사 페이지 2MB
+    case image = 8_388_608   // 사진 8MB
+}
+
 // 출처 하나를 받아 와서 NewsItem 목록으로 바꾼다. ETag·Last-Modified 로 바뀐 것이 없으면 nil.
 actor FeedService {
     static let shared = FeedService()
@@ -14,19 +21,22 @@ actor FeedService {
         c.requestCachePolicy = .reloadIgnoringLocalCacheData
         return URLSession(configuration: c)
     }()
+    private let allowLocal: Bool // 시험에서만: 내 Mac 안의 시험 서버(127.0.0.1)를 받게
 
-    func fetch(_ url: String, conditional: Bool = false) async throws -> Data? {
-        try await fetchWithEncoding(url, conditional: conditional)?.data
+    init(allowLocalForTests: Bool = false) { allowLocal = allowLocalForTests }
+
+    func fetch(_ url: String, conditional: Bool = false, limit: FetchLimit = .feed) async throws -> Data? {
+        try await fetchWithEncoding(url, conditional: conditional, limit: limit)?.data
     }
 
     // 본문과 함께 문자 인코딩 이름(헤더 기준)을 돌려준다
     // 잠깐의 서버 오류(5xx·429, YouTube 피드의 간헐적 404)는 한 번 더 시도한다
-    func fetchWithEncoding(_ url: String, conditional: Bool = false) async throws -> (data: Data, encoding: String?)? {
+    func fetchWithEncoding(_ url: String, conditional: Bool = false, limit: FetchLimit = .feed) async throws -> (data: Data, encoding: String?)? {
         let youtube = url.contains("youtube.com/feeds")
         var attempt = 0
         while true {
             do {
-                return try await fetchOnce(url, conditional: conditional)
+                return try await fetchOnce(url, conditional: conditional, limit: limit.rawValue)
             } catch FeedError.http(let code) where code == 429 || (500...504).contains(code) || (code == 404 && youtube) {
                 attempt += 1
                 guard attempt <= (youtube ? 2 : 1) else { throw FeedError.http(code) }
@@ -35,8 +45,10 @@ actor FeedService {
         }
     }
 
-    private func fetchOnce(_ url: String, conditional: Bool) async throws -> (data: Data, encoding: String?)? {
-        guard let u = URL(string: url), await URLSafety.resolvesPublic(u) else { throw FeedError.blocked("주소 확인") }
+    private func fetchOnce(_ url: String, conditional: Bool, limit: Int) async throws -> (data: Data, encoding: String?)? {
+        if let fixture = try E2EFeeds.serve(url) { return fixture } // 시나리오 시험(DROPCAP_TEST_E2E)에서만: 견본 피드, 바깥 요청 없음
+        guard let u = URL(string: url) else { throw FeedError.blocked("주소 확인") }
+        if !allowLocal, !(await URLSafety.resolvesPublic(u)) { throw FeedError.blocked("주소 확인") }
         var req = URLRequest(url: u)
         req.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
         req.setValue("application/rss+xml, application/atom+xml, application/xml, text/xml, text/html;q=0.8", forHTTPHeaderField: "Accept")
@@ -45,16 +57,37 @@ actor FeedService {
             if let m = v.modified { req.setValue(m, forHTTPHeaderField: "If-Modified-Since") }
         }
         let guardian = RequestGuard()
-        let (data, resp) = try await session.data(for: req, delegate: guardian)
-        // 실제로 접속한 IP 가 내부망이면(확인 뒤 DNS 응답을 바꾸는 공격) 받은 내용을 버린다
-        guard await guardian.isSafe() else { throw FeedError.blocked("접속 IP \(guardian.lastRemote ?? "확인 안 됨")") }
+        let (bytes, resp) = try await session.bytes(for: req, delegate: guardian)
         let http = resp as? HTTPURLResponse
+        var data = Data()
+        if let code = http?.statusCode, (200..<300).contains(code) {
+            do { data = try await Self.collect(bytes, expected: resp.expectedContentLength, limit: limit) } catch {
+                bytes.task.cancel()
+                throw error
+            }
+        } else {
+            bytes.task.cancel() // 304·오류 응답의 본문은 받지 않는다
+        }
+        // 실제로 접속한 IP 가 내부망이면(확인 뒤 DNS 응답을 바꾸는 공격) 받은 내용을 버린다
+        if !allowLocal { guard await guardian.isSafe() else { throw FeedError.blocked("접속 IP \(guardian.lastRemote ?? "확인 안 됨")") } }
         if http?.statusCode == 304 { return nil }
         if let code = http?.statusCode, !(200..<300).contains(code) { throw FeedError.http(code) }
         if conditional {
             pending[url] = (http?.value(forHTTPHeaderField: "ETag"), http?.value(forHTTPHeaderField: "Last-Modified"))
         }
         return (Gzip.inflateIfNeeded(data), resp.textEncodingName)
+    }
+
+    // 받는 대로 모으다가 상한을 넘으면 그 자리에서 멈춘다. 헤더의 길이가 이미 상한을 넘으면 한 바이트도 받지 않는다
+    static func collect<S: AsyncSequence>(_ bytes: S, expected: Int64, limit: Int) async throws -> Data where S.Element == UInt8 {
+        if expected > Int64(limit) { throw FeedError.tooLarge(limit) }
+        var buf: [UInt8] = []
+        buf.reserveCapacity(expected > 0 ? Int(expected) : 64 << 10)
+        for try await b in bytes {
+            buf.append(b)
+            if buf.count > limit { throw FeedError.tooLarge(limit) }
+        }
+        return Data(buf)
     }
 
     private var firstSeen: [String: Date] = [:] // 날짜 없는 글을 처음 본 시각(FeedDates.repair)
@@ -95,7 +128,7 @@ actor FeedService {
 
     // 사이트맵에서 찾은 새 글은 본문을 받아 제목·설명을 채운다
     func fillTitle(_ item: inout NewsItem) async {
-        guard let data = try? await fetch(item.link) else { item.title = Plain.titleFromSlug(item.link); return }
+        guard let data = try? await fetch(item.link, limit: .page) else { item.title = Plain.titleFromSlug(item.link); return }
         let html = String(decoding: data, as: UTF8.self)
         func meta(_ pattern: String) -> String? {
             guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
@@ -144,6 +177,7 @@ final class RequestGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable 
     private var verdict: Bool?            // nil = 아직 측정값 없음, true = 안전, false = 막음
     private var lastIP: String?
     private var waiter: CheckedContinuation<Void, Never>?
+    private var gaveUp = false             // 기다리기를 끝냈다(시간 초과) — 늦게 온 기다림은 바로 깨운다(A-22)
 
     var lastRemote: String? { lock.lock(); defer { lock.unlock() }; return lastIP }
 
@@ -194,12 +228,13 @@ final class RequestGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable 
     private func currentVerdict() -> Bool? { lock.lock(); defer { lock.unlock() }; return verdict }
     private func park(_ c: CheckedContinuation<Void, Never>) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        if verdict != nil { return false }
+        if verdict != nil || gaveUp { return false }
         waiter = c
         return true
     }
     private func takeWaiter() -> CheckedContinuation<Void, Never>? {
         lock.lock(); defer { lock.unlock() }
+        gaveUp = true
         let w = waiter
         waiter = nil
         return w
@@ -226,7 +261,7 @@ final class RequestGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable 
 extension FeedService {
     // 대표 사진이 없는 기사는 페이지 머리의 og:image 를 찾아 채운다(공개 주소만, 앞 64KB 만 읽음)
     func ogImage(_ link: String) async -> String? {
-        guard let data = try? await fetch(link) else { return nil }
+        guard let data = try? await fetch(link, limit: .page) else { return nil }
         let head = String(decoding: data.prefix(65536), as: UTF8.self)
         for pattern in [#"<meta[^>]+property=["']og:image(?::url)?["'][^>]+content=["']([^"']+)"#,
                         #"<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image"#,

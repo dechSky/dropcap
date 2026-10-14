@@ -55,7 +55,7 @@ final class WidgetExporter {
         let today = await Magazine.shared.today()
         let cover = today.cover?.item
         // 알림 목록이 짧으면(처음 실행 등) 오늘 매거진 기사로 채운다
-        var recent = Array(state.recent.prefix(Self.latestCount + 1))
+        var recent = Array(AppModel.shared.visibleRecent.prefix(Self.latestCount + 1)) // 꺼진·해지한 출처 글은 위젯에도 안 보이게
         if recent.count <= Self.latestCount {
             recent += today.sections.flatMap(\.items).sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
         }

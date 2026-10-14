@@ -77,8 +77,32 @@ pub fn open() {
     }
 }
 
+// 시험용: 지금 지면에 키를 누른 것처럼 · 지면 넘기기(DROPCAP_TEST_KEYNAV)
+pub fn test_key(k: Option<crate::keynav::NavKey>, flip: i64) {
+    let Some(m) = current() else { return };
+    if flip != 0 {
+        m.flip(flip);
+    }
+    let ip = m.current_issue.borrow().clone();
+    if let (Some(k), Some(ip)) = (k, ip) {
+        ip.key_nav(k);
+    }
+}
+
+// 매거진 검색 지면을 그 낱말로(지켜볼 낱말 정리 물방울·알림을 눌렀을 때, N-27)
+pub fn search_for(word: &str) {
+    magazine_pages::PENDING_QUERY.with(|p| *p.borrow_mut() = Some(word.to_string()));
+    open();
+    if let Some(m) = current() {
+        m.show(Page::Search, 1); // 이미 검색 지면이어도 그 낱말로 다시
+    }
+}
+
+pub fn window() -> Option<adw::ApplicationWindow> {
+    current().map(|m| m.window.clone())
+}
+
 // 그 분야 지면을 열기(묶음 알림을 눌렀을 때 · 옆 목록 '분야')
-#[allow(dead_code)] // 알림 쪽(묶음 한 방울을 눌렀을 때)이 부른다
 pub fn open_section(section: &str) {
     open();
     if let Some(m) = current() {
@@ -352,7 +376,50 @@ impl Magazine {
             );
         }
         add("<Control>r", Rc::new(|| ui().core.check_now()));
+        // 지면 넘기기(H-04): 옆 목록 순서대로, 끝이면 경고음
+        for (t, d) in [("<Control>bracketleft", -1), ("<Control>bracketright", 1)] {
+            let weak = Rc::downgrade(self);
+            add(
+                t,
+                Rc::new(move || {
+                    if let Some(m) = weak.upgrade() {
+                        m.flip(d);
+                    }
+                }),
+            );
+        }
         self.window.add_controller(sc);
+        // 지면 카드 키보드 탐색(H-03): 글자를 치는 칸에 커서가 있으면 쓰지 않음
+        let weak = Rc::downgrade(self);
+        crate::keynav::attach(&self.window, move |key, state| {
+            let Some(m) = weak.upgrade() else { return false };
+            let Some(k) = crate::keynav::NavKey::from(key, state) else { return false };
+            if crate::keynav::typing(&m.window) {
+                return false;
+            }
+            let Some(ip) = m.current_issue.borrow().clone() else { return false };
+            ip.key_nav(k);
+            true
+        });
+    }
+
+    // 옆 목록 순서: 오늘·이번 주·분야들·스토리·저장·스크랩북·검색·지난 호
+    fn page_order(&self) -> Vec<Page> {
+        let mut v = vec![Page::Today, Page::Week];
+        v.extend(ui().core.chosen_sections().into_iter().map(Page::Section));
+        v.extend([Page::Stories, Page::Saved, Page::Scrapbook, Page::Search]);
+        v.extend(ui().core.archive().into_iter().map(Page::Issue));
+        v
+    }
+
+    fn flip(self: &Rc<Self>, d: i64) {
+        let list = self.page_order();
+        let here = sidebar_key(&self.page.borrow());
+        let next = list.iter().position(|p| *p == here).map(|i| i as i64 + d).filter(|j| *j >= 0 && (*j as usize) < list.len());
+        match next {
+            Some(j) => self.go(list[j as usize].clone()),
+            None => self.window.error_bell(),
+        }
     }
 
     pub fn scroll_to(&self, y: f64) {

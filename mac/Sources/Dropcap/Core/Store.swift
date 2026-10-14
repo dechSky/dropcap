@@ -10,11 +10,13 @@ struct AppState: Codable {
     var lastCheck: Date?
     var errors: [String: String] = [:]
     var unread: Int = 0
+    var unreadKeys: [String] = []       // 안 읽음 수에 든 소식(출처를 껐다 켜도 수가 맞게 — 예전 파일엔 없음)
     var read: [String: Double] = [:]    // 읽은 기사 key → 읽은 시각
     var saved: [NewsItem] = []          // 나중에 읽기
     var customSources: [Source] = []    // 직접 추가한 출처
     var snoozeUntil: Date?              // 알림 잠시 끄기
     var lastDigest: Date?               // 마지막 아침 브리핑
+    var lastWatchDigest: Date?          // 마지막 '지켜볼 낱말' 하루 정리
     var interestCategory: [String: Double] = [:]  // 분야별로 연 횟수(관심사)
     var interestSource: [String: Double] = [:]
     var magazineBackfilled = false      // 처음 매거진을 채웠는지
@@ -55,6 +57,7 @@ struct AppState: Codable {
         var quietEnd = 7
         var mustKeywords: [String] = [] // 꼭 알림(중요 표시)
         var muteKeywords: [String] = [] // 알리지 않음
+        var watchKeywords: [String] = [] // 지켜볼 낱말(회사·인물·법안) — 스토리마다 한 번 알림 + 하루 정리
         var digestEnabled = true        // 아침 브리핑
         var digestHour = 9
         var totalDailyCap = 10          // 모든 분야를 합친 하루 물방울 수
@@ -82,6 +85,7 @@ struct AppState: Codable {
             quietEnd = (try? c.decodeIfPresent(Int.self, forKey: .quietEnd)) ?? 7
             mustKeywords = (try? c.decodeIfPresent([String].self, forKey: .mustKeywords)) ?? []
             muteKeywords = (try? c.decodeIfPresent([String].self, forKey: .muteKeywords)) ?? []
+            watchKeywords = (try? c.decodeIfPresent([String].self, forKey: .watchKeywords)) ?? []
             digestEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .digestEnabled)) ?? true
             digestHour = (try? c.decodeIfPresent(Int.self, forKey: .digestHour)) ?? 9
             totalDailyCap = (try? c.decodeIfPresent(Int.self, forKey: .totalDailyCap)) ?? 10
@@ -104,6 +108,7 @@ struct AppState: Codable {
         lastCheck = try? c.decodeIfPresent(Date.self, forKey: .lastCheck)
         errors = (try? c.decodeIfPresent([String: String].self, forKey: .errors)) ?? [:]
         unread = (try? c.decodeIfPresent(Int.self, forKey: .unread)) ?? 0
+        unreadKeys = (try? c.decodeIfPresent([String].self, forKey: .unreadKeys)) ?? []
         if let r = try? c.decodeIfPresent([String: Double].self, forKey: .read) {
             read = r
         } else if let old = try? c.decodeIfPresent([String].self, forKey: .read) {
@@ -113,6 +118,7 @@ struct AppState: Codable {
         customSources = (try? c.decodeIfPresent([Source].self, forKey: .customSources)) ?? []
         snoozeUntil = try? c.decodeIfPresent(Date.self, forKey: .snoozeUntil)
         lastDigest = try? c.decodeIfPresent(Date.self, forKey: .lastDigest)
+        lastWatchDigest = try? c.decodeIfPresent(Date.self, forKey: .lastWatchDigest)
         interestCategory = (try? c.decodeIfPresent([String: Double].self, forKey: .interestCategory)) ?? [:]
         interestSource = (try? c.decodeIfPresent([String: Double].self, forKey: .interestSource)) ?? [:]
         magazineBackfilled = (try? c.decodeIfPresent(Bool.self, forKey: .magazineBackfilled)) ?? false
@@ -141,27 +147,39 @@ enum Store {
         }
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let d = base.appendingPathComponent("Dropcap", isDirectory: true)
-        // 이름이 바뀌기 전(AI News Alert) 기록이 있으면 한 번 옮겨 온다. 옛 폴더는 지우지 않고 이름만 표시해 남겨 둠.
-        let old = base.appendingPathComponent("AI News Alert", isDirectory: true)
-        let fm = FileManager.default
-        if !fm.fileExists(atPath: d.path), fm.fileExists(atPath: old.appendingPathComponent("native-state.json").path) {
-            do {
-                // 이 앱이 쓰는 것만 옮긴다(예전 Electron 판의 캐시 등은 두고 온다)
-                try fm.createDirectory(at: d, withIntermediateDirectories: true)
-                for name in ["native-state.json", "native-state.bak.json", "magazine.sqlite", "magazine.sqlite-wal", "magazine.sqlite-shm", "articles", "images"] {
-                    let from = old.appendingPathComponent(name)
-                    if fm.fileExists(atPath: from.path) { try fm.copyItem(at: from, to: d.appendingPathComponent(name)) }
-                }
-                try? "이 폴더의 기록은 Dropcap 폴더로 복사되었습니다. 확인 후 지워도 됩니다.\n"
-                    .write(to: old.appendingPathComponent("옮겨짐-Dropcap.txt"), atomically: true, encoding: .utf8)
-                NSLog("[이름 변경] 기록을 Dropcap 폴더로 옮겼습니다")
-            } catch {
-                NSLog("[이름 변경] 기록 옮기기 실패: %@", error.localizedDescription)
-            }
-        }
+        migrateOldFolder(from: base.appendingPathComponent("AI News Alert", isDirectory: true), to: d)
         try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
         return d
     }()
+
+    static let migrationFiles = ["native-state.json", "native-state.bak.json", "magazine.sqlite", "magazine.sqlite-wal", "magazine.sqlite-shm", "articles", "images"]
+
+    // 이름이 바뀌기 전(AI News Alert) 기록이 있으면 옮겨 온다. 옛 폴더는 지우지 않고 이름만 표시해 남겨 둠.
+    // A-32: 옮기는 동안 `.migrating` 표시를 두고 다 옮긴 뒤에 지운다. 중간에 실패하면 다음 실행에서 빠진 것만 다시 옮긴다
+    // (이미 옮긴 것·그 사이 새로 생긴 것은 덮어쓰지 않음). 예전 판으로 이미 다 옮긴 폴더는 표시가 없으므로 건드리지 않는다.
+    @discardableResult
+    static func migrateOldFolder(from old: URL, to d: URL, fm: FileManager = .default) -> Bool {
+        let flag = d.appendingPathComponent(".migrating")
+        let fresh = !fm.fileExists(atPath: d.path)
+        guard fm.fileExists(atPath: old.appendingPathComponent("native-state.json").path), fresh || fm.fileExists(atPath: flag.path) else { return false }
+        do {
+            try fm.createDirectory(at: d, withIntermediateDirectories: true)
+            if fresh { try Data().write(to: flag) }
+            // 이 앱이 쓰는 것만 옮긴다(예전 Electron 판의 캐시 등은 두고 온다)
+            for name in migrationFiles {
+                let from = old.appendingPathComponent(name), to = d.appendingPathComponent(name)
+                if fm.fileExists(atPath: from.path), !fm.fileExists(atPath: to.path) { try fm.copyItem(at: from, to: to) }
+            }
+            try fm.removeItem(at: flag)
+            try? "이 폴더의 기록은 Dropcap 폴더로 복사되었습니다. 확인 후 지워도 됩니다.\n"
+                .write(to: old.appendingPathComponent("옮겨짐-Dropcap.txt"), atomically: true, encoding: .utf8)
+            NSLog("[이름 변경] 기록을 Dropcap 폴더로 옮겼습니다")
+            return true
+        } catch {
+            NSLog("[이름 변경] 기록 옮기기 실패(다음 실행에서 다시 시도): %@", error.localizedDescription)
+            return false
+        }
+    }
     static let file = dir.appendingPathComponent("native-state.json")
     static let seenLimit = 8000
 

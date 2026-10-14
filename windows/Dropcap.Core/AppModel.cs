@@ -32,6 +32,7 @@ public sealed class AppModel
     public const string PreviewId = "preview";
 
     public Func<DateTimeOffset> Now { get; set; } = () => DateTimeOffset.Now;
+    public FocusMonitor Focus { get; } = new() { Override = FocusMonitor.ParseOverride(Environment.GetEnvironmentVariable("DROPCAP_TEST_FOCUS")) };
     internal FeedService Feeds { get; set; } = FeedService.Shared;
 
     private CancellationTokenSource? loop;
@@ -134,7 +135,7 @@ public sealed class AppModel
             State.LastCheck = Now();
             State.Seen = Store.Pruned(State.Seen); // 저장 파일만이 아니라 메모리의 기억도 정리(오래 켜 두면 끝없이 커지던 문제)
             // 분야 정책(G-04~G-08): 즉시 알릴 것 · 묶음으로 고일 것 · 매거진에만 둘 것
-            var quiet = (IsQuietTime || IsSnoozed) && !manual; // 방해 금지 시간·잠시 끄기: 알리지 않고 안 읽은 소식으로만 쌓는다
+            var quiet = IsHushed && !manual; // 방해 금지 시간·잠시 끄기·회의 중: 알리지 않고 안 읽은 소식으로만 쌓는다
             var drops = await Task.Run(() => Decide(candidates, listed, quiet));
             Save();
             await Task.Run(() => Magazine.PublishDue()); // 확인을 마친 뒤에 지난 호를 엮어 빠지는 기사가 없게
@@ -241,7 +242,7 @@ public sealed class AppModel
     // 묶음(G-07): 분야마다 정한 시각이 지나면 고인 소식을 한 방울로("경제 7건"). 분야마다 하루 한 번.
     public void DeliverBundles()
     {
-        if (State.Pending.Count == 0 || IsQuietTime || IsSnoozed) return;   // 방해 금지·잠시 끄기 중이면 끝난 뒤로
+        if (State.Pending.Count == 0 || IsHushed) return;   // 방해 금지·잠시 끄기·회의 중이면 끝난 뒤로
         var now = Now();
         var changed = false;
         foreach (var sec in State.Pending.Select(p => p.Section).Distinct().OrderBy(Sections.Order).ToList())
@@ -253,8 +254,38 @@ public sealed class AppModel
             changed = true;
             if (State.Settings.Style == ToastStyle.Drop) Ui.ShowBundle(sec, list, State.Settings.Sound);
             else Ui.PostBundle(sec, list, State.Settings.Sound);
+            if (Policy(sec).Mode == NotifyMode.Bundle) MakeBrief(sec, list, now);
         }
         if (changed) Save();
+    }
+
+    // 분야별 저녁 정리(N-26): '묶음' 분야는 묶음을 보낼 때 기기 안 요약 3줄 + 근거 기사를 매거진 그 분야 지면 위에 둔다.
+    // 알림 문구는 그대로 원제목(D-7) — 요약은 지면 안에서만, 근거 링크와 함께.
+    public Func<string, IReadOnlyList<NewsItem>, Task<List<SectionBrief.Line>?>> Briefer { get; set; } =
+        (sec, items) => Summarizer.BriefingAsync(Sections.Name(sec), items);
+
+    public void MakeBrief(string sec, IReadOnlyList<NewsItem> items, DateTimeOffset now)
+    {
+        var evidence = items.Take(SectionBrief.MaxItems).ToList();
+        State.Briefs[sec] = new SectionBrief { Section = sec, At = now, Items = evidence };
+        if (evidence.Count < 2) return;
+        _ = MakeBriefLinesAsync(sec, evidence, now);
+    }
+
+    private async Task MakeBriefLinesAsync(string sec, List<NewsItem> evidence, DateTimeOffset at)
+    {
+        List<SectionBrief.Line>? lines;
+        try { lines = await Briefer(sec, evidence); } catch { lines = null; }
+        if (lines is null || !State.Briefs.TryGetValue(sec, out var b) || b.At != at) return;
+        State.Briefs[sec] = b with { Lines = lines };
+        Save();
+    }
+
+    // 오늘 만든 저녁 정리(요약이 있는 것만)
+    public SectionBrief? Brief(string sec)
+    {
+        if (!State.Briefs.TryGetValue(sec, out var b) || b.Lines is null) return null;
+        return b.At.ToLocalTime().Date == Now().ToLocalTime().Date ? b : null;
     }
 
     // 관심 분야 고르기(G-03). 처음이면 고른 분야의 기본 출처를 켜고 그 분야 최근 소식으로 매거진을 채운다(알림 없음).
@@ -363,7 +394,7 @@ public sealed class AppModel
     private void NotifyGrownStories()
     {
         var grown = Magazine.TakeGrown();
-        if (grown.Count == 0 || IsQuietTime || IsSnoozed) return;
+        if (grown.Count == 0 || IsHushed) return;
         foreach (var (c, it) in grown.Take(2)) Ui.ShowInfo($"팔로우한 스토리에 새 보도 · {it.SourceName}", c.Title);
     }
 
@@ -387,6 +418,13 @@ public sealed class AppModel
             o.Add(must.Any(text.Contains) ? it with { Important = true } : it);
         }
         return o;
+    }
+
+    // 낱말 설정이 바뀌면 이미 받은 최근 목록에도 바로: ★ 다시 매기고, '알리지 않음' 낱말이 든 기사는 목록에서 뺌
+    public void ReapplyKeywords()
+    {
+        State.Recent = ApplyKeywords(State.Recent.Select(i => i with { Important = null }));
+        Save();
     }
 
     // 여러 곳이 같은 소식을 다루면 하나만 알리고 "다른 N곳도 보도"로 묶는다(C-15).
@@ -428,6 +466,11 @@ public sealed class AppModel
             return InQuiet(Now().ToLocalTime().Hour, st.QuietStart, st.QuietEnd);
         }
     }
+
+    // 회의·발표 중 자동 조용히(N-25): 지금 그 이유(설정에서 켠 것만)
+    public FocusReason? AutoQuietReason => Focus.Reason(State.Settings, Now());
+    // 알리지 않을 때: 방해 금지 시간 · 잠시 끄기 · 회의·발표 중
+    public bool IsHushed => IsQuietTime || IsSnoozed || AutoQuietReason is not null;
 
     // 자정을 넘는 구간(예: 23시~7시)도 처리(C-19)
     public static bool InQuiet(int hour, int start, int end)
@@ -587,14 +630,17 @@ public sealed class AppModel
         var st = State.Settings;
         if (!st.DigestEnabled) return;
         var local = now.ToLocalTime();
-        if (local.Hour < st.DigestHour || (State.LastDigest is { } ld && ld.ToLocalTime().Date == local.Date)) return;
-        if (IsQuietTime || IsSnoozed) return; // 조용한 때가 끝나면 그날 안에 다시 시도
+        if (!DigestWindow(local.Hour, st.DigestHour) || (State.LastDigest is { } ld && ld.ToLocalTime().Date == local.Date)) return;
+        if (IsHushed) return; // 조용한 때가 끝나면 그날 안에 다시 시도
         State.LastDigest = now;
         Save();
         var items = DigestItems;
         if (items.Count == 0) return;
         Ui.ShowDigest(items.Count); // C-21
     }
+
+    // 브리핑 시간대(C-21): 정한 시각부터 정오 전까지(정오 이후 시각이면 그 한 시간). 늦게 켜도 저녁에 아침 브리핑이 뜨지 않게
+    public static bool DigestWindow(int hour, int digestHour) => hour >= digestHour && hour < Math.Max(12, digestHour + 1);
 
     // 지난 24시간 소식
     public List<NewsItem> DigestItems
@@ -755,6 +801,7 @@ public sealed class AppModel
     {
         var before = State.Settings.Copy();
         change(State.Settings);
+        Focus.Invalidate();
         Save();
         if (State.Settings.IntervalMinutes != before.IntervalMinutes) RestartLoop();
     }
@@ -770,6 +817,7 @@ public sealed class AppModel
 
     public void Stop()
     {
+        Store.Flush();   // 묶어 둔 저장을 바로(C-13)
         loop?.Cancel();
         minuteTimer?.Dispose();
     }

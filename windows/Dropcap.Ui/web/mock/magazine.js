@@ -21,6 +21,8 @@ if (!(window.chrome && window.chrome.webview)) {
     : { label: SEC[sec][0], icon: SEC[sec][1], light: SEC[sec][2], dark: SEC[sec][2] };
   let n = 0;
   const topics = {};
+  // 유료 기사 자물쇠(G-14) 이유 — Core PaywallKinds.Help 와 같은 문구
+  const PW = { hard: '유료 기사 — 열면 같은 소식의 무료 보도를 먼저 권합니다', metered: '일부 유료(무료 건수 제한)', learned: '본문이 자주 막히는 곳 — 열면 같은 소식의 무료 보도를 먼저 권합니다' };
   const it = (title, source, color, sec, o = {}) => {
     n++;
     const kind = o.kind || 'article';
@@ -32,12 +34,13 @@ if (!(window.chrome && window.chrome.webview)) {
       initial: source[0], color, tier: o.kr ? 'kr' : 'press', tierLabel: o.tier || (o.kr ? '국내' : '언론'), category, categoryLabel: '', kind, kindLabel: kinds[kind],
       external: kind === 'video' || kind === 'podcast', related: o.related || 0, relatedNames: [], time: o.time || `${n * 7}분 전`, date: now - n * 420000,
       summary: '', image: o.image, important: !!o.important, read: !!o.read, saved: !!o.saved,
+      paywall: o.paywall || null, paywallHelp: o.paywall ? PW[o.paywall] : null,
     };
   };
   const cover = it('한국은행, 기준금리 연 2.75%로 동결…“물가·환율 더 지켜볼 것”', '연합뉴스', '#0F62FE', 'economy',
     { image: pic('#0f766e', '#1e3a8a'), related: 4, important: true, kr: true });
   const top = [
-    it('미 연준 의장 “금리 인하 서두르지 않겠다”', 'Reuters', '#FF8000', 'world', { image: pic('#7c2d12', '#f59e0b'), related: 6 }),
+    it('미 연준 의장 “금리 인하 서두르지 않겠다”', 'NYT', '#000000', 'world', { image: pic('#7c2d12', '#f59e0b'), related: 6, paywall: 'metered' }),
     it('국회, 내년 예산안 처리 시한 넘겨…여야 협상 계속', 'KBS', '#1C3F94', 'politics', { kr: true, related: 3 }),
     it('OpenAI, 추론 기능을 크게 강화한 새 모델 공개', 'The Verge', '#E1306C', 'ai', { category: 'model', image: pic('#7c3aed', '#db2777'), related: 5,
       original: 'OpenAI launches a new model with much stronger reasoning' }),
@@ -46,7 +49,7 @@ if (!(window.chrome && window.chrome.webview)) {
     it('코스피 2,900 회복…외국인 사흘째 순매수', '한국경제', '#0B3B8C', 'economy', { kr: true, image: pic('#065f46', '#34d399') }),
     it('환율 1,380원대로 내려와', '매일경제', '#E60012', 'economy', { kr: true, read: true }),
     it('수출 석 달째 늘어…반도체가 이끌어', '조선비즈', '#003F87', 'economy', { kr: true, image: pic('#1e3a8a', '#60a5fa') }),
-    it('Global markets rally as inflation cools', 'Bloomberg', '#000000', 'economy', { image: pic('#111827', '#6b7280') }),
+    it('Global markets rally as inflation cools', 'Bloomberg', '#000000', 'economy', { image: pic('#111827', '#6b7280'), paywall: 'hard' }),
   ];
   const ai = [
     it('구글, 제미니 새 판 공개…긴 문맥 1천만 토큰', 'TechCrunch', '#0A9E01', 'ai', { category: 'model', image: pic('#0369a1', '#22d3ee'), related: 2 }),
@@ -65,8 +68,14 @@ if (!(window.chrome && window.chrome.webview)) {
     it('기준금리 동결 기자회견 전체 영상', 'YouTube · 한국은행', '#FF0000', 'economy', { kind: 'video', image: pic('#111827', '#ef4444') }),
   ];
   const S = (sec) => ({ light: SEC[sec][2], dark: SEC[sec][2] });
-  const section = (id, label, icon, c, items, showTopic, tone) => ({ id, section: id === 'other' || id === 'video' ? undefined : id, label, icon, tone: tone || 'cat-other',
-    light: c.light, dark: c.dark, showTopic, items });
+  // 분야 유리 띠(맥 SectionGlassCard 높이 92): 사진은 처음엔 몇 분야만, 4초 뒤 'photos' 알림으로 스포츠가 채워짐(AI 는 색면 그대로)
+  const EN = { top: 'TOP', economy: 'ECONOMY', ai: 'AI', sports: 'SPORTS' };
+  const PHOTOS = { top: pic('#7c2d12', '#fbbf24'), economy: pic('#065f46', '#34d399') };
+  const section = (id, label, icon, c, items, showTopic, tone) => {
+    const sec = id === 'other' || id === 'video' ? undefined : id;
+    return { id, section: sec, label, icon, tone: tone || 'cat-other', light: c.light, dark: c.dark, showTopic, items,
+      glass: sec ? { english: EN[sec], sub: `${items.length}건 · ${items[0].title}`, photo: PHOTOS[sec] || null } : undefined };
+  };
   const allSections = [
     section('top', '주요 뉴스', 'star.fill', S('top'), top, true),
     section('economy', '경제', 'cat.business', S('economy'), economy, false),
@@ -90,7 +99,29 @@ if (!(window.chrome && window.chrome.webview)) {
       sections, clusters: { [cover.key]: 's1', [top[0].key]: 's1' }, revision: 3, imageRevision: 1, layoutRevision: 0, preparing: false,
       focus, sub, chips: chipsAll, subChips: focus === 'ai' ? Object.entries(AI).map(([id, a]) => ({ id, label: a[0], icon: a[1], light: a[2], dark: a[3], count: 0 })) : [],
       topics, regions,
+      // 오늘 호 완독(M-23): 오늘 호 · 분야를 고르지 않았을 때만. #done 이면 다 읽은 모양
+      today: live && !focus ? today() : undefined, todayDone: live && done,
+      // 저녁 정리(N-26): 오늘 호의 경제 지면 맨 위
+      brief: live && focus === 'economy' ? brief : undefined,
     };
+  };
+  let done = /done/.test(location.hash);
+  const read = new Set([cover.key]);
+  const todayKeys = () => [cover, ...top.slice(0, 3), ...economy.slice(0, 3), ...ai.slice(0, 3), ...sports.slice(0, 3)].map((i) => i.key);
+  const today = (keys = todayKeys()) => {
+    const r = done ? keys.length : keys.filter((k) => read.has(k)).length;
+    if (keys.length && r >= keys.length) done = true;
+    return { keys, read: r, done, next: '다음 호는 내일 오전 9시 브리핑으로 알려 드릴게요' };
+  };
+  const brief = {
+    section: 'economy', title: '저녁 정리 · 경제', time: '오후 6:00', light: '#30C759', dark: '#30C759',
+    help: '이 PC 의 Ollama 가 아래 기사들의 제목·요약만 보고 만든 정리입니다. 틀릴 수 있어 근거 기사를 함께 둡니다.',
+    lines: [
+      { text: '한국은행이 기준금리를 연 2.75%로 묶고 물가·환율 흐름을 더 보기로 했다.', refs: [1] },
+      { text: '외국인 순매수가 사흘째 이어지며 코스피가 2,900 선을 되찾았다.', refs: [2, 3] },
+      { text: '반도체 수출이 석 달째 늘어 하반기 경기 회복 기대가 커졌다.', refs: [4] },
+    ],
+    items: [cover, economy[0], economy[1], economy[2]].map((i) => ({ key: i.key, title: i.original, source: i.source, link: i.link })),
   };
   const src = (name, initial, color) => ({ name, initial, color });
   const scraps = [
@@ -151,10 +182,23 @@ if (!(window.chrome && window.chrome.webview)) {
       }
       case 'newFolder': folders = [...folders, { name: a.name.trim(), count: 0 }]; return { ok: true, folder: a.name.trim() };
       case 'renameFolder': folders = folders.map((f) => (f.name === a.from ? { ...f, name: a.to.trim() } : f)); return { ok: true, folder: a.to.trim() };
-      case 'marks': return { read: [], saved: [] };
+      case 'marks': return { read: [...read], saved: [] };
+      case 'open': read.add(a.key); console.log('open', a.key, 'seq', (a.seq || []).length); setTimeout(() => window.bridge.emit('changed', { revision: 3, imageRevision: 1, layoutRevision: 0 }), 50); return null;
+      case 'toggleRead': read.has(a.key) ? read.delete(a.key) : read.add(a.key); setTimeout(() => window.bridge.emit('changed', { revision: 3, imageRevision: 1, layoutRevision: 0 }), 50); return null;
+      case 'todayProgress': return today(a.keys);
+      case 'flip': {
+        const order = ['today', 'week', 'section:top', 'section:economy', 'section:ai', 'section:sports', 'stories', 'saved', 'scrapbook', 'search',
+          'issue:daily-2026-10-12', 'issue:daily-2026-10-11', 'issue:weekly-2026-W40'];
+        const i = order.indexOf(a.page.startsWith('story:') ? 'stories' : a.page);
+        const to = order[i + (a.back ? -1 : 1)];
+        if (i < 0 || !to) { console.log('beep'); return null; }
+        return to;
+      }
       default: return null;
     }
   };
-  // 미리 보기에서 새 소식 띠 확인: 3초 뒤 새 판
+  // 미리 보기에서 분야 사진이 늦게 찾아지는 모양: 4초 뒤 스포츠 사진
+  setTimeout(() => { PHOTOS.sports = pic('#14532d', '#a3e635'); window.bridge.emit('photos', { ...PHOTOS }); }, 4000);
+  // 미리 보기에서 새 소식 띠 확인: 3초 뒤 새 판(#done 이면 오늘 호를 다 읽어 띠가 뜨지 않음)
   setTimeout(() => window.bridge.emit('changed', { revision: 4, imageRevision: 1, layoutRevision: 0, preparing: false }), 3000);
 }

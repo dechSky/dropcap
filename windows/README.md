@@ -58,13 +58,23 @@ scripts/check-on-mac.sh                                    # 윈도우 앱 C# �
 - [ ] 트레이 창·매거진의 분야 칩 줄, AI 를 누르면 하위 칩. 스토리 상세의 해외·국내 두 칸, 팔로우.
 - [ ] 두 번째 실행은 바로 끝남(하나만 실행).
 - [ ] 잠자기에서 깨면 10초 뒤 확인.
+- [ ] 유료 기사(G-14·G-15): WSJ·FT 등 기사 줄·매거진 카드에 자물쇠(무료 건수 제한은 열린 자물쇠), 마우스를 올리면 이유. 열면 읽기 창 머리에 '같은 소식을 무료로 읽기' 상자(같은 스토리가 있을 때), '원문 그대로 열기'.
+- [ ] 회의·발표 중(N-25): 다른 앱을 전체 화면으로(F11·발표 모드) 띄우거나 Zoom 화면 공유 중이면 물방울 없이 안 읽음에 쌓이고 트레이 창 머리에 사람 아이콘. `DROPCAP_TEST_FOCUS=fullscreen|sharing|none` 으로 흉내.
+- [ ] 매거진 오늘 호(M-23): 머리 아래 '오늘 호 대표 기사 n/m', 다 읽으면 '오늘 호를 다 읽었어요' 띠.
+- [ ] 저녁 정리(N-26): Ollama 를 켜고 묶음 분야의 묶음이 나간 뒤 매거진 그 분야 지면 위에 3줄 + 근거 기사.
+- [ ] 사진 점수(M-24): 화면 캡처·글자 그림이 표지·분야 카드에 뜨지 않음(글자 인식 언어팩 — 설정 › 시간 및 언어 › 언어에 한국어·영어).
+- [ ] 분야 고르기·매거진 분야 머리의 유리 카드(흐린 사진·기울인 사진).
+- [ ] 키보드: 트레이 창·매거진 J/K·Enter·S·O·M, 매거진 Ctrl+[ ·Ctrl+], 읽기 창 J/K(같은 창에서 바뀜)·Esc.
+- [ ] 읽기 창 짧은 글(GeekNews 등)이 기다리지 않고 열림, 막는 사이트는 6초 안에 피드 요약 화면.
 
-시험용 환경 변수(Q-03): `DROPCAP_DATA_DIR`, `DROPCAP_TEST_TOAST`, `DROPCAP_TEST_BURST`, `DROPCAP_TEST_URL`, `DROPCAP_TEST_MAGAZINE`(값이 있으면 그 지면), `DROPCAP_TEST_SETTINGS`, `DROPCAP_TEST_MENU`, `DROPCAP_TEST_SUBSCRIBE`(추천 채널 id 쉼표 목록), `DROPCAP_TEST_SECTIONS`(쉼표 목록 — 고르기 없이 고른 것으로), `DROPCAP_TEST_ONBOARD`, `DROPCAP_TEST_BUNDLE`(분야), `DROPCAP_TEST_MAG_SECTION`(분야), `DROPCAP_TEST_WELCOME`, `DROPCAP_REDUCE_MOTION=1`, `DROPCAP_DEVTOOLS=1`(웹 화면 개발자 도구).
+시험용 환경 변수(Q-03): `DROPCAP_DATA_DIR`, `DROPCAP_TEST_TOAST`, `DROPCAP_TEST_BURST`, `DROPCAP_TEST_URL`, `DROPCAP_TEST_MAGAZINE`(값이 있으면 그 지면), `DROPCAP_TEST_SETTINGS`, `DROPCAP_TEST_MENU`, `DROPCAP_TEST_SUBSCRIBE`(추천 채널 id 쉼표 목록), `DROPCAP_TEST_SECTIONS`(쉼표 목록 — 고르기 없이 고른 것으로), `DROPCAP_TEST_ONBOARD`, `DROPCAP_TEST_BUNDLE`(분야), `DROPCAP_TEST_MAG_SECTION`(분야), `DROPCAP_TEST_WELCOME`, `DROPCAP_TEST_FOCUS`(fullscreen·sharing·calendar·none — 회의 중 감지 흉내), `DROPCAP_REDUCE_MOTION=1`, `DROPCAP_DEVTOOLS=1`(웹 화면 개발자 도구).
 
 ## 맥과 다른 점(운영체제 한계)
 
 - **기기 내 번역 없음(T-05 ⊘)**: 윈도우에 무료 기본 기능이 없어 Google 번역만 씁니다.
 - **요약(T-06)**: Apple Intelligence 대신 이 PC 의 Ollama 가 있으면 사용, 없으면 요약 칸을 숨깁니다. 앱이 내부망으로 요청하는 유일한 예외이며 주소(`127.0.0.1:11434`)는 고정입니다.
+- **회의 중 캘린더(N-25 일부 ⊘)**: 설치 없이 푸는 앱이라 윈도우 일정 권한을 받을 수 없어, 전체 화면·Zoom 화면 공유만 알아봅니다.
+- **저녁 정리(N-26)·사진 글자 인식(M-24)**: Apple Intelligence·Vision 대신 Ollama(있을 때만)·Windows.Media.Ocr.
 - **노치 없음(N-12 ⊘)**: 천장은 커서가 있는 모니터의 작업 영역 위쪽(작업 표시줄이 위에 있으면 그 아래)입니다.
 - **유리 재질(N-19 ~)**: 알림 카드는 반투명 색 바탕입니다(레이어드 창은 뒤 화면 흐림을 쓸 수 없음).
 - **같은 소식의 '뜻' 비교(C-15 ~)**: 맥의 기기 내 문장 임베딩 대신 영어 제목의 고유명사 공유로 판단합니다(맥 시험 사례는 모두 같은 결과).

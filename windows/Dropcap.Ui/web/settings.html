@@ -28,6 +28,14 @@
       <label class="row"><span class="lb">확인 간격</span><select data-set="interval"></select></label>
       <div class="row"><button class="btn" id="preview">알림 미리 보기</button></div>
     </div>
+    <h3>회의·발표 중에는 조용히</h3>
+    <div class="group">
+      <label class="row"><span class="lb">전체 화면 앱을 쓰는 중</span><input type="checkbox" class="switch" data-set="autoQuietFullscreen"></label>
+      <label class="row"><span class="lb">화면을 공유·기록하는 중</span><input type="checkbox" class="switch" data-set="autoQuietSharing"></label>
+      <label class="row"><span class="lb">캘린더 일정 중</span><input type="checkbox" class="switch" data-set="autoQuietCalendar"></label>
+      <div class="row note" id="calendarNote" hidden></div>
+      <div class="row note" id="autoQuietNote"></div>
+    </div>
     <h3>번역</h3>
     <div class="group">
       <div class="row"><span class="lb">번역 방식</span><span class="val" id="engine"></span></div>
@@ -36,7 +44,7 @@
     <h3>글꼴</h3>
     <div class="group">
       <label class="row"><span class="lb">Pretendard 글꼴 쓰기 (한글이 더 또렷함)</span><input type="checkbox" class="switch" data-set="pretendard"></label>
-      <div class="row note">끄면 시스템 글꼴을 씁니다. 열려 있는 창은 다시 열면 바뀝니다.</div>
+      <div class="row note">끄면 시스템 글꼴을 씁니다. 열려 있는 창에도 바로 적용됩니다.</div>
     </div>
     <h3>요약</h3>
     <div class="group">
@@ -83,7 +91,7 @@
     <div class="group">
       <label class="row"><span class="lb">꼭 알림 (★ 중요 표시)</span><input class="field kw" id="must" placeholder="예: GPT-6, Claude, Gemini, 오픈소스" autocomplete="off" spellcheck="false"></label>
       <label class="row"><span class="lb">알리지 않음</span><input class="field kw" id="mute" placeholder="예: 주식, 채용, 이벤트" autocomplete="off" spellcheck="false"></label>
-      <div class="row"><span class="note grow">쉼표로 나눠 적고 Enter. 제목·요약에 그 낱말이 들어가면 적용됩니다.</span><button class="btn" id="saveKw">저장</button></div>
+      <div class="row"><span class="note grow">쉼표로 나눠 적으면 바로 저장·적용됩니다. 제목·요약에 그 낱말이 들어가면 걸립니다.</span><button class="btn" id="saveKw">저장</button></div>
     </div>
     <h3>방해 금지 시간</h3>
     <div class="group">
@@ -100,6 +108,7 @@
     </div>
     <h3>단축키</h3>
     <div class="group" id="hotkeys"></div>
+    <div class="group" id="navkeys"></div>
     <h3>같은 소식 묶기</h3>
     <div class="group">
       <div class="row note">여러 곳이 같은 소식을 다루면 한 번만 알리고 "외 N곳"으로 표시합니다. 공식 발표를 먼저 고릅니다.</div>

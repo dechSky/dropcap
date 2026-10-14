@@ -175,7 +175,38 @@ public sealed class Magazine
             if (changed) { ImageRevision++; ImagesChanged?.Invoke(); }
         }
         finally { lock (gate) enriching = false; }
+        await ScoreImagesAsync();
     }
+
+    // 사진 점수 재기(M-24): 앱이 정한다(사진 받기·풀기·글자 인식). 없으면(시험) 재지 않는다
+    public Func<string, Task<PhotoQuality.Score?>>? PhotoScorer { get; set; }
+    private bool scoring;
+
+    // 최근 36시간 기사 사진의 점수를 미리 잰다(표지·분야 대표 사진 고르기). 한 번에 16장, 이미 잰 것은 건너뜀
+    public async Task ScoreImagesAsync()
+    {
+        if (PhotoScorer is not { } scorer) return;
+        lock (gate) { if (scoring) return; scoring = true; }
+        try
+        {
+            var recent = db.Items(DateTimeOffset.Now.AddHours(-36), limit: 400, articlesOnly: true)
+                .Select(s => s.Item).Where(i => PhotoQuality.Usable(i.Image)).ToList();
+            var known = db.ImageScores(recent.Select(i => i.Image!).ToList());
+            var changed = false;
+            foreach (var it in recent.Where(i => !known.ContainsKey(i.Image!)).DistinctBy(i => i.Image).Take(16))
+            {
+                PhotoQuality.Score? s;
+                try { s = await scorer(it.Image!); } catch { s = null; }
+                if (s is null) continue;
+                db.SaveImageScore(it.Image!, s);
+                if (!PhotoQuality.Good(s.Total)) changed = true;
+            }
+            if (changed) { ImageRevision++; ImagesChanged?.Invoke(); }
+        }
+        finally { lock (gate) scoring = false; }
+    }
+
+    public Dictionary<string, double> ImageScores(IEnumerable<string> urls) => db.ImageScores(urls.ToList());
 
     private readonly HashSet<string> enrichTried = new(); // 이번 실행에서 이미 찾아본 기사(사진이 없던 곳을 확인마다 다시 받지 않게)
 
@@ -222,8 +253,10 @@ public sealed class Magazine
         var ranked = best.Values.Concat(loose).OrderByDescending(p => p.Score).ToList();
         var limit = kind == IssueKind.Weekly ? 60 : 90;
         var picked = ranked.Where(p => p.S.Item.ItemKind == ItemKind.Article).Take(limit).ToList();
-        // 표지: 사진이 있는 기사 중 점수 1등(없으면 그냥 1등)
-        var cover = picked.FirstOrDefault(p => p.S.Item.Image is not null);
+        // 표지: 사진이 있는 기사 중 점수 1등(없으면 그냥 1등). 화면 캡처·글자 그림·로고로 잰 사진은 건너뛴다(M-24)
+        var photoScores = db.ImageScores(picked.Take(30).Select(p => p.S.Item.Image).OfType<string>().ToList());
+        var coverPick = PhotoQuality.PickCover(picked.Select(p => p.S.Item), photoScores);
+        var cover = picked.FirstOrDefault(p => p.S.Item.Key == coverPick);
         if (cover.S is null) cover = picked.FirstOrDefault();
         var coverKey = cover.S?.Item.Key;
         var articles = picked.Where(p => p.S.Item.Key != coverKey).Select(p => p.S).ToList();

@@ -1,5 +1,5 @@
 // 한 호의 지면(맥 MagazineView.IssueView · Masthead · CoverStory · SectionBlock · MagSort).
-use crate::app::{bg, open_from_magazine, ui};
+use crate::app::{bg, ui};
 use crate::magazine::tint;
 use crate::magazine_card::{has_photo, origin_of, scroll_focus, stagger, ChipBar, StoryCard};
 use crate::widgets::{self, label, lines};
@@ -88,6 +88,11 @@ pub struct IssuePage {
     first: Cell<bool>,
     on_story: Rc<dyn Fn(String)>,
     cards: Rc<RefCell<Vec<gtk::Widget>>>,
+    entries: RefCell<Vec<(NewsItem, gtk::Widget)>>, // 지면의 카드 순서(키보드 탐색, H-03)
+    selected: RefCell<Option<String>>,
+    today_done: Cell<bool>, // 오늘 호를 다 읽음(M-23) — 그날은 새 소식 띠를 띄우지 않는다
+    progress: RefCell<Option<(gtk::Box, Vec<String>)>>, // 오늘 호 진행 막대와 대표 기사
+    seq: RefCell<Vec<NewsItem>>, // 지면 기사 순서(읽기 창 J/K)
 }
 
 impl IssuePage {
@@ -114,15 +119,20 @@ impl IssuePage {
             scroll: scroll.clone(),
             content,
             banner: banner.clone(),
-            source,
             focus: RefCell::new(focus),
             sub: RefCell::new(None),
             data: RefCell::new(None),
             pending_new: Cell::new(false),
             building: Cell::new(false),
             first: Cell::new(true),
+            today_done: Cell::new(source == IssueSource::Today && dropcap_core::today_issue::is_marked_done(&ui().prefs.borrow(), chrono::Utc::now())),
+            source,
             on_story,
             cards: Rc::new(RefCell::new(vec![])),
+            entries: RefCell::new(vec![]),
+            selected: RefCell::new(None),
+            progress: RefCell::new(None),
+            seq: RefCell::new(vec![]),
         });
         {
             let weak = Rc::downgrade(&me);
@@ -147,6 +157,9 @@ impl IssuePage {
     // 핵심 소식에 맞춰 다시 엮기(M-11)
     pub fn on_event(self: &Rc<Self>, e: &UiEvent) {
         match e {
+            // 오늘 호를 다 읽었으면 새 소식을 더 밀어 넣지 않는다(M-23)
+            UiEvent::Magazine if self.source == IssueSource::Today && self.today_done.get() => {}
+            UiEvent::State => self.update_progress(),
             UiEvent::Magazine if !self.is_fixed() => {
                 let empty = self.data.borrow().as_ref().map(|d| d.r.cover.is_none() || d.r.issue.count == 0).unwrap_or(true);
                 if empty || ui().core.preparing.load(std::sync::atomic::Ordering::SeqCst) {
@@ -162,7 +175,7 @@ impl IssuePage {
                     self.rebuild(); // 사진만 새로 채워졌으면 조용히 반영
                 }
             }
-            UiEvent::Layout => self.rebuild(), // 출처 숨기기·분야 바꾸기는 바로
+            UiEvent::Layout => self.rebuild(), // 출처 숨기기·분야 바꾸기·저녁 정리는 바로
             UiEvent::Preparing(false) if !self.is_fixed() => self.rebuild(),
             _ => {}
         }
@@ -225,8 +238,16 @@ impl IssuePage {
         let Some(d) = self.data.borrow().clone() else { return };
         widgets::clear_box(&self.content);
         self.cards.borrow_mut().clear();
+        self.entries.borrow_mut().clear();
+        *self.progress.borrow_mut() = None;
         let appeared = self.first.replace(false);
         let live = !self.is_fixed();
+        let sort = MagSort::from_raw(&ui().prefs.borrow().mag_sort);
+        let width = self.width() - 56;
+        let pages: Vec<(Section, Vec<NewsItem>)> = self.shown(&d).into_iter().map(|(sec, items)| { let it = sort.apply(&items, &d.coverage); (sec, it) }).collect();
+        let seq: Vec<NewsItem> = d.r.cover.iter().filter(|_| self.focus.borrow().is_none()).map(|c| c.item.clone()).chain(pages.iter().flat_map(|(_, i)| i.clone())).collect();
+        *self.seq.borrow_mut() = seq.clone();
+
         // 머리(M-06)
         let head = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         head.set_margin_top(28);
@@ -251,6 +272,18 @@ impl IssuePage {
         }
         head.append(&sort);
         self.content.append(&head);
+        // 오늘 호 대표 기사 진행(M-23): 머리 아래 작게, 다 읽으면 마무리 띠
+        if self.source == IssueSource::Today && self.focus.borrow().is_none() {
+            let keys = dropcap_core::today_issue::keys(d.r.cover.as_ref().map(|c| c.item.key()).as_deref(), &d.r.sections, &ui().core.chosen_sections());
+            let holder = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            holder.set_margin_start(36);
+            holder.set_margin_end(36);
+            holder.set_margin_top(-8);
+            holder.set_margin_bottom(18);
+            self.content.append(&holder);
+            *self.progress.borrow_mut() = Some((holder, keys));
+            self.update_progress();
+        }
         // 분야 칩 줄(G-09): 지면이 있는 분야(건수)
         let chips: Vec<String> = d.r.sections.iter().filter_map(|(s, _)| s.section.clone()).collect();
         if chips.len() > 1 || self.focus.borrow().is_some() {
@@ -280,11 +313,20 @@ impl IssuePage {
             bar.root.set_margin_bottom(18);
             self.content.append(&bar.root);
         }
+        // 분야 지면 맨 위: 저녁 정리(N-26) — 오늘 만든 것만
+        if let (IssueSource::Today, Some(f)) = (&self.source, self.focus.borrow().clone()) {
+            if let Some(b) = ui().core.brief(&f) {
+                let bx = evening_brief_box(&b);
+                bx.set_margin_start(36);
+                bx.set_margin_end(36);
+                self.content.append(&bx);
+            }
+        }
         // 표지(M-07) — 분야만 보고 있으면 표지 없이 그 지면만
         if self.focus.borrow().is_none() {
             match &d.r.cover {
                 Some(c) => {
-                    let cover = cover_story(&c.item, c.cluster.clone(), d.cover_size, self.on_story.clone());
+                    let cover = cover_story(&c.item, c.cluster.clone(), d.cover_size, self.on_story.clone(), seq.clone());
                     cover.set_margin_start(28);
                     cover.set_margin_end(28);
                     if appeared && motion::enabled() {
@@ -297,14 +339,19 @@ impl IssuePage {
                 None => self.content.append(&empty_issue(live)),
             }
         }
-        // 분야 지면(G-10)
-        let sort = MagSort::from_raw(&ui().prefs.borrow().mag_sort);
-        let width = self.width() - 56;
-        for (sec, items) in self.shown(&d) {
-            let items = sort.apply(&items, &d.coverage);
-            let block = self.section_block(&sec, &items, &d.r, width);
+        // 분야 지면(G-10). 읽기 창 J/K 순서 = 표지 + 지면 순서
+        for (sec, items) in pages {
+            let block = self.section_block(&sec, &items, &d.r, width, &seq);
             block.set_margin_top(38);
             self.content.append(&block);
+        }
+        // 다시 그려도 고른 카드는 그대로
+        let sel = self.selected.borrow().clone();
+        if !self.entries.borrow().iter().any(|(it, _)| Some(it.key()) == sel) {
+            *self.selected.borrow_mut() = None;
+        }
+        for (it, w) in self.entries.borrow().iter() {
+            crate::keynav::mark(w, Some(it.key()) == *self.selected.borrow());
         }
         // 저작권 안내(M-22)
         let foot = label("기사 저작권은 각 언론사·기업에 있습니다. 제목·요약·사진은 원문으로 이어 주기 위한 것입니다.", 11.0, 400, &["dc-tertiary"]);
@@ -315,8 +362,19 @@ impl IssuePage {
         self.content.append(&foot);
     }
 
-    fn section_block(self: &Rc<Self>, sec: &Section, items: &[NewsItem], r: &Resolved, width: i32) -> gtk::Box {
+    fn section_block(self: &Rc<Self>, sec: &Section, items: &[NewsItem], r: &Resolved, width: i32, seq: &[NewsItem]) -> gtk::Box {
         let b = gtk::Box::new(gtk::Orientation::Vertical, 14);
+        // 분야 지면: 분야 고르기와 같은 유리 띠(오늘의 사진 · 기사 수 · 첫 기사 제목)
+        if let (Some(ns), None) = (sec.section.as_deref().and_then(dropcap_core::sections::by_id), &sec.kind) {
+            let sub = format!("{}건 · {}", items.len(), items.first().map(|i| i.display_title()).unwrap_or(""));
+            let card = crate::section_photos::glass_card(&ns, Some(sub), 92, false, false);
+            card.area.set_margin_start(28);
+            card.area.set_margin_end(28);
+            b.append(&card.area);
+            crate::section_photos::load();
+            self.append_cards(&b, items, r, width, seq);
+            return b;
+        }
         let head = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         head.set_margin_start(36);
         head.set_margin_end(36);
@@ -331,6 +389,11 @@ impl IssuePage {
         line.set_margin_start(6);
         head.append(&line);
         b.append(&head);
+        self.append_cards(&b, items, r, width, seq);
+        b
+    }
+
+    fn append_cards(self: &Rc<Self>, b: &gtk::Box, items: &[NewsItem], r: &Resolved, width: i32, seq: &[NewsItem]) {
         let flow = gtk::FlowBox::new();
         flow.set_selection_mode(gtk::SelectionMode::None);
         flow.set_homogeneous(true);
@@ -346,13 +409,140 @@ impl IssuePage {
         for (n, it) in items.iter().enumerate() {
             let cluster = r.clusters.get(&it.key()).cloned();
             let story_items = cluster.as_ref().and_then(|c| r.regions.get(c)).cloned().unwrap_or_default();
-            let card = StoryCard::build(it, n, cluster, &story_items, Some(self.on_story.clone()));
+            let card = StoryCard::build(it, n, cluster, &story_items, Some(self.on_story.clone()), seq);
             self.cards.borrow_mut().push(card.clone());
+            self.entries.borrow_mut().push((it.clone(), card.clone()));
             flow.insert(&card, -1);
         }
         b.append(&flow);
-        b
     }
+
+    // 오늘 호 진행 막대·마무리 띠 다시 그리기(읽음이 바뀔 때마다)
+    fn update_progress(&self) {
+        let Some((holder, keys)) = self.progress.borrow().clone() else { return };
+        widgets::clear_box(&holder);
+        let core = ui().core.clone();
+        let st = core.state();
+        let read = keys.iter().filter(|k| st.read.contains_key(*k)).count();
+        let now = chrono::Utc::now();
+        if !keys.is_empty() && read >= keys.len() && !self.today_done.get() {
+            ui().update_prefs(|p| dropcap_core::today_issue::mark_done(p, now));
+            self.today_done.set(true);
+            self.pending_new.set(false);
+            self.banner.set_visible(false);
+        }
+        if self.today_done.get() {
+            let band = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+            band.add_css_class("dc-done-band");
+            let i = widgets::icon("object-select-symbolic", 22);
+            tint(&i, "#34C759");
+            band.append(&i);
+            let v = gtk::Box::new(gtk::Orientation::Vertical, 3);
+            v.append(&label("오늘 호를 다 읽었어요", 17.0, 700, &["dc-display"]));
+            v.append(&label(&dropcap_core::today_issue::next_issue_text(st.settings.digest_enabled, st.settings.digest_hour), 12.5, 400, &["dc-secondary"]));
+            band.append(&v);
+            holder.append(&band);
+            widgets::fade_in(&band, 300);
+        } else if !keys.is_empty() {
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+            let t = label(&format!("오늘 호 대표 기사 {read}/{}", keys.len()), 11.5, 500, &["dc-secondary", "numeric"]);
+            t.set_wrap(false);
+            row.append(&t);
+            let bar = gtk::ProgressBar::new();
+            bar.add_css_class("dc-progress");
+            bar.set_fraction(read as f64 / keys.len().max(1) as f64);
+            bar.set_size_request(120, -1);
+            bar.set_valign(gtk::Align::Center);
+            row.append(&bar);
+            row.set_tooltip_text(Some("표지와 주요 뉴스·고른 분야의 첫 줄을 다 읽으면 오늘 호가 끝납니다"));
+            holder.append(&row);
+        }
+    }
+
+    // 지면 카드 키보드 탐색(H-03): ↓/J·↑/K 고르기, ⏎ 열기, S·O·M
+    pub fn key_nav(&self, k: crate::keynav::NavKey) {
+        use crate::keynav::NavKey;
+        let keys: Vec<String> = self.entries.borrow().iter().map(|(it, _)| it.key()).collect();
+        let sel = self.selected.borrow().clone();
+        match k {
+            NavKey::Next | NavKey::Prev => {
+                let next = crate::keynav::step(sel.as_deref(), &keys, if k == NavKey::Next { 1 } else { -1 });
+                *self.selected.borrow_mut() = next.clone();
+                for (it, w) in self.entries.borrow().iter() {
+                    crate::keynav::mark(w, Some(it.key()) == next);
+                }
+                if let Some((_, w)) = self.entries.borrow().iter().find(|(it, _)| Some(it.key()) == next) {
+                    crate::keynav::center(&self.scroll, w);
+                }
+            }
+            _ => {
+                let Some(item) = self.entries.borrow().iter().find(|(it, _)| Some(it.key()) == sel).map(|(it, _)| it.clone()) else { return };
+                crate::keynav::perform(k, &item, &self.seq.borrow(), true);
+            }
+        }
+    }
+}
+
+// 분야 지면 위: 저녁 정리(N-26). 기기 안 요약임을 밝히고, 줄마다 근거 기사 번호, 아래에 근거 기사 원제목·링크
+fn evening_brief_box(b: &dropcap_core::brief::SectionBrief) -> gtk::Box {
+    let v = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    v.add_css_class("dc-brief-box");
+    let head = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let moon = widgets::icon("weather-clear-night-symbolic", 16);
+    tint(&moon, &dropcap_core::sections::by_id(&b.section).map(|s| s.color.clone()).unwrap_or_else(|| "#5856D6".into()));
+    head.append(&moon);
+    let t = label(&format!("저녁 정리 · {}", dropcap_core::sections::name(&b.section)), 17.0, 700, &["dc-display"]);
+    t.set_wrap(false);
+    head.append(&t);
+    let at = b.at.with_timezone(&chrono::Local);
+    let (pm, h) = chrono::Timelike::hour12(&at);
+    let tl = label(&format!("{} {}:{:02}", if pm { "오후" } else { "오전" }, h, chrono::Timelike::minute(&at)), 11.5, 400, &["dc-tertiary"]);
+    tl.set_wrap(false);
+    head.append(&tl);
+    let sp = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    sp.set_hexpand(true);
+    head.append(&sp);
+    let note = label("기기 안 요약 · 원문을 확인하세요", 10.5, 500, &["dc-secondary"]);
+    note.set_wrap(false);
+    note.set_tooltip_text(Some("이 컴퓨터의 Ollama 가 아래 기사들의 제목·요약만 보고 만든 정리입니다. 틀릴 수 있어 근거 기사를 함께 둡니다."));
+    head.append(&note);
+    v.append(&head);
+    for line in b.lines.clone().unwrap_or_default() {
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let dot = label("•", 14.0, 400, &["dc-secondary"]);
+        dot.set_valign(gtk::Align::Start);
+        row.append(&dot);
+        // 문장 바로 뒤에 근거 번호(맥과 같이)
+        let refs: String = line.refs.iter().map(|r| format!("[{}]", r + 1)).collect();
+        let l = gtk::Label::new(None);
+        l.set_markup(&format!("<span font='14px'>{}</span>  <span font='11px' weight='600' alpha='60%'>{}</span>", gtk::glib::markup_escape_text(&line.text), refs));
+        l.set_xalign(0.0);
+        l.set_wrap(true);
+        l.set_hexpand(true);
+        row.append(&l);
+        v.append(&row);
+    }
+    v.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+    let list = gtk::Box::new(gtk::Orientation::Vertical, 5);
+    for (i, it) in b.items.iter().enumerate() {
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let n = label(&format!("[{}]", i + 1), 11.0, 600, &["dc-secondary", "numeric"]);
+        n.set_wrap(false);
+        row.append(&n);
+        let t = label(&it.title, 12.5, 400, &[]); // 원제목 그대로
+        t.set_wrap(false);
+        t.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        row.append(&t);
+        let s = label(&format!("— {}", it.source_name), 11.5, 400, &["dc-secondary"]);
+        s.set_wrap(false);
+        row.append(&s);
+        let btn = gtk::Button::builder().child(&row).css_classes(["flat"]).tooltip_text(it.link.as_str()).build();
+        let (item, seq) = (it.clone(), b.items.clone());
+        btn.connect_clicked(move |w| crate::app::open_from_magazine_in(&item, origin_of(w), seq.clone()));
+        list.append(&btn);
+    }
+    v.append(&list);
+    v
 }
 
 // 마지막 줄에 카드 한 장만 남지 않게(4장이면 2×2, 7장이면 4+3 …)
@@ -456,7 +646,7 @@ fn texture_surface(t: &gdk::Texture) -> Option<cairo::ImageSurface> {
 }
 
 // 표지(M-07): 큰 사진 + 켄 번스(22초 왕복) + 아래 그라데이션, 배지·분야·출처·시간, 큰 제목·원제목, '기사 읽기', '여러 시각 N곳'
-fn cover_story(item: &NewsItem, cluster: Option<String>, size: i64, on_story: Rc<dyn Fn(String)>) -> gtk::Widget {
+fn cover_story(item: &NewsItem, cluster: Option<String>, size: i64, on_story: Rc<dyn Fn(String)>, seq: Vec<NewsItem>) -> gtk::Widget {
     let photo = has_photo(item);
     let ov = gtk::Overlay::new();
     ov.add_css_class("dc-cover");
@@ -546,6 +736,9 @@ fn cover_story(item: &NewsItem, cluster: Option<String>, size: i64, on_story: Rc
     topic.append(&label(&item.topic_label(), 12.0, 600, &[]));
     meta.append(&topic);
     meta.append(&label(&format!("{} · {}", item.source_name, widgets::time_text(item)), 12.0, 400, &[]));
+    if let Some(p) = widgets::paywall_mark(item) {
+        meta.append(&p);
+    }
     col.append(&meta);
     let title = label(item.display_title(), 34.0, 700, &["dc-display"]);
     lines(&title, 3);
@@ -568,7 +761,7 @@ fn cover_story(item: &NewsItem, cluster: Option<String>, size: i64, on_story: Rc
     {
         let it = item.clone();
         let o = ov.clone();
-        read.connect_clicked(move |_| open_from_magazine(&it, origin_of(&o)));
+        read.connect_clicked(move |_| crate::app::open_from_magazine_in(&it, origin_of(&o), seq.clone()));
     }
     buttons.append(&read);
     if let Some(c) = cluster.filter(|_| size >= 2) {

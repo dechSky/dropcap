@@ -66,12 +66,15 @@ pub struct Article {
 }
 
 impl Article {
-    // 본문으로 받아들일 만한가(맥 tryExtract 와 같은 기준)
+    // 본문으로 받아들일 만한가(맥 tryExtract 와 같은 기준). 짧은 글(소개글·단신)도 받는다: 글 100자 이상이면 본문으로
+    // (예전 '2문단·280자' 기준은 GeekNews 같은 짧은 글을 버렸다)
     pub fn acceptable(&self) -> bool {
         let texts: Vec<&String> = self.blocks.iter().filter_map(|b| b.text.as_ref()).collect();
-        texts.len() >= 2 && texts.iter().map(|t| t.chars().count()).sum::<usize>() > 280
+        !texts.is_empty() && texts.iter().map(|t| t.chars().count()).sum::<usize>() >= MIN_CHARS
     }
 }
+
+pub const MIN_CHARS: usize = 100;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stage {
@@ -117,6 +120,8 @@ pub struct PreparedArticle {
     pub summarizing: bool,
     #[serde(default)]
     pub fallback: String, // 본문을 못 추렸을 때 보여 줄 요약 번역
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paywalled: Option<bool>, // 맛보기만 나오고 구독을 권함(유료벽 뒤, G-14)
 }
 
 impl PreparedArticle {
@@ -131,6 +136,7 @@ impl PreparedArticle {
             summary: None,
             summarizing: false,
             fallback: String::new(),
+            paywalled: None,
         }
     }
 }
@@ -144,6 +150,10 @@ pub trait Extract: Send + Sync {
     // 실제로 띄워서 추리기(사용자가 연 기사만)
     fn slow(&self, _url: String) -> BoxFuture<'static, Option<Article>> {
         async { None }.boxed()
+    }
+    // 기다리는 시간을 정해 띄우기(접근을 거부하는 사이트는 짧게)
+    fn slow_for(&self, url: String, _max_secs: u64) -> BoxFuture<'static, Option<Article>> {
+        self.slow(url)
     }
 }
 
@@ -303,19 +313,108 @@ fn walk(el: &dom_query::NodeRef, abs: &dyn Fn(Option<String>) -> Option<String>,
     }
 }
 
-// 빠른 길의 Rust 판: 스크립트 없이 HTML 만으로
+// 빠른 길의 Rust 판: 스크립트 없이 HTML 만으로.
+// 기본 기준(500자)으로 못 찾으면 짧은 글(GeekNews 소개글 등)을 위해 100자 기준으로 한 번 더, 그래도 못 찾으면
+// 본문으로 보이는 영역(id·class 에 content·article·topic·post·entry 가 든 것) 가운데 글이 가장 많은 곳(맥 스크립트와 같은 순서)
 pub fn extract_html(html: &str, base: &str) -> Option<Article> {
+    let readable = |threshold: Option<usize>| -> Option<Article> {
+        let doc = dom_query::Document::from(html);
+        doc.select(SR_ONLY).remove();
+        let cfg = threshold.map(|t| dom_smoothie::Config { char_threshold: t, ..Default::default() });
+        let mut r = dom_smoothie::Readability::with_document(doc, Some(base), cfg).ok()?;
+        let a = r.parse().ok()?;
+        let art = Article {
+            title: Some(a.title.clone()).filter(|t| !t.is_empty()),
+            byline: a.byline.clone(),
+            site_name: a.site_name.clone(),
+            blocks: with_plain_lines(blocks_from_html(&a.content, base), &a.content),
+        };
+        art.acceptable().then_some(art)
+    };
+    readable(None).or_else(|| readable(Some(MIN_CHARS))).or_else(|| content_region(html, base))
+}
+
+const REGION: &str = r#"article, main, [id*="content" i], [class*="content" i], [id*="topic" i], [class*="article" i], [class*="post" i], [class*="entry" i], [itemprop="articleBody"]"#;
+const REGION_JUNK: &str = r#"script, style, nav, form, button, .related-topics, [class*="related" i], [class*="share" i]"#;
+
+// 본문으로 보이는 영역 가운데 글이 가장 많은 곳(80자 이상 · 40000자 미만, 머리·꼬리·옆 메뉴 안은 뺌)
+pub fn content_region(html: &str, base: &str) -> Option<Article> {
     let doc = dom_query::Document::from(html);
     doc.select(SR_ONLY).remove();
-    let mut r = dom_smoothie::Readability::with_document(doc, Some(base), None).ok()?;
-    let a = r.parse().ok()?;
+    let mut best: Option<(String, usize)> = None;
+    for n in doc.select(REGION).nodes() {
+        let mut p = n.parent();
+        let mut inside = false;
+        while let Some(a) = p {
+            if matches!(a.node_name().map(|t| t.to_lowercase()).as_deref(), Some("nav" | "header" | "footer" | "aside")) {
+                inside = true;
+                break;
+            }
+            p = a.parent();
+        }
+        if inside {
+            continue;
+        }
+        let len = clean_text(&n.text()).chars().count();
+        if len > best.as_ref().map(|b| b.1).unwrap_or(0) && len < 40000 {
+            best = Some((n.html().to_string(), len));
+        }
+    }
+    let (inner, len) = best?;
+    if len < 80 {
+        return None;
+    }
+    let region = dom_query::Document::from(inner.as_str());
+    region.select(REGION_JUNK).remove();
+    let content = region.select("body").html().to_string();
+    let title = doc.select("title").text().trim().to_string();
     let art = Article {
-        title: Some(a.title.clone()).filter(|t| !t.is_empty()),
-        byline: a.byline.clone(),
-        site_name: a.site_name.clone(),
-        blocks: blocks_from_html(&a.content, base),
+        title: Some(title).filter(|t| !t.is_empty()),
+        byline: None,
+        site_name: None,
+        blocks: with_plain_lines(blocks_from_html(&content, base), &content),
     };
     art.acceptable().then_some(art)
+}
+
+// 문단 태그 없이 맨 글자로 든 본문(GeekNews 등): 줄 단위로 문단을 만든다
+pub fn with_plain_lines(mut blocks: Vec<Block>, content: &str) -> Vec<Block> {
+    if blocks.iter().any(|b| matches!(b.kind, BlockKind::P | BlockKind::Li)) {
+        return blocks;
+    }
+    let doc = dom_query::Document::from(content);
+    for br in doc.select("br").nodes() {
+        br.replace_with_html("\n");
+    }
+    for blk in doc.select("div, p, li, h1, h2, h3, h4, h5, h6, section").nodes() {
+        blk.append_html("\n");
+    }
+    let text = doc.select("body").text().to_string();
+    for line in text.split('\n').map(clean_text).filter(|t| t.chars().count() > 1) {
+        blocks.push(Block::text(BlockKind::P, line));
+    }
+    blocks
+}
+
+// 스크립트·스타일을 뺀 보이는 글자 수(대략) — 글이 이미 많은 페이지는 느린 길을 돌려도 같으므로 건너뛴다
+pub fn visible_text_length(html: &str) -> usize {
+    static TAGS: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?is)<(script|style|noscript|svg)\b[^>]*>.*?</(script|style|noscript|svg)>").unwrap());
+    static ANY: Lazy<Regex> = Lazy::new(|| Regex::new(r"<[^>]+>").unwrap());
+    let head: String = html.chars().take(800_000).collect();
+    let t = TAGS.replace_all(&head, " ");
+    let t = ANY.replace_all(&t, " ");
+    WS.replace_all(&t, " ").chars().count()
+}
+
+// 접근을 거부한(401·403·429) 뒤 느린 길도 실패한 곳: 이번 실행 동안은 바로 대체 화면
+static BLOCKED_HOSTS: Lazy<Mutex<std::collections::HashSet<String>>> = Lazy::new(|| Mutex::new(Default::default()));
+
+pub fn host_of(link: &str) -> String {
+    url::Url::parse(link).ok().and_then(|u| u.host_str().map(|h| h.to_lowercase())).unwrap_or_default()
+}
+
+pub fn is_blocked_host(link: &str) -> bool {
+    BLOCKED_HOSTS.lock().unwrap().contains(&host_of(link))
 }
 
 pub fn file_name(link: &str) -> String {
@@ -334,7 +433,10 @@ pub struct ArticleService {
     listeners: Mutex<HashMap<String, HashMap<u64, Listener>>>,
     next_id: Mutex<u64>,
     pinned: Mutex<Arc<dyn Fn() -> Vec<String> + Send + Sync>>, // 저장한 기사 링크(디스크 정리에서 제외)
+    recorder: Mutex<Arc<Recorder>>, // 사용자가 연 기사의 추리기 결과(유료 기사 배우기, G-14)
 }
+
+type Recorder = dyn Fn(&NewsItem, bool, bool) + Send + Sync; // (기사, 실패, 막힘)
 
 pub const MEMORY_LIMIT: usize = 40;
 pub const DISK_LIMIT: usize = 150;
@@ -351,6 +453,7 @@ impl ArticleService {
             listeners: Mutex::new(HashMap::new()),
             next_id: Mutex::new(0),
             pinned: Mutex::new(Arc::new(Vec::new)),
+            recorder: Mutex::new(Arc::new(|_, _, _| {})),
         })
     }
 
@@ -359,6 +462,13 @@ impl ArticleService {
     }
     pub fn set_pinned(&self, f: Arc<dyn Fn() -> Vec<String> + Send + Sync>) {
         *self.pinned.lock().unwrap() = f;
+    }
+    pub fn set_recorder(&self, f: Arc<Recorder>) {
+        *self.recorder.lock().unwrap() = f;
+    }
+    fn record(&self, item: &NewsItem, failed: bool, blocked: bool) {
+        let f = self.recorder.lock().unwrap().clone();
+        f(item, failed, blocked);
     }
 
     // 진행 상황을 받아 보기(읽기 창). 돌려받은 id 로 그만 받기.
@@ -476,8 +586,17 @@ impl ArticleService {
         }
         let ex = self.extractor.lock().unwrap().clone();
         let t0 = std::time::Instant::now();
-        if let Ok(Some(body)) = FEEDS.fetch_with_encoding(link, false).await {
+        let host = host_of(link);
+        let mut refused = false; // 사이트가 접근을 거부(401·403·429)
+        let mut rich_page = false; // 받은 HTML 에 글이 이미 많다(스크립트로 그리는 빈 껍데기가 아님)
+        // 2MB 를 넘는 페이지는 빠른 길을 건너 느린 길(웹 보기)로(S-12)
+        let got = FEEDS.fetch_with_encoding(link, false, crate::feed_service::FetchLimit::Page).await;
+        if let Err(crate::net::FeedError::Http(code)) = &got {
+            refused = matches!(code, 401 | 403 | 429);
+        }
+        if let Ok(Some(body)) = got {
             let html = decode_html(&body.data, body.encoding.as_deref());
+            rich_page = visible_text_length(&html) > 600;
             let art = match ex.fast(html.clone(), link.to_string()).await {
                 Some(a) if a.acceptable() => Some(a),
                 _ => {
@@ -493,7 +612,20 @@ impl ArticleService {
         if !interactive {
             return None;
         }
-        let art = ex.slow(link.to_string()).await.filter(|a| a.acceptable());
+        // 접근을 거부하는 사이트(예: GeekNews 403)는 느린 길도 대개 막힌다: 짧게만 시도하고, 그래도 막히면 이번 실행 동안은 바로 대체 화면
+        if BLOCKED_HOSTS.lock().unwrap().contains(&host) {
+            log::info!("[기사] {host} 은 막힌 사이트라 건너뜀");
+            return None;
+        }
+        // 글이 다 들어 있는데도 못 추린 페이지는 스크립트를 돌려도 같으므로 느린 길(최대 15초)을 건너뛴다
+        if rich_page {
+            log::info!("[기사] 빠른 길 실패, 글이 있는 페이지라 느린 길 건너뜀 {host}");
+            return None;
+        }
+        let art = ex.slow_for(link.to_string(), if refused { 6 } else { 15 }).await.filter(|a| a.acceptable());
+        if art.is_none() && refused {
+            BLOCKED_HOSTS.lock().unwrap().insert(host);
+        }
         log::info!("[기사] 느린 길 {:.2}초 {}", t0.elapsed().as_secs_f64(), if art.is_none() { "실패" } else { "성공" });
         art
     }
@@ -509,6 +641,7 @@ impl ArticleService {
                 f.stage = Stage::Failed;
                 return f;
             }
+            self.record(&item, true, false);
             a.fallback = TR.translate(&item.summary).await;
             a.stage = Stage::Failed;
             self.emit(&item.link, &a);
@@ -517,6 +650,12 @@ impl ArticleService {
         let art_title = art.title.clone().filter(|t| !t.is_empty()).unwrap_or_else(|| item.title.clone());
         a.original_title = art_title.clone();
         a.blocks = art.blocks.clone();
+        if crate::paywall::looks_blocked(&art.blocks) {
+            a.paywalled = Some(true);
+        }
+        if interactive {
+            self.record(&item, false, a.paywalled == Some(true));
+        }
         log::info!("[기사] 그림 {}개", art.blocks.iter().filter(|b| b.kind == BlockKind::Img).count());
         let texts: Vec<String> = art.blocks.iter().filter_map(|b| b.text.clone()).collect();
         let sample: String = texts.join(" ").chars().take(2000).collect();
@@ -534,7 +673,10 @@ impl ArticleService {
                 }
                 let mut inputs: Vec<String> = if n == 0 { vec![art_title.clone()] } else { vec![] };
                 inputs.extend(chunk.iter().map(|&i| art.blocks[i].text.clone().unwrap()));
-                let mut out = TR.translate_many(&inputs).await;
+                let (mut out, used) = TR.translate_many_reporting(&inputs).await;
+                if used != crate::translator::Engine::None {
+                    a.engine = used.label().to_string(); // 이 기사에 실제로 쓴 엔진(T-08)
+                }
                 if n == 0 {
                     a.title = out.remove(0);
                 }
@@ -545,7 +687,6 @@ impl ArticleService {
                 a.translated = true;
                 self.emit(&item.link, &a);
             }
-            a.engine = TR.last_engine().label().to_string();
         } else {
             a.title = art_title.clone();
         }

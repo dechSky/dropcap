@@ -89,7 +89,7 @@ struct ArticleQuery: EntityQuery {
         await MainActor.run { identifiers.compactMap { URLRouter.item(forKey: $0).map(ArticleEntity.init) } }
     }
     func suggestedEntities() async throws -> [ArticleEntity] {
-        await MainActor.run { AppModel.shared.state.recent.prefix(10).map(ArticleEntity.init) }
+        await MainActor.run { AppModel.shared.visibleRecent.prefix(10).map(ArticleEntity.init) }
     }
 }
 
@@ -127,7 +127,7 @@ struct GetLatestNewsIntent: AppIntent {
         case .unknown: throw IntentFailure.unknownSection(section ?? "")
         }
         let n = IntentLogic.count(count)
-        let items = await MainActor.run { IntentLogic.latest(AppModel.shared.state.recent, section: sec, count: n) }
+        let items = await MainActor.run { IntentLogic.latest(AppModel.shared.visibleRecent, section: sec, count: n) }
         return .result(value: items.map(ArticleEntity.init))
     }
 }
@@ -142,7 +142,7 @@ struct SaveURLIntent: AppIntent {
 
     func perform() async throws -> some IntentResult & ReturnsValue<ArticleEntity> {
         guard let u = IntentLogic.savableURL(url) else { throw IntentFailure.badURL(url) }
-        let html = (try? await FeedService.shared.fetch(u.absoluteString)).flatMap { String(data: $0.prefix(200_000), encoding: .utf8) }
+        let html = (try? await FeedService.shared.fetch(u.absoluteString, limit: .page)).flatMap { String(data: $0.prefix(200_000), encoding: .utf8) }
         let item = IntentLogic.savedItem(u, title: html.flatMap(IntentLogic.pageTitle))
         await MainActor.run {
             if !AppModel.shared.state.saved.contains(where: { $0.link == item.link }) { AppModel.shared.toggleSaved(item) }

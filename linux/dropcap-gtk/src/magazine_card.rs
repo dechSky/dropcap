@@ -284,7 +284,8 @@ pub struct StoryCard;
 
 impl StoryCard {
     // order: 지면 안 순서(차례로 깔리는 지연), story_items: 해외·국내가 섞인 스토리 보도
-    pub fn build(item: &NewsItem, order: usize, cluster: Option<String>, story_items: &[NewsItem], on_story: Option<Rc<dyn Fn(String)>>) -> gtk::Widget {
+    // seq: 이 카드가 놓인 지면의 기사 순서(읽기 창 J/K 로 다음·이전, H-05)
+    pub fn build(item: &NewsItem, order: usize, cluster: Option<String>, story_items: &[NewsItem], on_story: Option<Rc<dyn Fn(String)>>, seq: &[NewsItem]) -> gtk::Widget {
         let core = ui().core.clone();
         let button = gtk::Button::new();
         button.add_css_class("flat");
@@ -348,6 +349,9 @@ impl StoryCard {
             meta.append(&s);
         }
         meta.append(&label(&item.source_name, 11.5, 600, &[]));
+        if let Some(p) = widgets::paywall_mark(item) {
+            meta.append(&p);
+        }
         if item.related_count() > 0 {
             meta.append(&label(&format!("외 {}곳", item.related_count()), 11.0, 400, &["dc-secondary"]));
         }
@@ -378,7 +382,8 @@ impl StoryCard {
         button.set_child(Some(&v));
         {
             let it = item.clone();
-            button.connect_clicked(move |b| open_card(&it, b));
+            let seq = seq.to_vec();
+            button.connect_clicked(move |b| crate::app::open_from_magazine_in(&it, origin_of(b), seq.clone()));
         }
         attach_context(&button, item, cluster, on_story);
         // 지면이 차례로 깔림: 카드마다 0.05초, 최대 0.4초(M-09)

@@ -74,7 +74,7 @@ internal static class Win32
         WM_LBUTTONDOWN = 0x201, WM_LBUTTONUP = 0x202, WM_RBUTTONUP = 0x205, WM_MOUSEACTIVATE = 0x21, WM_APP = 0x8000, WM_DPICHANGED = 0x2E0,
         WM_CONTEXTMENU = 0x7B, WM_NCHITTEST = 0x84, WM_USER = 0x400;
     public const int MA_NOACTIVATE = 3;
-    public const nint PBT_APMRESUMEAUTOMATIC = 0x12, PBT_APMRESUMESUSPEND = 0x7;
+    public const nint PBT_APMRESUMEAUTOMATIC = 0x12, PBT_APMRESUMESUSPEND = 0x7, PBT_APMSUSPEND = 0x4;
     public const uint NIM_ADD = 0, NIM_MODIFY = 1, NIM_DELETE = 2, NIM_SETVERSION = 4;
     public const uint NIF_MESSAGE = 1, NIF_ICON = 2, NIF_TIP = 4, NIF_SHOWTIP = 0x80;
     public const uint NOTIFYICON_VERSION_4 = 4;
@@ -118,6 +118,13 @@ internal static class Win32
     [DllImport("shell32", CharSet = CharSet.Unicode)] public static extern bool Shell_NotifyIcon(uint msg, ref NOTIFYICONDATA data);
     [DllImport("shell32")] public static extern int Shell_NotifyIconGetRect(ref NOTIFYICONIDENTIFIER id, out RECT rect);
     [DllImport("shell32")] public static extern int SHQueryUserNotificationState(out int state);
+    [DllImport("user32")] public static extern bool MessageBeep(uint type);
+    [DllImport("user32")] public static extern uint GetWindowThreadProcessId(nint hWnd, out uint pid);
+    [DllImport("user32")] public static extern bool GetWindowRect(nint hWnd, out RECT rect);
+    [DllImport("user32")] public static extern nint MonitorFromWindow(nint hWnd, uint flags);
+    [DllImport("user32")] public static extern bool IsWindowVisible(nint hWnd);
+    [DllImport("user32")] public static extern nint GetShellWindow();
+    [DllImport("user32")] public static extern nint GetDesktopWindow();
     [DllImport("winmm", EntryPoint = "PlaySoundW")] public static extern bool PlaySound(nint data, nint hmod, uint flags);
     [DllImport("dwmapi")] public static extern int DwmSetWindowAttribute(nint hWnd, int attr, ref int value, int size);
     [DllImport("kernel32", CharSet = CharSet.Unicode)] public static extern nint GetModuleHandle(string? name);

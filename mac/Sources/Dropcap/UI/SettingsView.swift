@@ -10,6 +10,8 @@ struct SettingsView: View {
     @State private var addError: String?
     @State private var mustText = ""
     @State private var muteText = ""
+    @State private var watchText = ""
+    @ObservedObject private var backup = BackupManager.shared
 
     var body: some View {
         TabView {
@@ -25,6 +27,7 @@ struct SettingsView: View {
             appleReady = await Translator.appleReady()
             mustText = model.state.settings.mustKeywords.joined(separator: ", ")
             muteText = model.state.settings.muteKeywords.joined(separator: ", ")
+            watchText = model.state.settings.watchKeywords.joined(separator: ", ")
         }
     }
 
@@ -44,6 +47,20 @@ struct SettingsView: View {
                     ForEach([2, 5, 10, 15, 30], id: \.self) { Text("\($0)분").tag($0) }
                 }
                 Button("알림 미리 보기") { model.preview() }
+            }
+            Section("내 기록") {
+                Text("계정도 서버도 없습니다. 모든 기록은 이 Mac 안에만 있습니다.").font(.callout)
+                HStack {
+                    Button("내 기록 내보내기…") { BackupManager.shared.chooseExport() }
+                    Button("가져오기…") { BackupManager.shared.chooseImport() }
+                    if backup.undoFile != nil {
+                        Button("마지막 가져오기 되돌리기") { BackupManager.shared.undoImport() }
+                            .help("가져오기 전에 자동으로 남긴 기록으로 되돌립니다")
+                    }
+                }
+                Text("다른 Mac 으로 옮길 때: 저장·스크랩과 폴더·구독·분야·알림 설정·낱말·숨긴 출처를 JSON 파일 하나로 내보내고, 다른 Mac 에서 가져오면 없는 것만 더합니다(같은 것은 건너뜀). 기사 캐시·사진은 담지 않습니다. 가져오기 전 기록은 자동으로 남겨 되돌릴 수 있습니다.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if let m = backup.lastMessage { Text(m).font(.caption).foregroundStyle(.secondary) }
             }
             Section("회의·발표 중에는 조용히") {
                 Toggle("전체 화면 앱을 쓰는 중", isOn: Binding(get: { model.state.settings.autoQuietFullscreen }, set: { v in model.update { $0.autoQuietFullscreen = v } }))
@@ -280,6 +297,15 @@ extension SettingsView {
                 TextField("알리지 않음", text: $muteText, prompt: Text("예: 주식, 채용, 이벤트"))
                     .onSubmit(saveKeywords)
                     .onChange(of: muteText) { scheduleSave() }
+                    // 카드의 '이 낱말 알리지 않기' 등 바깥에서 낱말이 바뀌면 칸도 따라간다(예전엔 남은 옛 글자를 탭을 옮길 때 다시 저장해 되돌렸다 — E2E 22)
+                    .onChange(of: model.state.settings.mustKeywords) { _, v in if Self.splitKeywords(mustText) != v { mustText = v.joined(separator: ", ") } }
+                    .onChange(of: model.state.settings.muteKeywords) { _, v in if Self.splitKeywords(muteText) != v { muteText = v.joined(separator: ", ") } }
+                TextField("지켜볼 낱말 (회사·인물·법안)", text: $watchText, prompt: Text("예: 삼성전자, 엔비디아, AI 기본법"))
+                    .onSubmit(saveKeywords)
+                    .onChange(of: watchText) { scheduleSave() }
+                    .onChange(of: model.state.settings.watchKeywords) { _, v in if WatchWords.normalized(Self.splitKeywords(watchText)) != v { watchText = v.joined(separator: ", ") } }
+                Text("지켜볼 낱말이 든 소식은 분야 설정과 상관없이 같은 이야기마다 한 번 알리고, 아침 브리핑 시각에 \"오늘 ○○ 소식 3건\"으로 모아 알립니다. 꼭 알림(★)과 겹치면 ★ 로 표시합니다.")
+                    .font(.caption).foregroundStyle(.secondary)
                 HStack {
                     Text("쉼표로 나눠 적으면 바로 저장·적용됩니다. 제목·요약에 그 낱말이 들어가면 걸립니다.").font(.caption).foregroundStyle(.secondary)
                     Spacer()
@@ -337,11 +363,14 @@ extension SettingsView {
         KeywordSaveTimer.shared.schedule { saveKeywords() }
     }
 
+    static func splitKeywords(_ s: String) -> [String] {
+        s.split(whereSeparator: { $0 == "," || $0 == "\n" }).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+
     func saveKeywords() {
-        let split = { (s: String) in s.split(whereSeparator: { $0 == "," || $0 == "\n" }).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }
-        let must = split(mustText), mute = split(muteText)
-        guard must != model.state.settings.mustKeywords || mute != model.state.settings.muteKeywords else { return }
-        model.update { $0.mustKeywords = must; $0.muteKeywords = mute }
+        let must = Self.splitKeywords(mustText), mute = Self.splitKeywords(muteText), watch = WatchWords.normalized(Self.splitKeywords(watchText))
+        guard must != model.state.settings.mustKeywords || mute != model.state.settings.muteKeywords || watch != model.state.settings.watchKeywords else { return }
+        model.update { $0.mustKeywords = must; $0.muteKeywords = mute; $0.watchKeywords = watch }
         model.reapplyKeywords() // 이미 받은 목록에도 바로 적용
     }
 }

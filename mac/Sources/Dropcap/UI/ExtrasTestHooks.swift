@@ -7,6 +7,7 @@ import SwiftUI
 //    · 매거진 오늘 호(진행률) → today-progress.png, 대표 기사를 모두 읽음으로 → today-done.png
 //    · 묶음 분야 저녁 정리 → brief.png (Apple Intelligence 가 없으면 '시험 견본' 문장으로 화면만 확인)
 //    · 분야 대표 사진 점수: 분야마다 고른 사진과 뺀 사진을 photo-*.jpg 로 남기고 점수를 기록
+//  DROPCAP_TEST_EXTRAS2=<폴더>       지켜볼 낱말 정리 물방울(watch.png)·설정 일반 탭(settings.png)·내보내기→가져오기 왕복(backup.json, 기록에 결과)
 //  DROPCAP_TEST_ENABLE=<출처 id,…>   그 출처를 켜고 최근 글을 매거진에 바로 싣는다(유료 출처 확인용)
 //  DROPCAP_TEST_PHOTO_FILES=<폴더>  폴더의 사진을 모두 재어 점수를 기록
 //  DROPCAP_TEST_FOCUS=fullscreen|sharing|calendar|none  자동 조용히 감지 결과를 정해 둔다
@@ -39,6 +40,7 @@ enum ExtrasTestHooks {
                 }
             }
         }
+        if let dir = env["DROPCAP_TEST_EXTRAS2"] { extras2(dir, env) }
         guard let dir = env["DROPCAP_TEST_EXTRAS"] else { return }
         let wait = Double(env["DROPCAP_TEST_EXTRAS_WAIT"] ?? "100") ?? 100
         Task {
@@ -49,6 +51,31 @@ enum ExtrasTestHooks {
             await today(dir)
             await brief(dir)
             NSLog("[시험] 남은 개선 묶음 찍기 끝")
+        }
+    }
+
+    // 2차: 지켜볼 낱말 정리 물방울 · 설정 '일반'(내 기록) · 내보내기→가져오기 왕복
+    static func extras2(_ dir: String, _ env: [String: String]) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            let samples = ["엔비디아, 새 AI 칩 공개", "엔비디아 시가총액 5조 달러 돌파", "엔비디아·삼성전자 HBM 공급 계약"].enumerated().map { i, t in
+                NewsItem(id: AppModel.previewID, title: t, titleKo: nil, link: "", date: Date(), summary: "", sourceId: "s\(i)", sourceName: "견본", tier: "kr")
+            }
+            ToastCenter.shared.showWatch(word: "엔비디아", items: samples)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { ToastCenter.shared.snapshot(to: "\(dir)/watch.png") }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6) { // 상단바 앱에서는 설정 창 동작이 열리지 않아, 같은 화면을 시험 창에 띄운다
+            let w = NSWindow(contentViewController: NSHostingController(rootView: SettingsView()))
+            w.title = "settings-test"
+            w.makeKeyAndOrderFront(nil)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 9) {
+            shot("settings-test", "\(dir)/settings.png")
+            let out = URL(fileURLWithPath: "\(dir)/backup.json")
+            BackupManager.shared.export(to: out)
+            NSLog("[시험] %@", BackupManager.shared.lastMessage ?? "")
+            BackupManager.shared.importFile(out)
+            NSLog("[시험] %@", BackupManager.shared.lastMessage ?? "")
+            NSLog("[시험] 2차 끝")
         }
     }
 
@@ -118,7 +145,7 @@ enum ExtrasTestHooks {
             let cands = page.items.filter { $0.image != nil && !ImageKey.isJunk($0.image) }.prefix(8)
             for (i, it) in cands.enumerated() {
                 guard let img = await ImageLoader.shared.image(it.image!), let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) else { continue }
-                let s = await Task.detached { PhotoQuality.score(cg) }.value
+                let s = await PhotoQuality.scoreAsync(cg)
                 Database.shared.saveImageScore(it.image!, s)
                 let tag = PhotoQuality.good(s.total) ? "ok" : "no"
                 NSLog("[사진 시험] %@ %d %@ %.2f(비율 %.2f·크기 %.2f·글자 %.2f·색 %.2f·단색 %.2f) %@", sec, i, tag, s.total, s.aspect, s.size, s.textRatio, s.colorVariety, s.flatness, it.displayTitle)

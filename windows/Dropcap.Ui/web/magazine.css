@@ -291,3 +291,72 @@ body { display: flex; width: 100%; height: 100%; min-width: 860px; min-height: 6
 .modal .row { display: flex; gap: 8px; }
 .modal .row button { flex: 1; padding: 5px; border-radius: 6px; background: var(--fill-2); font-size: 13px; }
 .modal .row button.ok { background: var(--accent); color: #fff; }
+
+/* 분야 유리 카드(맥 SectionGlassCard — 분야 고르기 카드와 같은 모양, onboarding.css 에도 같은 규칙):
+   흐린 사진 바탕(10px·채도 1.2) + 분야색 유리판 + 안쪽 둥근 판(흰 그라데이션 테두리) + 흰 테두리 사진을 20° 기울여 오른쪽에 + 영문(고정폭 9pt)·한글 이름(19 굵게) */
+.gcard { --h: 130px; --s: 1; position: relative; height: var(--h); border-radius: 14px; overflow: hidden; isolation: isolate; color: #fff; background: var(--c);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--c) 28%, transparent); transition: transform .3s cubic-bezier(.2,.8,.3,1.2), box-shadow .3s; }
+.gcard > .bg { position: absolute; inset: -14px; width: calc(100% + 28px); height: calc(100% + 28px); object-fit: cover; filter: blur(10px) saturate(1.2); }
+.gcard > .gl { position: absolute; inset: 0; background: linear-gradient(135deg, color-mix(in srgb, var(--c) 88%, transparent), color-mix(in srgb, var(--c) 60%, rgba(0,0,0,.6)));
+  background: linear-gradient(135deg, color-mix(in srgb, var(--c) 88%, transparent), hsl(from var(--c) calc(h + 18) s calc(l - 16) / 0.6)); }
+.gcard > .panel { position: absolute; inset: 8px; border-radius: 10px; background: rgba(255,255,255,.1); }
+.gcard > .panel::before { content: ''; position: absolute; inset: 0; border-radius: inherit; padding: 1px; background: linear-gradient(135deg, rgba(255,255,255,.6), rgba(255,255,255,.08));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; }
+.gcard > .tilt { position: absolute; left: calc(100% - 78px * var(--s)); top: 36%; width: 98px; height: 98px; padding: 4px; border-radius: 6px; background: #fff;
+  box-shadow: 0 4px 16px rgba(0,0,0,.35); transform: scale(var(--s)) rotate(20deg); transition: transform .3s cubic-bezier(.2,.8,.3,1.2); }
+.gcard > .tilt img { width: 90px; height: 90px; display: block; object-fit: cover; border-radius: 4px; }
+.gcard > .tx { position: absolute; left: 0; top: 0; padding: 16px; display: flex; flex-direction: column; gap: 2px; text-shadow: 0 1px 2px rgba(0,0,0,.2); }
+.gcard .en { font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; font-size: 9px; font-weight: 600; letter-spacing: 1.4px; opacity: 0.85; }
+.gcard b { font-size: 19px; font-weight: 800; line-height: 1.25; }
+.gcard .gs { font-size: 11px; opacity: 0.85; padding-top: 2px; max-width: 55%; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.gcard:hover { transform: scale(1.015); }
+.gcard:hover > .tilt { transform: scale(var(--s)) rotate(22deg); }
+.reduce-motion .gcard:hover { transform: none; }
+.reduce-motion .gcard:hover > .tilt { transform: scale(var(--s)) rotate(20deg); }
+/* 매거진 분야 지면 머리: 높이 92 띠, 체크 없음, 'N건 · 첫 기사 제목' */
+.gcard.strip { --h: 92px; --s: 0.7077; margin: 0 28px 14px; }
+.gcard.strip > .tx { padding: 14px 16px; }
+.gcard.strip .gs { max-width: 70%; -webkit-line-clamp: 1; }
+
+/* 유료 기사 자물쇠(G-14): 표지 위에서는 흰 글자 색을 따른다 */
+.cover .meta .pw { color: inherit; opacity: 0.85; font-size: 10px; }
+.cover .meta .pw .ic { font-size: 10px; }
+
+/* 키보드로 고른 카드(H-03): base.css .kbsel 의 테두리 — 카드·표지 모서리를 따른다 */
+.card.kbsel, .cover.kbsel { position: relative; }
+.cover.kbsel::after { z-index: 3; }
+
+/* 오늘 호 완독(M-23): 머리 아래 작은 진행 막대 · 다 읽으면 초록 마무리 띠 */
+.today-slot { padding: 0 36px; margin: -8px 0 18px; }
+.today-slot:empty { display: none; }
+.today-prog { display: inline-flex; align-items: center; gap: 10px; font-size: 11.5px; font-weight: 500; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.today-prog .bar { position: relative; width: 120px; height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--text) 8%, transparent); overflow: hidden; }
+.today-prog .bar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px; background: color-mix(in srgb, var(--accent) 80%, transparent); transition: width .4s ease-out; }
+.today-done { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: 14px; background: color-mix(in srgb, var(--green) 9%, transparent);
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--green) 25%, transparent); }
+.today-done > .ic { font-size: 22px; color: var(--green); }
+.today-done div { display: flex; flex-direction: column; gap: 3px; }
+.today-done b { font-family: var(--display); font-size: 17px; font-weight: 700; }
+.today-done span { font-size: 12.5px; color: var(--text-2); }
+.today-done.pop { animation: done-in .5s cubic-bezier(.2,.9,.3,1.1) both; }
+@keyframes done-in { from { opacity: 0; transform: scale(0.98); } }
+
+/* 저녁 정리(N-26): 분야 지면 맨 위 */
+.brief { margin: 0 36px 8px; padding: 16px; border-radius: 14px; display: flex; flex-direction: column; gap: 10px;
+  background: color-mix(in srgb, var(--text) 4%, transparent); box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--text) 8%, transparent); animation: fade .3s ease-out both; }
+.brief .bh { display: flex; align-items: center; gap: 8px; }
+.brief .bh > .ic { color: var(--t); font-size: 16px; }
+.brief .bh b { font-family: var(--display); font-size: 17px; font-weight: 700; }
+.brief .at { font-size: 11.5px; color: var(--text-3); }
+.brief .ai { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 500; color: var(--text-2); white-space: nowrap; }
+.brief .ai .ic { font-size: 10.5px; }
+.brief .bl { display: flex; align-items: baseline; gap: 8px; font-size: 14px; line-height: 1.5; }
+.brief .bl .dot { color: var(--text-2); }
+.brief .bl .bt { user-select: text; }
+.brief .ref { font-size: 11px; font-weight: 600; color: var(--text-2); font-variant-numeric: tabular-nums; flex: none; }
+.brief .bdiv { height: 0.5px; background: var(--line); margin: 2px 0; }
+.brief .bi { display: flex; align-items: baseline; gap: 6px; width: 100%; text-align: left; min-width: 0; padding: 1px 0; }
+.brief .bi .bt { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.brief .bi .bs { font-size: 11.5px; color: var(--text-2); white-space: nowrap; flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; }
+.brief .bi:hover .bt { color: var(--accent); }
+.brief .bis { display: flex; flex-direction: column; gap: 5px; }

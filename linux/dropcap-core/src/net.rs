@@ -20,6 +20,7 @@ pub enum FeedError {
     Http(u16),
     Blocked(String),
     Net(String),
+    TooLarge(usize), // 받는 크기 상한을 넘어 받다가 멈춤(S-12)
 }
 
 impl std::fmt::Display for FeedError {
@@ -29,6 +30,7 @@ impl std::fmt::Display for FeedError {
             FeedError::BadFormat => write!(f, "RSS/Atom 형식을 알아볼 수 없음"),
             FeedError::Http(c) => write!(f, "HTTP {c}"),
             FeedError::Net(e) => write!(f, "{e}"),
+            FeedError::TooLarge(limit) => write!(f, "응답이 너무 커서 받다가 멈춤({}MB 넘음)", limit >> 20),
         }
     }
 }
@@ -121,7 +123,7 @@ async fn allowed(url: &str) -> bool {
 pub async fn get(url: &str, headers: &[(&str, String)], limit: usize) -> Result<Fetched, FeedError> {
     let mut current = url.to_string();
     let mut hops = 0;
-    let mut resp = loop {
+    let resp = loop {
         if !allowed(&current).await {
             return Err(FeedError::Blocked(if hops == 0 { "주소 확인".into() } else { "리다이렉트".into() }));
         }
@@ -157,14 +159,43 @@ pub async fn get(url: &str, headers: &[(&str, String)], limit: usize) -> Result<
         ct.split(';')
             .find_map(|p| p.trim().strip_prefix("charset=").map(|c| c.trim_matches('"').to_ascii_lowercase()))
     });
-    let mut data = Vec::new();
-    while let Some(chunk) = resp.chunk().await.map_err(net_err)? {
-        if data.len() + chunk.len() > limit {
-            return Err(FeedError::Net("응답이 너무 큼".into()));
-        }
-        data.extend_from_slice(&chunk);
-    }
+    // 304·오류 응답의 본문은 받지 않는다. 헤더의 길이가 이미 상한을 넘으면 한 바이트도 받지 않고, 받는 도중 넘으면 그 자리에서 끊는다(S-12)
+    let data = if (200..300).contains(&status) {
+        let expected = resp.content_length();
+        let stream = futures::stream::unfold(resp, |mut r| async move {
+            match r.chunk().await {
+                Ok(Some(c)) => Some((Ok(c), r)),
+                Ok(None) => None,
+                Err(e) => Some((Err(net_err(e)), r)),
+            }
+        });
+        collect(stream, expected, limit).await?
+    } else {
+        Vec::new()
+    };
     Ok(Fetched { status, data, charset, etag, last_modified })
+}
+
+// 받는 대로 모으다가 상한을 넘으면 멈춘다(다 받은 뒤 버리지 않음). expected = 헤더의 길이
+pub async fn collect<S, B>(stream: S, expected: Option<u64>, limit: usize) -> Result<Vec<u8>, FeedError>
+where
+    S: futures::Stream<Item = Result<B, FeedError>>,
+    B: AsRef<[u8]>,
+{
+    use futures::StreamExt;
+    if expected.map(|n| n > limit as u64).unwrap_or(false) {
+        return Err(FeedError::TooLarge(limit));
+    }
+    let mut data = Vec::with_capacity(expected.map(|n| n as usize).unwrap_or(64 << 10).min(limit));
+    futures::pin_mut!(stream);
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        if data.len() + chunk.as_ref().len() > limit {
+            return Err(FeedError::TooLarge(limit));
+        }
+        data.extend_from_slice(chunk.as_ref());
+    }
+    Ok(data)
 }
 
 fn net_err(e: reqwest::Error) -> FeedError {

@@ -116,6 +116,27 @@ fn general() -> adw::PreferencesPage {
     g.add(&preview);
     page.add(&g);
 
+    // 회의·발표 중에는 조용히(N-25)
+    let g = adw::PreferencesGroup::builder().title("회의·발표 중에는 조용히").build();
+    g.add(&switch("전체 화면 앱을 쓰는 중", st.auto_quiet_fullscreen, |v| ui().core.update(|s| s.auto_quiet_fullscreen = v)));
+    g.add(&switch("화면을 공유·기록하는 중", st.auto_quiet_sharing, |v| ui().core.update(|s| s.auto_quiet_sharing = v)));
+    let cal = adw::SwitchRow::builder()
+        .title("캘린더 일정 중")
+        .subtitle("리눅스에는 데스크톱 공통 일정 저장소가 없어 쓸 수 없습니다")
+        .active(false)
+        .sensitive(false)
+        .build();
+    g.add(&cal);
+    let full_note = if crate::hotkeys::is_wayland_session() {
+        "Wayland 에서는 다른 앱의 전체 화면을 알 수 없어 화면 공유·기록만 알아봅니다."
+    } else {
+        "전체 화면은 앞에 있는 다른 앱 창이 전체 화면일 때입니다."
+    };
+    g.add(&caption(&format!(
+        "이때 온 소식은 물방울 없이 '안 읽음'에 쌓이고, 알릴 만한 소식은 그 분야 묶음으로 모입니다. 화면 공유·기록은 OBS·SimpleScreenRecorder·Kooha 같은 기록 앱이 떠 있는지로 알아봅니다(Zoom·Meet 의 화면 공유는 알 수 없음). {full_note}"
+    )));
+    page.add(&g);
+
     // 번역(P-02): 리눅스에는 무료 기기 내 번역이 없다(T-05 ⊘)
     let g = adw::PreferencesGroup::builder().title("번역").build();
     let r = adw::ActionRow::builder().title("번역 방식").build();
@@ -128,9 +149,9 @@ fn general() -> adw::PreferencesPage {
     let g = adw::PreferencesGroup::builder().title("글꼴").build();
     g.add(&switch("Pretendard 글꼴 쓰기 (한글이 더 또렷함)", u.prefs.borrow().use_pretendard, |v| {
         ui().update_prefs(|p| p.use_pretendard = v);
-        theme::apply();
+        theme::refresh_all();
     }));
-    g.add(&caption("끄면 시스템 글꼴을 씁니다. 열려 있는 창은 다시 열면 바뀝니다."));
+    g.add(&caption("끄면 시스템 글꼴을 씁니다. 열려 있는 창에도 바로 적용됩니다."));
     page.add(&g);
 
     // 요약(P-04): Ollama 가 있는지 확인은 뒤에서
@@ -142,6 +163,9 @@ fn general() -> adw::PreferencesPage {
         bg(dropcap_core::summarizer::model(), move |m| r.set_subtitle(&dropcap_core::summarizer::status_text(&m)));
     }
     page.add(&g);
+
+    // 내 기록 내보내기·가져오기(P-08)
+    page.add(&crate::backup_ui::group());
 
     // 시작(P-05)
     let g = adw::PreferencesGroup::builder().title("시작").build();
@@ -469,30 +493,59 @@ fn filters() -> adw::PreferencesPage {
     let g = adw::PreferencesGroup::builder().title("낱말로 거르기").build();
     let must = adw::EntryRow::builder().title("꼭 알림 (★ 중요 표시) — 예: GPT-6, Claude, Gemini, 오픈소스").text(st.must_keywords.join(", ")).build();
     let mute = adw::EntryRow::builder().title("알리지 않음 — 예: 주식, 채용, 이벤트").text(st.mute_keywords.join(", ")).build();
+    let watch = adw::EntryRow::builder().title("지켜볼 낱말 (회사·인물·법안) — 예: 삼성전자, 엔비디아, AI 기본법").text(st.watch_keywords.join(", ")).build();
     g.add(&must);
     g.add(&mute);
+    g.add(&watch);
+    g.add(&caption("지켜볼 낱말이 든 소식은 분야 설정과 상관없이 같은 이야기마다 한 번 알리고, 아침 브리핑 시각에 \"오늘 ○○ 소식 3건\"으로 모아 알립니다. 꼭 알림(★)과 겹치면 ★ 로 표시합니다."));
     let save_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     save_row.set_margin_top(6);
-    let c = caption("쉼표로 나눠 적고 Enter. 제목·요약에 그 낱말이 들어가면 적용됩니다.");
+    let c = caption("쉼표로 나눠 적으면 바로 저장·적용됩니다. 제목·요약에 그 낱말이 들어가면 걸립니다.");
     c.set_hexpand(true);
     save_row.append(&c);
     let save = gtk::Button::builder().label("저장").valign(gtk::Align::Center).build();
     save_row.append(&save);
     g.add(&save_row);
     let do_save = {
-        let (must, mute) = (must.clone(), mute.clone());
+        let (must, mute, watch) = (must.clone(), mute.clone(), watch.clone());
         Rc::new(move || {
             let split = |s: &str| -> Vec<String> { s.split([',', '\n']).map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect() };
             let (a, b) = (split(&must.text()), split(&mute.text()));
-            ui().core.update(|s| {
+            let w = dropcap_core::watch_words::normalized(&split(&watch.text()));
+            let core = ui().core.clone();
+            let now = core.settings();
+            if a == now.must_keywords && b == now.mute_keywords && w == now.watch_keywords {
+                return;
+            }
+            core.update(|s| {
                 s.must_keywords = a;
                 s.mute_keywords = b;
+                s.watch_keywords = w;
             });
+            core.reapply_keywords(); // 이미 받은 목록에도 바로 적용
         })
     };
-    for e in [&must, &mute] {
+    // 입력이 멈추고 0.6초 뒤 저장(글자마다 저장·목록 다시 계산하지 않게)
+    let timer: Rc<std::cell::Cell<Option<glib::SourceId>>> = Rc::new(std::cell::Cell::new(None));
+    for e in [&must, &mute, &watch] {
         let f = do_save.clone();
         e.connect_entry_activated(move |_| f());
+        let (f, t) = (do_save.clone(), timer.clone());
+        e.connect_changed(move |_| {
+            if let Some(id) = t.take() {
+                id.remove();
+            }
+            let (f, t2) = (f.clone(), t.clone());
+            t.set(Some(glib::timeout_add_local_once(std::time::Duration::from_millis(600), move || {
+                t2.set(None);
+                f();
+            })));
+        });
+    }
+    // 탭을 옮기거나 창을 닫을 때도 저장
+    {
+        let f = do_save.clone();
+        page.connect_unmap(move |_| f());
     }
     {
         let f = do_save.clone();
@@ -551,6 +604,12 @@ fn filters() -> adw::PreferencesPage {
     }
     if let Some(n) = crate::hotkeys::note() {
         g.add(&caption(n));
+    }
+    // 목록·매거진·읽기 창 안의 키(H-03~H-05)
+    for (k, t) in crate::keynav::HELP {
+        let r = adw::ActionRow::builder().title(*t).build();
+        r.add_suffix(&tag(k, 12.5, 400, &["dc-secondary", "monospace"]));
+        g.add(&r);
     }
     page.add(&g);
 

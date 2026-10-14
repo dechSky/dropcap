@@ -218,10 +218,13 @@ public class StoreTests
         {
             var s = new AppState();
             Store.Save(s);
+            Store.Flush();
             Assert.False(File.Exists(Path.Combine(dir, "native-state.bak.json"))); // 처음엔 이전 파일이 없음
             for (var i = 0; i < Store.SeenLimit + 50; i++) s.Seen[$"s|{i}"] = i;
             Store.UseDir(dir); // 새 실행처럼
             Store.Save(s);
+            Assert.False(File.Exists(Path.Combine(dir, "native-state.bak.json"))); // 0.5초 묶는 동안은 아직 쓰지 않음
+            Store.Flush();
             Assert.True(File.Exists(Path.Combine(dir, "native-state.bak.json")));
             var back = Store.Load();
             Assert.Equal(Store.SeenLimit, back.Seen.Count);

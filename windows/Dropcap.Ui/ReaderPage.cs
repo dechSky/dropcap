@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.RegularExpressions;
 using System.Text.Json.Nodes;
 using Dropcap.Core;
 
@@ -17,6 +18,7 @@ public sealed class ReaderPage : IPage
     private readonly Scrapbook book;
     private readonly IPlatform platform;
     private readonly Bridge bridge;
+    private readonly PaywallBook? paywall;                      // 시험에서 넣는 것. 없으면 PaywallBook.Shared
     private readonly object gate = new();
     private readonly Dictionary<string, Entry> open = new();   // 기사 키 → 열린 창의 기사·진행 상황
     private string? speakingKey;                                // 지금 소리 내어 읽는 창
@@ -28,8 +30,9 @@ public sealed class ReaderPage : IPage
         public Guid? Token { get; set; }
     }
 
-    public ReaderPage(AppModel model, ArticleService articles, Scrapbook book, IPlatform platform, Bridge bridge)
+    public ReaderPage(AppModel model, ArticleService articles, Scrapbook book, IPlatform platform, Bridge bridge, PaywallBook? paywall = null)
     {
+        this.paywall = paywall;
         this.model = model;
         this.articles = articles;
         this.book = book;
@@ -38,6 +41,8 @@ public sealed class ReaderPage : IPage
         // 저장·스크랩 표시가 바뀌면 열린 창에 알림(창은 marks 로 다시 물음)
         book.Changed += () => bridge.Emit(Name, "changed");
     }
+
+    private PaywallBook Paywalls => paywall ?? PaywallBook.Shared;
 
     public static int FontSize => Math.Clamp((int)Math.Round(Prefs.Get("readerFontSize", (double)DefaultFont)), MinFont, MaxFont);
 
@@ -85,7 +90,7 @@ public sealed class ReaderPage : IPage
     {
         PreparedArticle? a;
         lock (gate) a = e.Article;
-        bridge.Emit(Name, "article", View(e.Item, a, model, book));
+        bridge.Emit(Name, "article", View(e.Item, a, model, book, Paywalls));
     }
 
     // MARK: 보기 데이터
@@ -119,12 +124,38 @@ public sealed class ReaderPage : IPage
         return $"https://{h}.translate.goog{u.AbsolutePath}?{q}";
     }
 
+    // 피드 요약(HTML 꼬리표·여분 공백 제거, 제목과 같거나 너무 짧으면 없음) — 맥 ReaderView.feedSummary
+    public static string? FeedSummary(NewsItem it)
+    {
+        var t = Regex.Replace(Regex.Replace(it.Summary, "<[^>]+>", " "), @"\s+", " ").Trim();
+        if (t.Length <= 30 || it.Title.StartsWith(t[..Math.Min(25, t.Length)], StringComparison.Ordinal)) return null;
+        return t;
+    }
+
+    // 무료 보도를 먼저 권할 때와 그 이유(G-15, 맥 ReaderModel.freeReason): 유료로 알려진 곳이거나, 열어 보니 막혔을 때
+    public static string? FreeReason(int alternatives, string phase, bool paywalled, PaywallKind? kind)
+    {
+        if (alternatives == 0) return null;
+        if (phase == "failed") return "본문을 열지 못했습니다";
+        if (paywalled) return "구독자만 읽을 수 있는 기사입니다";
+        if (kind is { } k && k.Blocks()) return k == PaywallKind.Hard ? "유료 기사입니다" : "이곳 기사는 자주 막힙니다";
+        return null;
+    }
+
+    // 같은 스토리에서 무료로 읽을 수 있는 보도(숨긴 출처 빼고)
+    public static List<NewsItem> Alternatives(NewsItem item, AppModel? m, PaywallBook? pw)
+    {
+        if (m is null || pw is null) return new();
+        try { return pw.Alternatives(item, m.Magazine, m.State.HiddenSources.ToHashSet()); }
+        catch { return new(); }
+    }
+
     // 머리의 날짜: 맥 "10월 13일 오후 3:05" 모양
     public static string DateLabel(DateTimeOffset? d) =>
         d is { } v ? v.ToLocalTime().ToString("M월 d일 tt h:mm", CultureInfo.GetCultureInfo("ko-KR")) : "";
 
     // 창 하나에 보낼 전부. 번역/원문 전환은 창이 들고 있고, 두 쪽에 필요한 것(제목·원문·읽는 시간)을 함께 보낸다.
-    public static object View(NewsItem item, PreparedArticle? a, AppModel? m, Scrapbook book)
+    public static object View(NewsItem item, PreparedArticle? a, AppModel? m, Scrapbook book, PaywallBook? pw = null)
     {
         var blocks = a?.Blocks ?? new();
         var (skip, byline) = BodyCleanup.Analyze(blocks);   // 기자 줄 → 바이라인, 짝 잃은 설명 문구 빼기
@@ -137,6 +168,10 @@ public sealed class ReaderPage : IPage
         var original = blocks.Select(b => b.Original ?? b.Text).OfType<string>().ToList();
         var phase = Phase(a);
         var title = a?.Title ?? item.DisplayTitle;
+        var kind = pw?.Kind(item);
+        var alts = Alternatives(item, m, pw);
+        var paywalled = a?.Paywalled == true;
+        var originalTitle = a?.OriginalTitle is { Length: > 0 } ot ? ot : item.Title;
         return new
         {
             key = item.Key,
@@ -151,7 +186,16 @@ public sealed class ReaderPage : IPage
             summary = a?.Summary,
             summarizing = a?.Summarizing ?? false,
             fallback = a?.Fallback ?? "",
-            translatedPage = TranslatedPageUrl(item.Link) is not null,
+            // 불러오는 동안·실패 화면에 보일 피드 요약, 앱에 본문을 내주지 않는 사이트인가
+            feedSummary = FeedSummary(item),
+            blockedHost = ArticleExtraction.IsBlockedLink(item.Link),
+            // 번역된 웹페이지는 외국어 기사일 때만(한국어 기사엔 숨김)
+            translatedPage = TranslatedPageUrl(item.Link) is not null && Translator.LooksForeign(originalTitle),
+            // G-14·G-15: 유료 종류·맛보기만 나옴·같은 소식의 무료 보도와 권하는 이유
+            paywall = kind?.Raw(),
+            paywalled,
+            alternatives = alts.Select(x => new { key = x.Key, source = x.SourceName, title = x.DisplayTitle, color = ItemView.From(x, m).Color }).ToList(),
+            freeReason = FreeReason(alts.Count, phase, paywalled, kind),
             cover,
             date = DateLabel(item.Date),
             minutes = new { shown = ReadingMinutes(shown), original = ReadingMinutes(original) },
@@ -231,7 +275,7 @@ public sealed class ReaderPage : IPage
             case "view":
             {
                 var e = E();
-                return View(e.Item, ArticleOf(e), model, book);
+                return View(e.Item, ArticleOf(e), model, book, Paywalls);
             }
             case "marks": return Marks(E().Item, model, book);
             case "fontSize":
@@ -299,6 +343,25 @@ public sealed class ReaderPage : IPage
             case "removeScrap":
                 if (ScrapOf(a.Str("quote")) is { } r) book.Remove(r);
                 return null;
+            case "openAlternative":
+            {
+                // 같은 소식의 무료 보도: 읽음 표시하고 그 기사 읽기 창(지금 창은 그대로 — 원문 링크도 남음)
+                var e = E();
+                var alt = Alternatives(e.Item, model, Paywalls).FirstOrDefault(x => x.Key == a.Str("alt"));
+                if (alt is null) return null;
+                model.MarkOpened(alt);
+                platform.OpenReader(alt);
+                return null;
+            }
+            case "step":
+            {
+                // J·K(H-05): 연 목록의 다음·이전 기사를 같은 창에서. 끝이면 경고음
+                var next = ReadingList.Step(key, a.Int("dir", 1) < 0 ? -1 : 1);
+                if (next is null) { platform.Beep(); return new { moved = false }; }
+                model.MarkOpened(next);
+                platform.ReplaceReader(key, next);
+                return new { moved = true };
+            }
             case "close": platform.CloseWindow($"{Name}:{key}"); return null;
             default: throw new InvalidOperationException("모르는 명령 " + cmd);
         }

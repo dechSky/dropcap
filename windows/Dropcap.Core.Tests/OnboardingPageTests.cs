@@ -33,6 +33,7 @@ public class OnboardingPageTests : IDisposable
     private readonly AppModel model;
     private readonly FakePlatform platform = new();
     private readonly OnboardingPage page;
+    private readonly List<string> photoLoads = new();
 
     public OnboardingPageTests()
     {
@@ -40,7 +41,8 @@ public class OnboardingPageTests : IDisposable
         model = new AppModel(new FakeUi(), new Magazine(db), new AppState(), persist: false);
         // 기본 출처를 미리 켜 두어 고른 뒤 매거진 채우기(바깥 피드 받기)가 돌지 않게
         foreach (var m in Sections.Meta.Values.Where(m => m.DefaultOn == true)) model.State.Enabled[m.Id] = true;
-        page = new OnboardingPage(model, platform);
+        // 분야 사진은 바깥 피드를 받지 않게 바꿔 끼운다(경제만 사진이 있는 것으로)
+        page = new OnboardingPage(model, platform) { LoadPhotos = ids => photoLoads.AddRange(ids), PhotoUrl = id => id == "economy" ? "https://x.com/eco.jpg" : null };
     }
 
     public void Dispose() { model.Stop(); db.Dispose(); tmp.Dispose(); }
@@ -71,13 +73,30 @@ public class OnboardingPageTests : IDisposable
     }
 
     [Fact]
-    public void SourceLinePrefersDefaultOn() // 대표 출처 2~3곳: 처음 켜질 곳 먼저(이름순보다 앞), 없으면 AI 는 예시·나머지는 '준비 중'
+    public void SourceLinePrefersDefaultOn() // 대표 출처 2~3곳: 처음 켜질 곳 먼저(이름순보다 앞), 없으면 AI 는 예시·나머지는 줄 없음(맥 유리 카드)
     {
         var meta = PivotFixtures.Meta;
         Assert.Equal("CNBC · 연합 마켓+ · 한국경제 증권", OnboardingPage.SourceLine("economy", meta));   // 서울경제(기본 꺼짐)는 이름순으로 앞이지만 뒤로
         Assert.Equal("BBC World", OnboardingPage.SourceLine("world", meta));
-        Assert.Equal("출처 준비 중", OnboardingPage.SourceLine("climate", meta));
-        Assert.Equal("OpenAI · Anthropic · AI타임스 등", OnboardingPage.SourceLine("ai", new Dictionary<string, SourceMeta>()));
+        Assert.Null(OnboardingPage.SourceLine("climate", meta));
+        Assert.Equal("OpenAI · Anthropic · AI타임스", OnboardingPage.SourceLine("ai", new Dictionary<string, SourceMeta>()));
+    }
+
+    [Fact]
+    public async Task GlassCardsCarryPhotos() // 유리 카드: 영문 이름·오늘의 사진(찾은 분야만), 열면 모든 분야 사진 찾기를 맡기고, 'photos' 로 다시 물을 수 있다
+    {
+        var v = (await Do("ready"))!;
+        var cards = v["cards"]!.AsArray();
+        var eco = cards.First(c => (string)c!["id"]! == "economy")!;
+        Assert.Equal("ECONOMY", (string?)eco["english"]);
+        Assert.Equal("https://x.com/eco.jpg", (string?)eco["photo"]);
+        var life = cards.First(c => (string)c!["id"]! == "life")!;
+        Assert.Equal("LIFE · HEALTH", (string?)life["english"]);
+        Assert.Null(life["photo"]);
+        Assert.Equal(Sections.Pickable.Select(s => s.Id), photoLoads);
+        var photos = (await Do("photos"))!.AsObject();
+        Assert.Equal(["economy"], photos.Select(p => p.Key));
+        Assert.Equal("https://x.com/eco.jpg", (string?)photos["economy"]);
     }
 
     [Fact]

@@ -1,8 +1,8 @@
 using System.Text.RegularExpressions;
 
-namespace Dropcap.Ui;
+namespace Dropcap.Core;
 
-// 사진 주소 판별(맥 ReaderView.ImageKey 와 같은 규칙): 기사 사진이 아닌 잡그림, 크기만 다른 같은 사진
+// (Core 로 옮김 — 표지·분야 사진 점수가 씀) 사진 주소 판별(맥 ReaderView.ImageKey 와 같은 규칙): 기사 사진이 아닌 잡그림, 크기만 다른 같은 사진
 public static class ImageKey
 {
     private static readonly Regex Suffix = new(@"([-_](v?\d{2,4}(x\d{2,4})?|thumb(nail)?|small|medium|large|scaled|crop(ped)?|resize[d]?|\d{2,4}w))+$");

@@ -32,6 +32,19 @@ public sealed class SettingsPage(AppModel model, IPlatform platform) : IPage
         return key switch { "totalDailyCap" => st.TotalDailyCap, "krThreshold" => st.KrThreshold, "intlThreshold" => st.IntlThreshold, _ => st.BigThreshold };
     }
 
+    // 단축키 안내(설정 › 거르기 › 단축키, 맥 NavKey.help — ⌘ 는 Ctrl)
+    public static readonly (string Keys, string Label)[] NavKeys =
+    [
+        ("↓ / J · ↑ / K", "다음·이전 소식 고르기 (트레이 창 목록·매거진 카드)"),
+        ("Enter", "고른 소식 열기"),
+        ("S", "나중에 읽기 / 저장 취소"),
+        ("O", "브라우저에서 열기"),
+        ("M", "읽음 / 안 읽음"),
+        ("Ctrl+[ · Ctrl+]", "매거진 이전·다음 지면"),
+        ("J · K (읽기 창)", "같은 목록의 다음·이전 기사"),
+        ("Esc (읽기 창)", "창 닫기"),
+    ];
+
     // 쉼표·줄바꿈으로 나눠 앞뒤 빈칸을 지우고 빈 낱말은 버린다(맥 saveKeywords 와 같음)
     public static List<string> SplitKeywords(string text) =>
         text.Split([',', '\n'], StringSplitOptions.None).Select(w => w.Trim()).Where(w => w.Length > 0).ToList();
@@ -146,6 +159,15 @@ public sealed class SettingsPage(AppModel model, IPlatform platform) : IPage
                 summary = Summarizer.Status,
                 summaryOn = Summarizer.Model is not null,
                 launchAtLogin = platform.LaunchAtLogin,
+                // 회의·발표 중에는 조용히(N-25). 캘린더는 윈도우에서 쓸 수 없어 꺼 두고 이유를 보인다
+                autoQuietFullscreen = st.AutoQuietFullscreen,
+                autoQuietSharing = st.AutoQuietSharing,
+                autoQuietCalendar = st.AutoQuietCalendar && model.Focus.CalendarSupported,
+                calendarSupported = model.Focus.CalendarSupported,
+                autoQuietNote = "이때 온 소식은 물방울 없이 '안 읽음'에 쌓이고, 알릴 만한 소식은 그 분야 묶음으로 모입니다. "
+                    + "전체 화면은 다른 앱이 화면을 통째로 덮을 때(전체 화면·발표·게임), 화면 공유는 Zoom 화면 공유를 알아봅니다. "
+                    + "Teams·Meet 처럼 브라우저로 하는 공유는 알 수 없어 전체 화면일 때만 조용해집니다.",
+                calendarNote = model.Focus.CalendarSupported ? null : "윈도우 판은 설치 없이 푸는 앱이라 윈도우 캘린더(일정) 권한을 받을 수 없어 쓸 수 없습니다.",
             },
             sections = SectionsView(),
             sources = new
@@ -178,6 +200,7 @@ public sealed class SettingsPage(AppModel model, IPlatform platform) : IPage
                     new { label = "가장 최근 안 읽은 소식 열기", keys = "Ctrl+Alt+N" },
                     new { label = $"{Strings.Magazine} 열기", keys = "Ctrl+Alt+M" },
                 },
+                navKeys = NavKeys.Select(k => new { keys = k.Keys, label = k.Label }).ToList(), // H-03~H-05
             },
         };
     }
@@ -213,6 +236,13 @@ public sealed class SettingsPage(AppModel model, IPlatform platform) : IPage
             case "digestHour": var dh = Hour(DigestHours[0], DigestHours[^1]); model.Update(s => s.DigestHour = dh); break;
             case "pretendard": Prefs.Set("usePretendard", a.Bool("value")); platform.ApplyFont(); break; // P-03
             case "launchAtLogin": platform.LaunchAtLogin = a.Bool("value"); break;                          // P-05
+            // N-25 회의·발표 중에는 조용히. 캘린더는 지원할 때만 켤 수 있다
+            case "autoQuietFullscreen": var af = a.Bool("value"); model.Update(s => s.AutoQuietFullscreen = af); break;
+            case "autoQuietSharing": var asr = a.Bool("value"); model.Update(s => s.AutoQuietSharing = asr); break;
+            case "autoQuietCalendar":
+                var ac = a.Bool("value") && model.Focus.CalendarSupported;
+                model.Update(s => s.AutoQuietCalendar = ac);
+                break;
             // G-13 알림 양: 전체 상한·문턱
             case "totalDailyCap" or "krThreshold" or "intlThreshold" or "bigThreshold":
                 var (_, min, max) = Limits.First(l => l.Key == key);
@@ -272,7 +302,12 @@ public sealed class SettingsPage(AppModel model, IPlatform platform) : IPage
             case "keywords":
                 var must = SplitKeywords(a.Str("must"));
                 var mute = SplitKeywords(a.Str("mute"));
-                model.Update(s => { s.MustKeywords = must; s.MuteKeywords = mute; });
+                // 바뀐 것이 있을 때만 저장하고, 이미 받은 목록에도 바로 적용(★ 다시 매기기·알리지 않음 낱말 빼기)
+                if (!must.SequenceEqual(model.State.Settings.MustKeywords) || !mute.SequenceEqual(model.State.Settings.MuteKeywords))
+                {
+                    model.Update(s => { s.MustKeywords = must; s.MuteKeywords = mute; });
+                    model.ReapplyKeywords();
+                }
                 return new { must = string.Join(", ", must), mute = string.Join(", ", mute) };
             case "preview": model.Preview(); return null;
             // K-02: 주소로 구독. 실패하면 이유를 돌려준다(K-04)

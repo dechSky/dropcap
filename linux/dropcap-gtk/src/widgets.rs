@@ -235,3 +235,14 @@ pub fn clear_box(b: &gtk::Box) {
 pub fn later(ms: u64, f: impl FnOnce() + 'static) {
     glib::timeout_add_local_once(std::time::Duration::from_millis(ms), f);
 }
+
+// 목록 줄·매거진 카드·스토리에 붙는 작은 자물쇠(G-14): hard·배움 = 잠긴 자물쇠, metered = 열린 자물쇠, 마우스를 올리면 이유
+pub fn paywall_mark(item: &NewsItem) -> Option<gtk::Image> {
+    let k = crate::app::ui().core.paywall.kind(item)?;
+    let i = icon(k.icon(), 9);
+    i.add_css_class("dc-secondary");
+    i.set_valign(gtk::Align::Center);
+    i.set_tooltip_text(Some(&k.tooltip()));
+    i.update_property(&[gtk::accessible::Property::Label(k.label())]);
+    Some(i)
+}

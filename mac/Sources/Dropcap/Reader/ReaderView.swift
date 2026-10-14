@@ -599,6 +599,7 @@ enum ReaderController {
     }
 
     static func open(_ item: NewsItem, from: CGRect = .zero, sequence: [NewsItem] = []) {
+        TestLog.write("[읽기 창] 열기 요청 \(item.sourceName) from \(Int(from.width))×\(Int(from.height))")
         // 영상·팟캐스트는 원래 앱(브라우저·YouTube·팟캐스트)으로
         if item.itemKind.opensExternally {
             ExternalLink.open(item.link)
@@ -819,6 +820,7 @@ private struct CoverImage: View {
         ZStack {
             if let image {
                 Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
+                    .allowsHitTesting(false) // 넘친 부분이 제목·본문 클릭을 막지 않게
                     .transition(.opacity)
             } else {
                 LinearGradient(colors: [accent.opacity(0.35), category.color.opacity(0.2)], startPoint: .topLeading, endPoint: .bottomTrailing)
@@ -828,6 +830,7 @@ private struct CoverImage: View {
         .frame(maxWidth: .infinity)
         .frame(height: 340)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(.primary.opacity(0.06), lineWidth: 0.5))
         .imageActions(image, url: url)
         .task(id: url) {

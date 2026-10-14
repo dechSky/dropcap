@@ -1,6 +1,9 @@
 // Dropcap 리눅스 판(GTK4 · libadwaita). 맥 앱(mac/Sources/Dropcap)과 같은 기능·문구·수치.
 mod app;
+mod backup_ui;
+mod focus_x11;
 mod hotkeys;
+mod keynav;
 mod magazine;
 mod magazine_card;
 mod magazine_issue;
@@ -15,6 +18,7 @@ mod reader_speech;
 mod reader_view;
 #[cfg(feature = "webkit")]
 mod reader_webkit;
+mod section_photos;
 mod settings;
 mod settings_sections;
 mod settings_tools;
@@ -27,6 +31,7 @@ mod toast_drip;
 mod toast_place;
 mod toast_sound;
 mod toast_water;
+mod test_extras;
 mod tray;
 mod widgets;
 
@@ -50,6 +55,8 @@ pub fn route(ui: &Rc<Ui>, e: &UiEvent) {
         UiEvent::State => tray::update(ui.core.state().unread),
         UiEvent::Bundle { section, items, sound } => toast::show_bundle(section, items.clone(), *sound),
         UiEvent::SystemBundle { section, items, sound } => sysnotify::post_bundle(section, items.clone(), *sound),
+        UiEvent::Watch { word, items, sound } => toast::show_watch(word, items.clone(), *sound),
+        UiEvent::SystemWatch { word, items, sound } => sysnotify::post_watch(word, items.clone(), *sound),
         _ => {}
     }
 }
@@ -80,6 +87,7 @@ fn main() -> glib::ExitCode {
         adw::StyleManager::default().connect_dark_notify(|_| theme::apply());
         app::connect_events(&ui);
         reader::install_extractor();
+        focus_x11::install(); // 회의·발표 중 조용히: 전체 화면 감지(X11)
         tray::start();
         hotkeys::start();
         // 창이 없어도 꺼지지 않게(트레이 앱)
@@ -142,6 +150,7 @@ fn test_hooks(ui: &Rc<Ui>) {
     if env.test_scrap {
         widgets::later(25_000, magazine::seed_test_scraps);
     }
+    test_extras::run();
     if let Some(s) = env.test_quit_after {
         widgets::later(s * 1000, || app::ui().app.quit());
     }

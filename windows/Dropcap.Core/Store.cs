@@ -37,6 +37,7 @@ public sealed class AppState
     public List<NotifyMark> NotifyLog { get; set; } = new();                    // 떨어뜨린 물방울 기록(하루 상한 계산)
     public Dictionary<string, double> NotifiedStories { get; set; } = new();    // 알린 스토리 → 시각(같은 이야기 한 번만)
     public Dictionary<string, DateTimeOffset> LastBundle { get; set; } = new(); // 분야 → 마지막으로 묶음을 보낸 때
+    public Dictionary<string, SectionBrief> Briefs { get; set; } = new();       // 분야 → 마지막 저녁 정리(묶음 시각에 기기 안 요약, N-26)
     public StateSettings Settings { get; set; } = new();
 
     public sealed record PendingItem(NewsItem Item, string Section, string Story, DateTimeOffset At);
@@ -81,6 +82,7 @@ public sealed class AppState
         s.NotifyLog = Json.Field(o, "notifyLog", s.NotifyLog);
         s.NotifiedStories = Json.Field(o, "notifiedStories", s.NotifiedStories);
         s.LastBundle = Json.Field(o, "lastBundle", s.LastBundle);
+        s.Briefs = Json.Field(o, "briefs", s.Briefs);
         s.Settings = o["settings"] is JsonObject so ? StateSettings.FromJson(so) : new();
         return s;
     }
@@ -107,6 +109,9 @@ public sealed class StateSettings
     public int KrThreshold { get; set; } = 3;       // 국내 n곳 이상 보도면 중요(G-05)
     public int IntlThreshold { get; set; } = 2;     // 해외 n곳 이상
     public int BigThreshold { get; set; } = 8;      // 국내 n곳 이상이면 상한 무시
+    public bool AutoQuietFullscreen { get; set; } = true;  // 전체 화면 앱 사용 중에는 조용히(고임, N-25)
+    public bool AutoQuietSharing { get; set; } = true;     // 화면 공유·기록 중
+    public bool AutoQuietCalendar { get; set; }            // 캘린더 일정 중(윈도우는 지원하지 않음 — 패키지 없는 배포)
 
     [JsonIgnore] public PolicyLimits Limits => new() { TotalCap = TotalDailyCap, KrThreshold = KrThreshold, IntlThreshold = IntlThreshold, BigThreshold = BigThreshold };
 
@@ -130,6 +135,9 @@ public sealed class StateSettings
         d.KrThreshold = Json.Field(o, "krThreshold", 3);
         d.IntlThreshold = Json.Field(o, "intlThreshold", 2);
         d.BigThreshold = Json.Field(o, "bigThreshold", 8);
+        d.AutoQuietFullscreen = Json.Field(o, "autoQuietFullscreen", true);
+        d.AutoQuietSharing = Json.Field(o, "autoQuietSharing", true);
+        d.AutoQuietCalendar = Json.Field(o, "autoQuietCalendar", false);
         return d;
     }
 
@@ -170,7 +178,7 @@ public static class Store
     }
 
     // 시험에서 폴더를 바꿀 때
-    internal static void UseDir(string d) { Directory.CreateDirectory(d); dir = d; backedUp = false; }
+    internal static void UseDir(string d) { Flush(); Directory.CreateDirectory(d); dir = d; backedUp = false; }
 
     public static string FilePath => Path.Combine(Dir, "native-state.json");
     public const int SeenLimit = 8000;
@@ -232,18 +240,39 @@ public static class Store
     private static bool backedUp;
     private static readonly object writeLock = new();
 
+    private static string? pending;   // 아직 쓰지 않은 마지막 상태(JSON)
+    private static Timer? saveTimer;
+    public static readonly TimeSpan SaveDelay = TimeSpan.FromSeconds(0.5);
+
+    // 저장 묶기(C-13, 맥 StateSaver): 0.5초 안의 저장 요청은 마지막 것 하나만 뒤 스레드에서 쓴다.
+    // 상태는 부르는 쪽(화면 스레드)에서 글자로 바꿔 두어, 쓰는 동안 상태가 바뀌어도 섞이지 않는다. 끝낼 때·잠들기 전에는 Flush.
     public static void Save(AppState state)
+    {
+        state.Seen = Pruned(state.Seen);
+        var json = state.ToJson();
+        lock (writeLock)
+        {
+            pending = json;
+            saveTimer ??= new Timer(_ => Flush(), null, SaveDelay, Timeout.InfiniteTimeSpan);
+        }
+    }
+
+    // 묶어 둔 저장을 지금 쓴다(끝낼 때·잠들기 전·시험)
+    public static void Flush()
     {
         lock (writeLock)
         {
-            // 실행마다 첫 저장 전에 이전 파일을 .bak 으로 남긴다(형식이 바뀌어 일부를 못 읽었을 때 되살릴 수 있게)
+            saveTimer?.Dispose();
+            saveTimer = null;
+            if (pending is not { } json) return;
+            pending = null;
+            // 실행마다 첫 쓰기 전에 이전 파일을 .bak 으로 남긴다(형식이 바뀌어 일부를 못 읽었을 때 되살릴 수 있게)
             if (!backedUp && Exists)
             {
                 backedUp = true;
                 try { File.Copy(FilePath, BackupPath, overwrite: true); } catch { }
             }
-            state.Seen = Pruned(state.Seen);
-            AtomicWrite(FilePath, state.ToJson());
+            try { AtomicWrite(FilePath, json); } catch { }
         }
     }
 

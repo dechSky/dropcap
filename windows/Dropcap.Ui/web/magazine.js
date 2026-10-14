@@ -1,6 +1,6 @@
 // 매거진 창(M 절). 호 엮기·분야 거르기·정렬·검색·묶기는 앱(MagazinePage.cs)이 하고 여기서는 그리기만.
 (() => {
-  const { esc, popMenu, popUnder, toast } = window.ui;
+  const { esc, popMenu, popUnder, toast, lock, navKey, navMove, scrollToCenter } = window.ui;
   const $ = (s, r = document) => r.querySelector(s);
   const detail = $('#detail');
 
@@ -49,6 +49,7 @@
   let query = '';
   let gen = 0;                  // 지면을 넘기면 늦게 온 답은 버림
   let wasPreparing = false;     // 첫 호를 엮는 중이었나(다 엮이면 바로 채움)
+  let selected = null;          // 키보드로 고른 카드(H-03)
 
   const isIssue = (p) => p === 'today' || p === 'week' || p.startsWith('issue:') || p.startsWith('section:');
   const isLive = (p) => p === 'today' || p === 'week' || p.startsWith('section:');
@@ -90,6 +91,7 @@
     page = p;
     focus = p.startsWith('section:') ? p.slice(8) : null;
     sub = null;
+    selected = null;
     markSide();
     const old = current;
     const el = document.createElement('section');
@@ -151,11 +153,11 @@
     const rg = o.region ? `<div class="rg"><div><b>해외에서는</b><span>${esc(o.region.intl.join(' · '))}</span></div><div><b>국내에서는</b><span>${esc(o.region.kr.join(' · '))}</span></div></div>` : '';
     // 사진이 없으면 사진 자리를 만들지 않고 글만(맥 StoryCard)
     return `<div class="cell" style="--d:${Math.min(i * 0.05, 0.4)}s" data-key="${esc(it.key)}">${extra}
-      <button class="card" data-open="${esc(it.key)}">
+      <button class="card${it.key === selected ? ' kbsel' : ''}" data-open="${esc(it.key)}" data-nav="${esc(it.key)}">
         ${it.image ? ph(it, play + kind) : ''}
         <div class="body">
           ${!it.image && kind ? `<div class="kline">${kind}</div>` : ''}
-          <div class="src">${it.important ? `<span class="star">${ic('star.fill')}</span>` : ''}<b>${esc(it.source)}</b>${it.related ? `<span class="rel">외 ${it.related}곳</span>` : ''}<span class="t">${esc(it.time)}</span></div>
+          <div class="src">${it.important ? `<span class="star">${ic('star.fill')}</span>` : ''}<b>${esc(it.source)}</b>${lock(it)}${it.related ? `<span class="rel">외 ${it.related}곳</span>` : ''}<span class="t">${esc(it.time)}</span></div>
           ${o.topic ? `<div>${topicTag(o.topic)}</div>` : ''}
           <div class="tt">${esc(it.title)}</div>
           ${rg}
@@ -173,10 +175,16 @@
   }
   detail.addEventListener('click', (e) => {
     const o = e.target.closest('[data-open]');
-    if (o) { bridge.send('open', { key: o.dataset.open }); return; }
+    if (o) { open(o.dataset.open, o.closest('.brief, .timeline, .regions') || current); return; }
     const s = e.target.closest('[data-story]');
     if (s) go('story:' + s.dataset.story);
   });
+  // 기사 열기: 읽기 창 J·K 가 이 지면 순서대로 넘기게(H-05) — 지면(또는 저녁 정리 근거 기사)에 보이는 순서의 key 를 함께
+  function open(key, scope = current) {
+    const seq = scope ? [...new Set([...scope.querySelectorAll('[data-open]')].map((b) => b.dataset.open))] : [];
+    bridge.send('open', { key, seq });
+  }
+
   // 오른쪽 클릭: 나중에 읽기 · 여러 시각 · 브라우저 + 바로 줄이기(G-11, 맥 ReduceMenu)
   detail.addEventListener('contextmenu', async (e) => {
     const c = e.target.closest('.card[data-open]');
@@ -266,10 +274,10 @@
     const sort = SORTS.find((s) => s.id === v.sort) || SORTS[0];
     const c = v.cover;
     // 사진이 없으면 사진 자리를 만들지 않고 글자 표지로(지어낸 그림은 쓰지 않음)
-    const coverHtml = c ? `<div class="cover${c.item.image ? '' : ' plain'}">
+    const coverHtml = c ? `<div class="cover${c.item.image ? '' : ' plain'}${c.item.key === selected ? ' kbsel' : ''}" data-nav="${esc(c.item.key)}">
         ${c.item.image ? `${ph(c.item)}<div class="shade"></div>` : ''}
         <div class="in">
-          <div class="meta"><span class="badge">표지</span>${v.topics[c.item.key] ? `<span class="catl">${ic(v.topics[c.item.key].icon)}${esc(v.topics[c.item.key].label)}</span>` : ''}<span>${esc(c.item.source)} · ${esc(c.item.time)}</span></div>
+          <div class="meta"><span class="badge">표지</span>${v.topics[c.item.key] ? `<span class="catl">${ic(v.topics[c.item.key].icon)}${esc(v.topics[c.item.key].label)}</span>` : ''}<span>${esc(c.item.source)} · ${esc(c.item.time)}</span>${lock(c.item)}</div>
           <h2>${esc(c.item.title)}</h2>
           ${c.item.translated ? `<div class="orig">${esc(c.item.original)}</div>` : ''}
           <div class="acts">
@@ -287,20 +295,75 @@
         <div class="rule"></div>
         <button class="sortbtn" title="지면 안의 기사 순서">${ic(sort.icon)}<span>${esc(sort.label)}</span>${ic('chevronDown', 'chev')}</button>
       </header>
+      ${v.today ? `<div class="today-slot">${todayHtml(v.today)}</div>` : ''}
       ${chipBar(v)}
+      ${v.brief ? briefHtml(v.brief) : ''}
       ${coverHtml}
       ${v.sections.map((s) => `<section class="sec tint" style="${tint(s)}">
-        <div class="sec-h">${ic(s.icon)}<b>${esc(s.label)}</b><small>${s.items.length}</small><span class="line"></span></div>
+        ${s.glass ? glassHtml(s) : `<div class="sec-h">${ic(s.icon)}<b>${esc(s.label)}</b><small>${s.items.length}</small><span class="line"></span></div>`}
         <div class="grid bal">${s.items.map((it, i) => card(it, i, '', { topic: s.showTopic ? v.topics[it.key] : null, region: v.regions[it.key] })).join('')}</div></section>`).join('')}
       <div class="copyright">기사 저작권은 각 언론사·기업에 있습니다. 제목·요약·사진은 원문으로 이어 주기 위한 것입니다.</div>`;
     balance(el);
     if (!fresh) el.scrollTop = scroll;
     wireImages(el);
     watch(el);
+    if (selected && !el.querySelector(`[data-nav="${CSS.escape(selected)}"]`)) selected = null;
     $('.sortbtn', el).addEventListener('click', (e) => popUnder(e.currentTarget, SORTS.map((s) => ({
       label: s.label, icon: s.icon, on: s.id === v.sort,
       run: () => bridge.send('issue', issueArgs({ sort: s.id })).then((nv) => nv && drawIssue(current, nv, false)),
     }))));
+  }
+
+  // 분야 지면 머리의 유리 띠(맥 SectionGlassCard 높이 92): 흐린 사진 바탕 + 분야색 유리판 + 기울인 사진 + 영문·한글 이름 + 'N건 · 첫 기사'
+  function glassHtml(s) {
+    const g = s.glass;
+    const src = g.photo ? bridge.img(g.photo) : '';
+    return `<div class="gcard strip${src ? '' : ' nophoto'}" data-glass="${esc(s.section)}" style="--c:var(--t)">
+      ${src ? `<img class="bg" src="${esc(src)}" alt="" draggable="false">` : ''}<span class="gl"></span><span class="panel"></span>
+      ${src ? `<span class="tilt"><img src="${esc(src)}" alt="" draggable="false"></span>` : ''}
+      <span class="tx"><small class="en">${esc(g.english)}</small><b>${esc(s.label)}</b><span class="gs">${esc(g.sub)}</span></span></div>`;
+  }
+  // 분야 사진을 찾으면(앱 'photos') 유리 띠만 바꿔 끼운다
+  function patchPhotos(map) {
+    if (!view || !view.sections || !current) return;
+    view.sections.forEach((s) => {
+      if (!s.glass || s.glass.photo || !map[s.section]) return;
+      s.glass.photo = map[s.section];
+      const el = current.querySelector(`[data-glass="${CSS.escape(s.section)}"]`);
+      if (el) el.outerHTML = glassHtml(s);
+    });
+  }
+
+  // 오늘 호 완독(M-23): 대표 기사 n/m 막대, 다 읽으면 마무리 띠 + 다음 호 안내
+  function todayHtml(t) {
+    if (t.done) return `<div class="today-done">${ic('checkmark.seal')}<div><b>오늘 호를 다 읽었어요</b><span>${esc(t.next)}</span></div></div>`;
+    if (!t.keys.length) return '';
+    const pct = Math.round((t.read / Math.max(t.keys.length, 1)) * 100);
+    return `<div class="today-prog" title="표지와 주요 뉴스·고른 분야의 첫 줄을 다 읽으면 오늘 호가 끝납니다">
+      <span>오늘 호 대표 기사 ${t.read}/${t.keys.length}</span><span class="bar"><i style="width:${pct}%"></i></span></div>`;
+  }
+  // 읽음이 바뀌면 막대만 다시(지면은 그대로)
+  async function refreshToday() {
+    if (!view || !view.today || !current) return;
+    const el = current;
+    const t = await bridge.send('todayProgress', { keys: view.today.keys });
+    if (!t || el !== current || !view.today) return;
+    const was = view.today.done;
+    view.today = t;
+    if (t.done) { view.todayDone = true; hideFresh(); }
+    const slot = $('.today-slot', el);
+    if (slot) { slot.innerHTML = todayHtml(t); if (t.done && !was) slot.firstElementChild && slot.firstElementChild.classList.add('pop'); }
+  }
+
+  // 저녁 정리(N-26): 기기 안 요약임을 밝히고, 줄마다 근거 번호, 아래에 근거 기사 원제목 · 출처(누르면 읽기 창)
+  function briefHtml(b) {
+    return `<div class="brief tint" style="${tint(b)}">
+      <div class="bh">${ic('moon.stars')}<b>${esc(b.title)}</b><span class="at">${esc(b.time)}</span>
+        <span class="ai" title="${esc(b.help)}">${ic('sparkles')}기기 안 요약 · 원문을 확인하세요</span></div>
+      ${b.lines.map((l) => `<div class="bl"><span class="dot">•</span><span class="bt">${esc(l.text)}</span>${l.refs.map((r) => `<span class="ref">[${r}]</span>`).join('')}</div>`).join('')}
+      <div class="bdiv"></div>
+      <div class="bis">${b.items.map((it, i) => `<button class="bi" data-open="${esc(it.key)}" title="${esc(it.link)}"><span class="ref">[${i + 1}]</span><span class="bt">${esc(it.title)}</span><span class="bs">— ${esc(it.source)}</span></button>`).join('')}</div>
+    </div>`;
   }
 
   // 분야 칩: 같은 칩을 다시 누르면 '전체'로. AI 하위 칩도 같은 식
@@ -413,7 +476,7 @@
         <span class="dot${r.first ? ' first' : ''}"></span>
         <div class="col">
           <div class="who"><span class="mono" style="--c:${esc(r.item.color)}">${esc(r.item.initial)}</span><b>${esc(r.item.source)}</b>
-            <span class="tier">${esc(r.item.tierLabel)}</span><span>· ${esc(r.when)}</span>${r.first ? '<span class="first">첫 보도</span>' : ''}</div>
+            <span class="tier">${esc(r.item.tierLabel)}</span>${lock(r.item)}<span>· ${esc(r.when)}</span>${r.first ? '<span class="first">첫 보도</span>' : ''}</div>
           <button class="box" data-open="${esc(r.item.key)}"><div class="bt"><b>${esc(r.item.title)}</b>${r.lede ? `<span>${esc(r.lede)}</span>` : ''}</div>${r.item.image ? ph(r.item) : ''}</button>
         </div></div>`;
       }).join('')}
@@ -629,8 +692,10 @@
       if (sig.layoutRevision != null && sig.layoutRevision !== seen.layoutRevision) { load(false); return; }
       // 지면이 비었거나 표지가 없거나 첫 호를 엮는 중이면 알림 없이 바로 채운다
       if (isLive(p) && (!view || (!view.cover && !view.focus) || view.count === 0 || sig.preparing || finished)) { load(false); return; }
-      if (isLive(p) && sig.revision > seen.revision) showFresh();
+      // 오늘 호를 다 읽었으면 새 소식을 더 밀어 넣지 않는다(M-23)
+      if (isLive(p) && sig.revision > seen.revision && !(view && view.todayDone)) showFresh();
       refreshMarks();
+      refreshToday();
     } else if (p === 'scrapbook') {
       const my = ++gen;
       drawScrapbook(current, await bridge.send('scrapbook', { folder, repick: true }), false, my);
@@ -647,10 +712,45 @@
   // 열린 창을 다른 지면으로(묶음 알림을 누르면 section:<id>)
   bridge.on('go', (p) => { hideFresh(); go(String(p || 'today')); });
   bridge.on('shown', () => bridge.send('sidebar').then(renderSide));
+  bridge.on('photos', (map) => { if (isIssue(page) && map) patchPhotos(map); });
 
-  // MARK: 단축키(M-20): Ctrl+1 오늘 · 2 이번 주 · 3 스토리 · 4 스크랩북 · F 검색 · R 지금 확인
+  // MARK: 키보드 탐색(H-03, 맥 NavKey): ↓/J ↑/K 고르기(끝에서 멈춤) · ⏎ 열기 · S 나중에 읽기 · O 브라우저(읽음 처리) · M 읽음/안 읽음
+  // 고를 수 있는 것은 지면에 보이는 순서의 표지·카드(data-nav). 메뉴·이름 묻는 창이 떠 있으면 하지 않는다
+  document.addEventListener('keydown', (e) => {
+    if (e.defaultPrevented || e.isComposing || document.querySelector('.modal')) return;
+    const k = navKey(e);
+    if (!k || !current) return;
+    const navs = [...current.querySelectorAll('[data-nav]')];
+    if (!navs.length) return;
+    const keys = navs.map((n) => n.dataset.nav);
+    if (k === 'next' || k === 'prev') {
+      e.preventDefault();
+      if (e.target.matches && e.target.matches('input')) e.target.blur();   // 검색칸에서 ↓ 면 결과로
+      selected = navMove(selected, keys, k === 'next' ? 1 : -1);
+      navs.forEach((n) => n.classList.toggle('kbsel', n.dataset.nav === selected));
+      scrollToCenter(navs.find((n) => n.dataset.nav === selected));
+      return;
+    }
+    const key = keys.includes(selected) ? selected : (k === 'open' ? keys[0] : null);
+    if (!key) return;
+    // ⏎ 는 버튼에 포커스가 있으면 그 버튼이 먼저(선택이 없을 때만 첫 카드)
+    if (k === 'open' && !keys.includes(selected) && e.target.closest && e.target.closest('button')) return;
+    e.preventDefault();
+    if (k === 'open') open(key);
+    else if (k === 'save') bridge.send('toggleSaved', { key });
+    else if (k === 'browser') bridge.send('browser', { key, read: true });
+    else if (k === 'toggleRead') bridge.send('toggleRead', { key });
+  });
+
+  // MARK: 단축키(M-20): Ctrl+1 오늘 · 2 이번 주 · 3 스토리 · 4 스크랩북 · F 검색 · R 지금 확인 · [ ] 지면 넘기기(H-04)
   document.addEventListener('keydown', (e) => {
     if (!e.ctrlKey || e.altKey || e.shiftKey || e.metaKey) return;
+    // H-04: Ctrl+[ · Ctrl+] 옆 목록 순서대로 이전·다음 지면(끝이면 앱이 경고음)
+    if (e.code === 'BracketLeft' || e.code === 'BracketRight') {
+      e.preventDefault();
+      bridge.send('flip', { page, back: e.code === 'BracketLeft' }).then((to) => { if (to) go(to); });
+      return;
+    }
     const k = e.key.toLowerCase();
     const to = { 1: 'today', 2: 'week', 3: 'stories', 4: 'scrapbook', f: 'search' }[k];
     if (to) { e.preventDefault(); if (to === 'search' && page === 'search') { const i = $('#sq', current); if (i) i.focus(); } else go(to); }

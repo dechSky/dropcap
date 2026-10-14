@@ -65,7 +65,12 @@ DROPCAP_TEST_SHOT_DIR=/tmp/shots dropcap     # 위 창들을 PNG 로 남김(화�
 DROPCAP_TEST_QUIT_AFTER=30 dropcap           # 30초 뒤 스스로 종료
 DROPCAP_DATA_DIR=/tmp/dropcap-test dropcap   # 실제 기록을 건드리지 않는 시험용 폴더
 DROPCAP_REDUCE_MOTION=1 dropcap              # 움직임 줄이기
-DROPCAP_OLLAMA_MODEL=qwen2.5 dropcap         # 3줄 요약에 쓸 Ollama 모델
+DROPCAP_OLLAMA_MODEL=qwen2.5 dropcap         # 3줄 요약·저녁 정리에 쓸 Ollama 모델(이름에 cloud 가 든 모델은 쓰지 않음)
+DROPCAP_TEST_EXTRAS=/tmp/x dropcap           # 피드를 받은 뒤 유료 기사 읽기 창·오늘 호 진행·완독·저녁 정리를 PNG 로(DROPCAP_TEST_EXTRAS_WAIT=초)
+DROPCAP_TEST_ENABLE=wsj-markets dropcap      # 그 출처를 켜고 최근 글을 매거진에 바로 실음(유료 표시 확인)
+DROPCAP_TEST_FOCUS=fullscreen dropcap        # 회의·발표 중 감지 결과를 정해 둠(fullscreen·sharing·calendar·none)
+DROPCAP_TEST_KEYNAV=/tmp/k dropcap           # 목록·매거진 카드 키보드 탐색, 지면 넘기기, 읽기 창 J 를 PNG 로
+DROPCAP_TEST_EXTRAS2=/tmp/e dropcap          # 내 기록 내보내기→가져오기→되돌리기 왕복(로그), 지켜볼 낱말 정리 물방울(SHOT_DIR 이 있으면 PNG)
 ```
 
 ## 리눅스의 한계와 대신 한 것
@@ -78,6 +83,9 @@ DROPCAP_OLLAMA_MODEL=qwen2.5 dropcap         # 3줄 요약에 쓸 Ollama 모델
 - **Wayland**: 앱이 창 위치·전역 단축키를 정할 수 없습니다. layer-shell 이 되는 KDE·Sway 등에서는 물방울이 초점 화면 위쪽에(커서 따라가기 없음), GNOME Wayland 는 시스템 알림으로 자동 전환. 전역 단축키는 X11 에서만.
 - **유리 재질**: 반투명 카드(컴포지터가 흐림을 지원하면 흐림).
 - **노치**: 맥 전용.
+- **회의·발표 중 조용히**: 전체 화면은 X11 에서만 알 수 있고(Wayland 는 다른 앱 창 상태를 알 공개 방법이 없음), 화면 공유·기록은 기록 앱(OBS·SimpleScreenRecorder·Kooha·wf-recorder 등)이 떠 있는지로 봅니다. Zoom·Meet 의 화면 공유는 따로 뜨는 프로세스가 없어 알 수 없습니다. 캘린더는 데스크톱 공통 일정 저장소가 없어 쓰지 않습니다.
+- **분야 대표 사진 점수의 글자 면적**: `tesseract`(한·일·중·영 중 설치된 언어)가 있으면 글자 인식, 없으면 '글자 같은 칸' 어림. 맥이 잰 실제 사진 16장과 판정이 같았습니다.
+- **분야별 저녁 정리**: 기기 안 모델은 Ollama. 없으면 상자를 띄우지 않고 알림은 그대로 제목 2줄.
 
 ## 리눅스에서 확인할 목록
 
@@ -95,3 +103,7 @@ DROPCAP_OLLAMA_MODEL=qwen2.5 dropcap         # 3줄 요약에 쓸 Ollama 모델
 10. 알림 카드·목록 줄·매거진 카드의 오른쪽 클릭 '바로 줄이기'(초점을 받지 않는 알림 창에서도 메뉴가 뜨는지)
 11. 묶음 알림을 누르면 매거진의 그 분야 지면이 열리는지, OPML 가져오기·내보내기·스크랩 파일 저장(파일 대화상자·포털)
 12. 매거진 카드 마우스 올림 확대·시차, 표지 켄 번스, 지면 전환이 배율 2 화면에서 매끄러운지
+13. X11 에서 다른 앱을 전체 화면으로 두거나 OBS 를 켠 동안 물방울 대신 '안 읽음'에 쌓이고 상단바 머리에 이유 아이콘이 뜨는지(Wayland 에서는 기록 앱만)
+14. 상단바 창을 열자마자 ↓/J·↑/K·Enter·S·O·M 이 듣는지, 검색칸에서 ↓ 로 목록으로 내려가는지, 매거진 Ctrl+[ · Ctrl+], 읽기 창 J·K·Esc
+15. 설정 › 일반 › 내 기록: 내보내기·가져오기 파일 대화상자(포털), 맥·윈도우에서 내보낸 파일을 가져오면 저장·스크랩·구독이 더해지는지, '마지막 가져오기 되돌리기'
+16. 지켜볼 낱말 정리 알림(시스템 알림 방식)을 누르면 매거진 검색이 그 낱말로 열리는지

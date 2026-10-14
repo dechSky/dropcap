@@ -36,6 +36,10 @@ public sealed class Database : IDisposable
         CREATE TABLE IF NOT EXISTS scraps(
           id TEXT PRIMARY KEY, collection TEXT NOT NULL, created REAL NOT NULL, json TEXT NOT NULL);
         CREATE INDEX IF NOT EXISTS scraps_collection ON scraps(collection, created);
+        CREATE TABLE IF NOT EXISTS extract_stats(
+          source TEXT PRIMARY KEY, tries INTEGER NOT NULL, fails INTEGER NOT NULL, blocked INTEGER NOT NULL, updated REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS image_scores(
+          url TEXT PRIMARY KEY, score REAL NOT NULL, text REAL NOT NULL, colors REAL NOT NULL, flat REAL NOT NULL, updated REAL NOT NULL);
         """);
         Exec($"PRAGMA user_version={SchemaVersion};");
     }
@@ -300,5 +304,51 @@ public sealed class Database : IDisposable
         var found = false;
         Run("SELECT 1 FROM issues WHERE id=?", [id], _ => found = true);
         return found;
+    }
+
+    // MARK: 본문 추리기 기록(출처별 실패율 → 유료 기사 표시, G-14)
+    public sealed record ExtractStat(int Tries = 0, int Fails = 0, int Blocked = 0)
+    {
+        public double FailRate => Tries == 0 ? 0 : (double)(Fails + Blocked) / Tries;
+    }
+
+    // 사용자가 연 기사 하나의 결과를 더한다. 50번이 넘으면 반으로 줄여 최근 결과가 더 크게 보이게.
+    public void RecordExtract(string source, bool failed, bool blocked)
+    {
+        lock (gate)
+        {
+            Run("""
+            INSERT INTO extract_stats(source,tries,fails,blocked,updated) VALUES(?,1,?,?,?)
+            ON CONFLICT(source) DO UPDATE SET tries=tries+1, fails=fails+excluded.fails, blocked=blocked+excluded.blocked, updated=excluded.updated
+            """, [source, failed ? 1 : 0, blocked ? 1 : 0, Unix(DateTimeOffset.Now)]);
+            Run("UPDATE extract_stats SET tries=tries/2, fails=fails/2, blocked=blocked/2 WHERE source=? AND tries>50", [source]);
+        }
+    }
+
+    public Dictionary<string, ExtractStat> ExtractStats()
+    {
+        var o = new Dictionary<string, ExtractStat>();
+        Run("SELECT source,tries,fails,blocked FROM extract_stats", [], r => o[r.GetString(0)] = new ExtractStat(r.GetInt32(1), r.GetInt32(2), r.GetInt32(3)));
+        return o;
+    }
+
+    // MARK: 사진 점수(분야 대표 사진 고르기, M-24)
+    public void SaveImageScore(string url, PhotoQuality.Score s)
+    {
+        lock (gate)
+        {
+            Run("INSERT OR REPLACE INTO image_scores(url,score,text,colors,flat,updated) VALUES(?,?,?,?,?,?)",
+                [url, s.Total, s.TextRatio, s.ColorVariety, s.Flatness, Unix(DateTimeOffset.Now)]);
+            Run("DELETE FROM image_scores WHERE updated < ?", [Unix(DateTimeOffset.Now.AddDays(-30))]);
+        }
+    }
+
+    public Dictionary<string, double> ImageScores(IReadOnlyList<string> urls)
+    {
+        var o = new Dictionary<string, double>();
+        foreach (var chunk in urls.Distinct().Chunk(400))
+            Run($"SELECT url, score FROM image_scores WHERE url IN ({string.Join(",", chunk.Select(_ => "?"))})", chunk.Cast<object?>().ToArray(),
+                r => o[r.GetString(0)] = r.GetDouble(1));
+        return o;
     }
 }

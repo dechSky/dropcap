@@ -26,13 +26,20 @@ pub fn bundle_content(section: &str, items: &[NewsItem]) -> (String, String) {
     (escape(&title), body)
 }
 
+// 지켜볼 낱말 하루 정리(N-27, 맥 SystemNotifier.postWatch): "오늘 ○○ 소식 N건" + 제목 2줄
+pub fn watch_content(word: &str, items: &[NewsItem]) -> (String, String) {
+    let title = format!("오늘 {word} 소식 {}건", items.len());
+    let body = items.iter().take(2).map(|i| escape(i.display_title())).collect::<Vec<_>>().join("\n");
+    (escape(&title), body)
+}
+
 pub fn more_content(n: usize) -> (String, String) {
     (strings::more(n), "트레이 아이콘에서 볼 수 있습니다.".into())
 }
 
 #[cfg(all(feature = "notify", target_os = "linux"))]
 mod imp {
-    use super::{bundle_content, content, more_content};
+    use super::{bundle_content, content, more_content, watch_content};
     use dropcap_core::models::NewsItem;
     use gtk::glib;
     use notify_rust::{Hint, Notification};
@@ -54,6 +61,11 @@ mod imp {
                     // 묶음 알림은 그 분야 지면을 연다
                     if let Some(sec) = key.strip_prefix("section:") {
                         crate::magazine::open_section(sec);
+                        continue;
+                    }
+                    // 지켜볼 낱말 정리는 그 낱말 검색 결과
+                    if let Some(w) = key.strip_prefix("search:") {
+                        crate::magazine::search_for(w);
                         continue;
                     }
                     let ui = crate::app::ui();
@@ -125,6 +137,25 @@ mod imp {
         });
     }
 
+    pub fn post_watch(word: &str, items: Vec<NewsItem>, sound: bool) {
+        if items.is_empty() {
+            return;
+        }
+        let (t, b) = watch_content(word, &items);
+        let mut n = base(&t, &b, sound);
+        n.action("default", "검색 결과 보기");
+        let key = format!("search:{word}");
+        let tx = sender();
+        std::thread::spawn(move || match n.show() {
+            Ok(h) => h.wait_for_action(|a| {
+                if a == "default" {
+                    let _ = tx.send_blocking(key);
+                }
+            }),
+            Err(e) => log::warn!("[시스템 알림] 보내지 못함: {e}"),
+        });
+    }
+
     // 세션 버스가 있어야 알림 서버에 닿는다
     pub fn available() -> bool {
         if std::env::var("DBUS_SESSION_BUS_ADDRESS").map(|s| !s.is_empty()).unwrap_or(false) {
@@ -141,7 +172,7 @@ mod imp {
 }
 
 #[cfg(all(feature = "notify", target_os = "linux"))]
-pub use imp::{available, post, post_bundle};
+pub use imp::{available, post, post_bundle, post_watch};
 
 #[cfg(not(all(feature = "notify", target_os = "linux")))]
 pub fn post(items: Vec<NewsItem>, _sound: bool) {
@@ -154,6 +185,11 @@ pub fn post(items: Vec<NewsItem>, _sound: bool) {
 pub fn post_bundle(section: &str, items: Vec<NewsItem>, sound: bool) {
     let _ = bundle_content;
     crate::toast::show_bundle(section, items, sound);
+}
+#[cfg(not(all(feature = "notify", target_os = "linux")))]
+pub fn post_watch(word: &str, items: Vec<NewsItem>, sound: bool) {
+    let _ = watch_content;
+    crate::toast::show_watch(word, items, sound);
 }
 #[cfg(not(all(feature = "notify", target_os = "linux")))]
 pub fn available() -> bool {

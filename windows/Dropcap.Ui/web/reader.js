@@ -30,9 +30,11 @@
     drawBar();
     drawCover();
     drawHead();
+    drawFree();
     const c = $('#content');
     if (d.phase === 'loading') {
-      if (!c.querySelector('.skeleton')) c.innerHTML = skeleton('기사를 불러오는 중');
+      // 본문을 받는 동안에도 빈 화면 대신 피드가 준 요약을 먼저 보여 준다
+      if (!c.querySelector('.skeleton')) c.innerHTML = (d.feedSummary ? `<div class="lede">${esc(d.feedSummary)}</div>` : '') + skeleton('기사를 불러오는 중');
       return;
     }
     if (d.phase === 'failed') { c.innerHTML = failed(); return; }
@@ -110,6 +112,21 @@
       ${d.translated && d.engine ? `<span class="engine">${ic('translate')}${esc(d.engine)}</span>` : ''}`;
   }
 
+  // 같은 소식을 무료로 읽기(G-15, 맥 FreeAlternativesBox): 막힌 기사면 같은 스토리의 열리는 보도를 먼저 권한다. 원문 링크는 그대로.
+  function drawFree() {
+    const d = doc;
+    const box = $('#free');
+    const alts = d.alternatives || [];
+    if (!d.freeReason || !alts.length) { box.className = ''; box.innerHTML = ''; return; }
+    box.className = 'free';
+    box.innerHTML = `
+      <div class="why">${ic('lock.fill')}<span>${esc(d.freeReason)}</span></div>
+      <div class="lead">같은 소식을 무료로 읽기: ${esc(alts.map((x) => x.source).join('·'))}</div>
+      <div class="rows">${alts.map((x) => `<button class="alt" data-alt="${esc(x.key)}" title="${esc(x.title)}">
+        <b style="color:${esc(x.color)}">${esc(x.source)}</b><span class="t">${esc(x.title)}</span>${ic('arrow.up.right')}</button>`).join('')}</div>
+      <button class="link" data-act="openOriginal">원문 그대로 열기</button>`;
+  }
+
   function skeleton(label) {
     const paras = [0, 1, 2].map((p) => `<div class="para">${[0, 1, 2, 3].map((l) =>
       `<div class="ln" style="${l === 3 ? `max-width:${260 + p * 60}px` : ''}"></div>`).join('')}</div>`).join('');
@@ -151,14 +168,19 @@
     }).join('');
   }
 
+  // 실패 화면(R-12): 요약 번역(없으면 피드 요약) + 이유 + 원문 열기(먼저) · 번역된 웹페이지(외국어 기사만)
   function failed() {
     const d = doc;
+    const text = d.fallback || d.feedSummary;
+    const why = d.blockedHost
+      ? '이 사이트는 앱에서 본문을 가져가지 못하게 막아 두었습니다. 위는 피드가 준 요약입니다.'
+      : '이 기사는 본문을 추리지 못했습니다(유료 기사·차단 등). 위는 피드가 준 요약입니다.';
     return `<div class="failed">
-      ${d.fallback ? `<div class="sum">${esc(d.fallback)}</div>` : ''}
-      <div class="why">이 기사는 본문을 추리지 못했습니다(유료 기사·차단 등).</div>
+      ${text ? `<div class="sum">${esc(text)}</div>` : ''}
+      <div class="why">${why}</div>
       <div class="btns">
-        ${d.translatedPage ? '<button class="btn primary" data-act="translatedPage">번역된 웹페이지로 보기</button>' : ''}
-        <button class="btn" data-act="openOriginal">원문 열기</button>
+        <button class="btn primary" data-act="openOriginal">원문 열기</button>
+        ${d.translatedPage ? '<button class="btn" data-act="translatedPage">번역된 웹페이지로 보기</button>' : ''}
       </div></div>`;
   }
 
@@ -288,6 +310,13 @@
     }));
   });
 
+  $('#free').addEventListener('click', (e) => {
+    const alt = e.target.closest('[data-alt]');
+    if (alt) { send('openAlternative', { alt: alt.dataset.alt }); return; }
+    const act = e.target.closest('[data-act]');
+    if (act) send(act.dataset.act);
+  });
+
   // 오른쪽 클릭: 고른 글이 있으면 복사·스크랩, 문단 위면 문단 스크랩·다른 폴더·복사
   $('#scroll').addEventListener('contextmenu', (e) => {
     if (!doc) return;
@@ -352,10 +381,28 @@
   $('#browser').addEventListener('click', () => send('browser'));
   $('#share').addEventListener('click', () => send('share'));
 
+  const typing = (t) => t && (t.isContentEditable || !!t.closest('input, textarea, select'));
+
+  // J·K 다음·이전 기사(H-05, 연 목록의 순서로 같은 창에서), Esc 닫기. 입력 칸에 글을 칠 때·Ctrl/Alt/Meta 와 함께면 쓰지 않음.
+  // 앞 단계(capture)에서 본다: 메뉴가 열려 있으면 ui.js 가 메뉴만 닫게 두고, 스크랩 쪽지가 열려 있으면 쪽지만 닫는다.
+  document.addEventListener('keydown', (e) => {
+    if (typing(e.target) || e.ctrlKey || e.altKey || e.metaKey) return;
+    if (e.key === 'Escape') {
+      if (document.querySelector('.pop, .veil')) return;
+      e.preventDefault();
+      if (sheet) closeSheet(); else send('close');
+      return;
+    }
+    const k = (e.key || '').toLowerCase();
+    if (k !== 'j' && k !== 'k') return;
+    e.preventDefault();
+    if (!e.repeat && doc) { closeSheet(); send('step', { dir: k === 'j' ? 1 : -1 }); }
+  }, true);
+
   // 단축키: Ctrl+- / Ctrl+= 글자 크기(R-06), Ctrl+Shift+S 고른 부분 스크랩, Ctrl+W 창 닫기
   document.addEventListener('keydown', (e) => {
-    if (e.target.closest('input, textarea, select')) return;
-    if (!e.ctrlKey || e.altKey) { if (e.key === 'Escape') closeSheet(); return; }
+    if (typing(e.target)) return;
+    if (!e.ctrlKey || e.altKey) return;
     const k = e.key.toLowerCase();
     if (k === '-' || k === '_') setFont(-1);
     else if (k === '=' || k === '+') setFont(1);

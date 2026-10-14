@@ -86,7 +86,7 @@ struct ToastView: View {
 
     private var isNews: Bool { if case .news = toast.kind { return true }; return false }
     private var isClickable: Bool {
-        switch toast.kind { case .news, .digest, .bundle: return true; default: return false }
+        switch toast.kind { case .news, .digest, .bundle, .watch: return true; default: return false }
     }
 
     var body: some View {
@@ -218,9 +218,10 @@ struct ToastView: View {
                                 .help("꼭 알림 낱말이 들어간 소식")
                         }
                         Text(item.sourceName).font(.app(11.5, .semibold)).lineLimit(1)
-                        TopicChip(item: item)
+                        // 칩·'외 N곳'은 줄지 않게(좁으면 출처 이름이 먼저 줄어든다 — 예전엔 칩이 '…'만 남았다)
+                        TopicChip(item: item).fixedSize()
                         if let r = item.related, !r.isEmpty {
-                            Text("외 \(r.count)곳").font(.app(10.5, .medium)).foregroundStyle(.secondary)
+                            Text("외 \(r.count)곳").font(.app(10.5, .medium)).foregroundStyle(.secondary).fixedSize()
                                 .help("같은 소식: \(r.joined(separator: ", "))")
                         }
                         Spacer(minLength: 4)
@@ -296,6 +297,29 @@ struct ToastView: View {
                         Text("\(items.count)건").font(.app(13.5, .semibold)).foregroundStyle(s?.tint ?? .accentColor)
                         Spacer(minLength: 4)
                         Text("모아 보기").font(.app(11)).foregroundStyle(.tertiary)
+                    }
+                    .rise(reveal, 1)
+                    ForEach(Array(items.prefix(2).enumerated()), id: \.offset) { _, it in
+                        Text("· " + it.displayTitle).font(.app(12)).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    .rise(reveal, 2)
+                }
+            }
+            .padding(EdgeInsets(top: 12, leading: 13, bottom: 12, trailing: 16))
+        case .watch(let word, let items):
+            HStack(alignment: .top, spacing: 11) {
+                Image(systemName: "eye")
+                    .font(.app(15, .semibold))
+                    .foregroundStyle(.teal)
+                    .frame(width: 30, height: 30)
+                    .background(Color.teal.opacity(0.14), in: Circle())
+                    .rise(reveal, 0)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 5) {
+                        Text("오늘 \(word) 소식").font(.app(13.5, .semibold))
+                        Text("\(items.count)건").font(.app(13.5, .semibold)).foregroundStyle(.teal)
+                        Spacer(minLength: 4)
+                        Text("검색에서 보기").font(.app(11)).foregroundStyle(.tertiary)
                     }
                     .rise(reveal, 1)
                     ForEach(Array(items.prefix(2).enumerated()), id: \.offset) { _, it in

@@ -104,6 +104,7 @@ final class AppModel: ObservableObject {
         let info = await Magazine.shared.storyInfo(candidates) // 스토리·보도 수를 한 번에(화면 줄기 밖)
         state.recent = Array((listed + state.recent).prefix(recentLimit))
         state.unread += listed.count
+        state.unreadKeys = Array((state.unreadKeys + listed.map(\.key)).suffix(recentLimit))
         state.lastCheck = Date()
         state.seen = Store.pruned(state.seen) // 저장 파일만이 아니라 메모리의 기억도 정리(오래 켜 두면 끝없이 커지고 저장마다 정렬하던 문제)
         // 분야 정책: 즉시 알릴 것 · 묶음으로 고일 것 · 매거진에만 둘 것
@@ -126,15 +127,17 @@ final class AppModel: ObservableObject {
     func policy(_ section: String) -> SectionPolicy { state.sectionPolicy[section] ?? SectionPolicy() }
     func setPolicy(_ section: String, _ change: (inout SectionPolicy) -> Void) {
         var p = policy(section)
+        let wasInstant = p.mode == .instant
         change(&p)
+        if p.mode == .instant, !wasInstant { p.less = false } // 설정에서 즉시로 되돌리면 '덜 받기'도 풂
         state.sectionPolicy[section] = p
         Store.save(state)
     }
 
     // 알림을 정할 때 쓰는 분야: 고른 분야에 걸린 칩이 있으면 그것, 없으면 대표 분야
-    func notifySection(_ it: NewsItem) -> String {
-        let chosen = chosenSections
-        return it.sectionChips.first { chosen.contains($0) } ?? it.section
+    func notifySection(_ it: NewsItem) -> String { Self.notifySection(it, chosen: chosenSections) }
+    nonisolated static func notifySection(_ it: NewsItem, chosen: [String]) -> String {
+        it.sectionChips.first { chosen.contains($0) } ?? it.section
     }
 
     private func sentToday(_ section: String?, now: Date = Date()) -> Int {
@@ -167,7 +170,7 @@ final class AppModel: ObservableObject {
             let cov = info[rep.key]?.coverage ?? Coverage(kr: rep.tier == "kr" ? 1 : 0, intl: rep.tier == "kr" ? 0 : 1)
             let input = NotifyPolicy.Input(chosen: chosen.contains(sec), policy: policy(sec), coverage: cov,
                                            lab: g.contains { $0.tier == "lab" }, important: g.contains { $0.important == true },
-                                           followed: state.followedStories.contains(story),
+                                           followed: state.followedStories.contains(story), watched: g.contains { $0.watch != nil },
                                            sentInSection: sentToday(sec, now: now), sentTotal: sentToday(nil, now: now))
             let top = chosen.contains(Sections.top)
                 ? NotifyPolicy.Input(chosen: true, policy: policy(Sections.top), coverage: cov,
@@ -253,8 +256,7 @@ final class AppModel: ObservableObject {
             }
         }
         state.pending.removeAll { !ordered.contains($0.section) }
-        Store.save(state)
-        objectWillChange.send()
+        subscriptionsChanged() // 뺀 분야의 출처 글은 바로 안 보이게
         if !turnedOn.isEmpty { Task { await backfillMagazine(only: Set(turnedOn)) } }
     }
 
@@ -264,22 +266,50 @@ final class AppModel: ObservableObject {
         return (ids.filter { state.enabled[$0] == true }.count, ids.count)
     }
 
+    // MARK: 보여 줄 출처(SourceFilter 한 곳)
+    var sourceFilter: SourceFilter { SourceFilter.make(state: state, sources: allSources) }
+    /// 상단바 목록·안 읽음·위젯·단축어가 쓰는 최근 소식(꺼진·해지한·숨긴 출처 글은 빠짐, 지우지는 않음)
+    var visibleRecent: [NewsItem] {
+        Self.visible(state.recent, filter: sourceFilter, mute: state.settings.muteKeywords)
+    }
+    // '알리지 않음' 낱말도 지우지 않고 거르기만(낱말을 지우면 돌아옴)
+    nonisolated static func visible(_ items: [NewsItem], filter: SourceFilter, mute: [String]) -> [NewsItem] {
+        let m = words(mute)
+        return filter.visible(items).filter { it in !m.contains { text(it).contains($0) } }
+    }
+    // 안 읽음 수: 어떤 소식이 들었는지 알면(unreadKeys) 지금 보이는 것만 세고, 모르면(예전 파일) 줄이기만
+    nonisolated static func recountUnread(unread: Int, keys: [String], visibleUnread: [NewsItem]) -> Int {
+        guard !keys.isEmpty else { return min(unread, visibleUnread.count) }
+        let counted = Set(keys)
+        return visibleUnread.filter { counted.contains($0.key) }.count
+    }
+
+    // 구독(출처 켜기·끄기·해지·분야)이 바뀐 뒤: 알림 대기열에서 빠진 출처 글을 빼고, 안 읽음 수를 맞추고, 열린 화면을 바로 갱신
+    private func subscriptionsChanged() {
+        let f = sourceFilter
+        state.pending.removeAll { !f.shows($0.item.sourceId) }
+        state.unread = Self.recountUnread(unread: state.unread, keys: state.unreadKeys, visibleUnread: visibleRecent.filter { !isRead($0) }) // 끄면 줄고 다시 켜면 돌아옴
+        Store.save(state)
+        objectWillChange.send()
+        Magazine.shared.refresh()
+    }
+
     // MARK: 카드에서 바로 줄이기
+    // 지우지 않고 거르기만(SourceFilter): 숨김을 풀면 목록에 그대로 돌아온다
     func hideSource(_ id: String) {
         guard !state.hiddenSources.contains(id) else { return }
         state.hiddenSources.append(id)
-        state.recent.removeAll { $0.sourceId == id }
-        state.pending.removeAll { $0.item.sourceId == id }
-        Store.save(state)
-        Magazine.shared.refresh()
+        subscriptionsChanged() // 대기열에서 빼고·안 읽음 맞추고·화면 갱신
     }
     func unhideSource(_ id: String) {
         state.hiddenSources.removeAll { $0 == id }
-        Store.save(state)
-        Magazine.shared.refresh()
+        subscriptionsChanged()
     }
     func lessOf(_ section: String) {
-        setPolicy(section) { if $0.mode == .instant { $0.mode = .bundle } else { $0.mode = .magazine } }
+        setPolicy(section) { if $0.mode == .instant { $0.mode = .bundle } else { $0.mode = .magazine }; $0.less = true }
+        let p = policy(section)
+        ToastCenter.shared.showInfo(p.mode == .bundle ? "이 분야는 저녁 묶음으로 모아 드릴게요" : "이 분야는 매거진에만 실을게요",
+                                    sub: "\(Sections.name(section)) · 설정 › 분야에서 되돌리기")
     }
     func muteWord(_ word: String) {
         let w = word.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -300,25 +330,32 @@ final class AppModel: ObservableObject {
     // MARK: 거르기·묶기
     var allSources: [Source] { Resources.config.sources + state.customSources }
 
-    private static func words(_ list: [String]) -> [String] {
+    nonisolated static func words(_ list: [String]) -> [String] {
         list.map { $0.trimmingCharacters(in: .whitespaces).lowercased() }.filter { !$0.isEmpty }
     }
 
     // '알리지 않음' 낱말이 든 소식은 빼고, '꼭 알림' 낱말이 든 소식은 중요 표시
-    // 낱말 설정이 바뀌면 이미 받은 최근 목록에도 바로: ★ 다시 매기고, '알리지 않음' 낱말이 든 기사는 목록에서 뺌
+    // 이미 받은 목록에 낱말을 다시 적용: ★ 는 다시 매기고, '알리지 않음'은 지우지 않고 visibleRecent 가 거른다(낱말을 지우면 돌아옴)
     func reapplyKeywords() {
-        let reset = state.recent.map { var it = $0; it.important = nil; return it }
-        state.recent = applyKeywords(reset)
-        Store.save(state)
+        let must = Self.words(state.settings.mustKeywords)
+        let watch = WatchWords.normalized(state.settings.watchKeywords)
+        state.recent = state.recent.map { var it = $0
+            it.important = must.contains { Self.text(it).contains($0) } ? true : nil
+            it.watch = watch.isEmpty ? nil : WatchWords.match(it, words: watch)
+            return it }
+        subscriptionsChanged()
     }
+    nonisolated static func text(_ it: NewsItem) -> String { "\(it.title) \(it.titleKo ?? "") \(it.summary)".lowercased() }
 
     private func applyKeywords(_ items: [NewsItem]) -> [NewsItem] {
         let mute = Self.words(state.settings.muteKeywords), must = Self.words(state.settings.mustKeywords)
+        let watch = WatchWords.normalized(state.settings.watchKeywords)
         return items.compactMap { it in
-            let text = "\(it.title) \(it.titleKo ?? "") \(it.summary)".lowercased()
+            let text = Self.text(it)
             if mute.contains(where: { text.contains($0) }) { return nil }
             var it = it
             if must.contains(where: { text.contains($0) }) { it.important = true }
+            if !watch.isEmpty { it.watch = WatchWords.match(it, words: watch) }
             return it
         }
     }
@@ -506,6 +543,7 @@ final class AppModel: ObservableObject {
         if let s = state.snoozeUntil, s <= Date() { state.snoozeUntil = nil; Store.save(state) }
         if Calendar.current.component(.minute, from: Date()) % 30 == 0 { Task { await Magazine.shared.publishDue() } } // 지난 호 발행
         deliverBundles()
+        deliverWatchDigest()
         let st = state.settings
         guard st.digestEnabled else { return }
         let cal = Calendar.current
@@ -518,6 +556,27 @@ final class AppModel: ObservableObject {
         let items = digestItems
         guard !items.isEmpty else { return }
         ToastCenter.shared.showDigest(count: items.count)
+    }
+
+    // 지켜볼 낱말 하루 정리: 아침 브리핑 시각(브리핑을 꺼도 그 시각)에 지난 24시간 동안 낱말마다 걸린 소식 수.
+    // 조용한 때면 끝난 뒤 그날 안에 다시 시도. 정리 물방울은 세 개까지(낱말 순서)
+    private func deliverWatchDigest(now: Date = Date()) {
+        let words = WatchWords.normalized(state.settings.watchKeywords)
+        let cal = Calendar.current
+        guard !words.isEmpty, Self.digestWindow(hour: cal.component(.hour, from: now), digestHour: state.settings.digestHour),
+              !(state.lastWatchDigest.map { cal.isDate($0, inSameDayAs: now) } ?? false), !isHushed else { return }
+        state.lastWatchDigest = now
+        Store.save(state)
+        Task {
+            let hidden = Set(state.hiddenSources)
+            let recent = await Magazine.shared.recentItems(since: now.addingTimeInterval(-24 * 3600)).filter { !hidden.contains($0.sourceId) }
+            for d in WatchWords.digest(recent, words: words).prefix(3) {
+                switch state.settings.style {
+                case .drop: ToastCenter.shared.showWatch(word: d.word, items: d.items)
+                case .system: SystemNotifier.postWatch(word: d.word, items: d.items, sound: state.settings.sound)
+                }
+            }
+        }
     }
 
     // 아침 브리핑을 보낼 수 있는 때: 정한 시각부터 정오 전까지(정오 이후 시각을 골랐으면 그 한 시간). 밤에 처음 켜도 '아침 브리핑'이 뜨지 않게(A-20)
@@ -549,6 +608,7 @@ final class AppModel: ObservableObject {
         let now = Date().timeIntervalSince1970
         for it in state.recent where state.read[it.key] == nil { state.read[it.key] = now }
         state.unread = 0
+        state.unreadKeys = []
         Store.save(state)
     }
 
@@ -612,7 +672,7 @@ final class AppModel: ObservableObject {
             state.seeded.append(src.id)
             state.customSources.append(src)
             state.enabled[src.id] = true
-            Store.save(state)
+            subscriptionsChanged() // 같은 주소로 다시 구독하면 남아 있던 글·안 읽음이 그대로 돌아옴
             // 최근 3일 글은 매거진에 바로 싣는다(알림 없이) — 구독하자마자 지면에서 볼 수 있게
             let cutoff = Date().addingTimeInterval(-3 * 24 * 3600)
             var recent = Array(items.filter { ($0.date ?? .distantPast) > cutoff }.prefix(src.notifyDefault == false ? 30 : 15))
@@ -632,19 +692,31 @@ final class AppModel: ObservableObject {
         state.enabled.removeValue(forKey: id)
         state.notify.removeValue(forKey: id)
         state.seeded.removeAll { $0 == id }
-        Store.save(state)
+        subscriptionsChanged()
     }
 
     func markRead() {
         guard state.unread != 0 else { return }
         state.unread = 0
+        state.unreadKeys = []
         Store.save(state)
     }
 
     func setEnabled(_ id: String, _ on: Bool) {
         state.enabled[id] = on
-        Store.save(state)
+        subscriptionsChanged() // 끄면 그 출처 글이 목록·매거진에서 바로 빠지고, 다시 켜면 돌아옴
         if on { Task { await checkAll() } }
+    }
+
+    // 기록 가져오기·되돌리기(Backup)에서만: 상태 여러 항목을 한 번에 바꾼다
+    func replaceState(_ change: (AppState) -> AppState) {
+        let before = state.settings
+        state = change(state)
+        Store.save(state)
+        FocusMonitor.shared.invalidate()
+        if state.settings.intervalMinutes != before.intervalMinutes { restartLoop() }
+        Magazine.shared.refresh()
+        objectWillChange.send()
     }
 
     func update(_ change: (inout AppState.Settings) -> Void) {
@@ -705,6 +777,16 @@ enum SystemNotifier {
         c.userInfo = ["section": section]
         if sound { c.sound = .default }
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "bundle-\(section)-\(Int(Date().timeIntervalSince1970))", content: c, trigger: nil))
+    }
+
+    static func postWatch(word: String, items: [NewsItem], sound: Bool) {
+        guard available, !items.isEmpty else { return }
+        let c = UNMutableNotificationContent()
+        c.title = "오늘 \(word) 소식 \(items.count)건"
+        c.body = items.prefix(2).map(\.displayTitle).joined(separator: "\n")
+        c.userInfo = ["search": word]
+        if sound { c.sound = .default }
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "watch-\(word)-\(Int(Date().timeIntervalSince1970))", content: c, trigger: nil))
     }
 
     static func post(_ items: [NewsItem], sound: Bool) {

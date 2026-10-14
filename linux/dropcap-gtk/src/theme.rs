@@ -76,8 +76,31 @@ pub fn css() -> String {
 .dc-toast {{ border-radius: 20px; }}
 .dc-masthead-logo {{ font-weight: 900; letter-spacing: -1px; }}
 .dc-glass {{ background-color: alpha(@window_bg_color, 0.78); border-radius: 18px; border: 1px solid alpha(@window_fg_color, 0.10); }}
+.dc-selected {{ outline: 2.5px solid @accent_color; outline-offset: -2px; box-shadow: 0 0 6px alpha(@accent_color, 0.45); }}
+.dc-free-box {{ padding: 14px; border-radius: 12px; background-color: alpha(@window_fg_color, 0.045); border: 0.5px solid alpha(@window_fg_color, 0.08); }}
+.dc-brief-box {{ padding: 16px; border-radius: 14px; background-color: alpha(@window_fg_color, 0.04); border: 0.5px solid alpha(@window_fg_color, 0.08); }}
+.dc-done-band {{ padding: 12px 16px; border-radius: 14px; background-color: alpha(#34C759, 0.09); border: 0.5px solid alpha(#34C759, 0.25); }}
+.dc-progress trough {{ min-height: 4px; border-radius: 99px; }}
+.dc-progress progress {{ min-height: 4px; border-radius: 99px; background-color: alpha(@accent_bg_color, 0.8); }}
 "#
     )
+}
+
+// 글꼴 등 화면 설정이 바뀌면 열린 창들을 바로 다시 그린다(직접 글자를 그리는 칸까지 — 맥 Appearance.changed)
+pub fn refresh_all() {
+    apply();
+    fn walk(w: &gtk::Widget) {
+        w.queue_draw();
+        w.queue_resize();
+        let mut c = w.first_child();
+        while let Some(x) = c {
+            walk(&x);
+            c = x.next_sibling();
+        }
+    }
+    for t in gtk::Window::list_toplevels() {
+        walk(&t);
+    }
 }
 
 pub fn apply() {

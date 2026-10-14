@@ -11,6 +11,8 @@ final class Database: @unchecked Sendable {
     private var db: OpaquePointer?
     private let queue = DispatchQueue(label: "magazine.db")
     let file: URL
+    private(set) var recreated = false   // 이번 실행에서 깨진 파일을 치우고 새로 만들었는가
+    private(set) var salvagedScraps = 0  // 그때 깨진 파일에서 건진 스크랩 수
 
     // file 은 시험에서만 바꾼다
     init(file: URL = Store.dir.appendingPathComponent("magazine.sqlite")) {
@@ -35,7 +37,33 @@ final class Database: @unchecked Sendable {
             }
             sqlite3_open(file.path, &db)
             createSchema()
+            recreated = true
+            // 스크랩은 사용자가 만든 것이라 다시 쌓이지 않는다 → 치운 파일에서 읽을 수 있는 만큼 옮겨 온다
+            salvagedScraps = salvageScraps(from: URL(fileURLWithPath: file.deletingPathExtension().path + ".broken.sqlite"))
+            if salvagedScraps > 0 { NSLog("[DB] 깨진 파일에서 스크랩 %d개를 옮겨 왔습니다", salvagedScraps) }
         }
+    }
+
+    // 시험·손 복구용: 다른 DB 파일의 스크랩을 이 DB 로 옮긴다
+    func importScraps(from other: URL) -> Int { queue.sync { salvageScraps(from: other) } }
+
+    // 깨진(치운) DB 의 scraps 표를 읽기 전용으로 열어, 읽히는 줄까지 새 DB 로 옮긴다. 큐 안에서만 부른다.
+    private func salvageScraps(from broken: URL) -> Int {
+        var old: OpaquePointer?
+        defer { sqlite3_close(old) }
+        guard sqlite3_open_v2(broken.path, &old, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else { return 0 }
+        var st: OpaquePointer?
+        guard sqlite3_prepare_v2(old, "SELECT id, collection, created, json FROM scraps", -1, &st, nil) == SQLITE_OK else { return 0 }
+        defer { sqlite3_finalize(st) }
+        var n = 0
+        while sqlite3_step(st) == SQLITE_ROW { // 중간에 깨진 쪽을 만나면 거기까지
+            guard let id = Self.text(st!, 0), let json = Self.text(st!, 3),
+                  (try? Self.decoder.decode(Scrap.self, from: Data(json.utf8))) != nil else { continue }
+            run("INSERT OR IGNORE INTO scraps(id,collection,created,json) VALUES(?,?,?,?)",
+                [.text(id), .text(Self.text(st!, 1)), .real(sqlite3_column_double(st, 2)), .text(json)])
+            n += 1
+        }
+        return n
     }
 
     @discardableResult

@@ -1,6 +1,6 @@
 // 미리 보기 전용(WebView2 밖에서만): 맥·브라우저에서 settings.html 을 열어 모양을 확인
 if (!(window.chrome && window.chrome.webview)) {
-  const st = { style: 'drop', position: 'center', sound: true, interval: 5, pretendard: true, launchAtLogin: false,
+  const st = { style: 'drop', position: 'center', sound: true, interval: 5, pretendard: true, launchAtLogin: false, autoQuietFullscreen: true, autoQuietSharing: true,
     must: 'GPT-6, Claude', mute: '', quietEnabled: false, quietStart: 23, quietEnd: 7, digestEnabled: true, digestHour: 9 };
   const enabled = { openai: true, anthropic: true, deepmind: true, nvidia: true, verge: true, aitimes: true, 'custom-1': true, 'custom-2': false };
   const notify = { 'custom-2': false };
@@ -62,6 +62,9 @@ if (!(window.chrome && window.chrome.webview)) {
         sound: st.sound, interval: st.interval, intervals: [2, 5, 10, 15, 30].map((m) => ({ value: m, label: `${m}분` })),
         translation: 'Google 번역', translationNote: '윈도우에는 무료로 쓸 수 있는 기기 내 번역이 없어 Google 번역을 씁니다.',
         pretendard: st.pretendard, summary: 'Ollama 가 없어 요약 칸을 숨깁니다', summaryOn: false, launchAtLogin: st.launchAtLogin,
+        autoQuietFullscreen: st.autoQuietFullscreen, autoQuietSharing: st.autoQuietSharing, autoQuietCalendar: false, calendarSupported: false,
+        autoQuietNote: "이때 온 소식은 물방울 없이 '안 읽음'에 쌓이고, 알릴 만한 소식은 그 분야 묶음으로 모입니다.",
+        calendarNote: '윈도우 판은 설치 없이 푸는 앱이라 윈도우 캘린더(일정) 권한을 받을 수 없어 쓸 수 없습니다.',
       },
       sections: sections(),
       sources: {
@@ -79,6 +82,8 @@ if (!(window.chrome && window.chrome.webview)) {
         digestEnabled: st.digestEnabled, digestHour: st.digestHour,
         digestHours: [5, 6, 7, 8, 9, 10, 11, 12].map((h) => ({ value: h, label: h === 12 ? '낮 12시' : `오전 ${h}시` })),
         hotkeys: [{ label: '가장 최근 안 읽은 소식 열기', keys: 'Ctrl+Alt+N' }, { label: '매거진 열기', keys: 'Ctrl+Alt+M' }],
+        navKeys: [{ keys: '↓ / J · ↑ / K', label: '다음·이전 소식 고르기 (트레이 창 목록·매거진 카드)' }, { keys: 'Enter', label: '고른 소식 열기' },
+          { keys: 'Ctrl+[ · Ctrl+]', label: '매거진 이전·다음 지면' }, { keys: 'Esc (읽기 창)', label: '창 닫기' }],
       },
     };
   };

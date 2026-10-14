@@ -25,15 +25,17 @@ struct SectionPolicy: Codable, Equatable {
     var mode: NotifyMode = .bundle
     var bundleHour = 18      // 묶음을 보내는 시각(시)
     var dailyCap = 3         // 이 분야에서 하루에 떨어뜨리는 물방울 수
+    var less = false         // 카드에서 '이 분야 덜 받기'를 누름 → 주요 뉴스 흐름으로도 바로 떨어뜨리지 않음(즉시로 되돌리면 풀림)
 
-    init(mode: NotifyMode = .bundle, bundleHour: Int = 18, dailyCap: Int = 3) {
-        self.mode = mode; self.bundleHour = bundleHour; self.dailyCap = dailyCap
+    init(mode: NotifyMode = .bundle, bundleHour: Int = 18, dailyCap: Int = 3, less: Bool = false) {
+        self.mode = mode; self.bundleHour = bundleHour; self.dailyCap = dailyCap; self.less = less
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         mode = (try? c.decodeIfPresent(NotifyMode.self, forKey: .mode)) ?? .bundle
         bundleHour = (try? c.decodeIfPresent(Int.self, forKey: .bundleHour)) ?? 18
         dailyCap = (try? c.decodeIfPresent(Int.self, forKey: .dailyCap)) ?? 3
+        less = (try? c.decodeIfPresent(Bool.self, forKey: .less)) ?? false // 예전 파일엔 없음 · 예전 판은 이 값을 무시
     }
 }
 
@@ -65,6 +67,7 @@ enum NotifyPolicy {
         var lab = false                 // 공식 발표 등급(tier lab)
         var important = false           // ★ 꼭 알림 낱말
         var followed = false            // 팔로우한 스토리
+        var watched = false             // 지켜볼 낱말에 걸림
         var sentInSection = 0           // 오늘 이 분야에서 이미 떨어뜨린 수
         var sentTotal = 0               // 오늘 전체
     }
@@ -73,6 +76,8 @@ enum NotifyPolicy {
     static func isBig(_ c: Coverage, _ l: PolicyLimits) -> Bool { c.kr >= l.bigThreshold }
 
     static func decide(_ i: Input, limits l: PolicyLimits) -> NotifyDecision {
+        // 지켜볼 낱말: 고른 분야·모드와 상관없이 알린다(같은 이야기는 한 번 — 부르는 쪽이 스토리로 기억). 전체 상한이 차면 고임
+        if i.watched { return i.sentTotal >= l.totalCap && !isBig(i.coverage, l) ? .pool : .drop }
         guard i.chosen else { return .quiet }
         switch i.policy.mode {
         case .magazine: return .quiet
@@ -89,7 +94,8 @@ enum NotifyPolicy {
     // '주요 뉴스' 흐름: 자기 분야에서 떨어지지 않은 소식이라도 문턱을 넘었으면 주요 뉴스 정책으로 한 번 더 본다
     static func decideWithTop(_ i: Input, top: Input?, limits l: PolicyLimits) -> (NotifyDecision, viaTop: Bool) {
         let own = decide(i, limits: l)
-        guard own != .drop, let top, crosses(i.coverage, l) else { return (own, false) }
+        // '덜 받기'한 분야는 주요 뉴스 흐름으로도 떨어뜨리지 않고 자기 정책(묶음·매거진만)대로 둔다
+        guard own != .drop, !i.policy.less, let top, crosses(i.coverage, l) else { return (own, false) }
         var t = top
         t.coverage = i.coverage
         return decide(t, limits: l) == .drop ? (.drop, true) : (own, false)

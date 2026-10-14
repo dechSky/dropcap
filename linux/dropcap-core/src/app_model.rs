@@ -38,6 +38,8 @@ pub enum UiEvent {
     Bundle { section: String, items: Vec<NewsItem>, sound: bool },       // 묶음 한 방울(G-07)
     SystemBundle { section: String, items: Vec<NewsItem>, sound: bool }, // 시스템 알림 방식의 묶음
     Preparing(bool),
+    Watch { word: String, items: Vec<NewsItem>, sound: bool },       // 지켜볼 낱말 하루 정리 물방울(N-27) → 누르면 매거진 검색
+    SystemWatch { word: String, items: Vec<NewsItem>, sound: bool }, // 시스템 알림 방식의 하루 정리
 }
 
 type Sink = Arc<dyn Fn(UiEvent) + Send + Sync>;
@@ -59,6 +61,8 @@ pub struct AppModel {
     grown: Mutex<Vec<(crate::database::Cluster, NewsItem)>>, // 이번에 팔로우한 스토리에 붙은 새 보도(알림 뒤 비움)
     enrich_tried: Mutex<std::collections::HashSet<String>>,   // 이번 실행에서 이미 사진을 찾아본 기사
     digest_cache: Mutex<std::collections::HashMap<String, (i64, Vec<String>)>>,
+    pub paywall: Arc<crate::paywall::PaywallBook>, // 유료 기사 표시·무료 보도(G-14·G-15)
+    weak: Mutex<std::sync::Weak<AppModel>>,
 }
 
 pub fn words(list: &[String]) -> Vec<String> {
@@ -69,6 +73,7 @@ pub fn words(list: &[String]) -> Vec<String> {
 pub fn apply_keywords(items: Vec<NewsItem>, settings: &Settings) -> Vec<NewsItem> {
     let mute = words(&settings.mute_keywords);
     let must = words(&settings.must_keywords);
+    let watch = crate::watch_words::normalized(&settings.watch_keywords);
     items
         .into_iter()
         .filter_map(|mut it| {
@@ -78,6 +83,9 @@ pub fn apply_keywords(items: Vec<NewsItem>, settings: &Settings) -> Vec<NewsItem
             }
             if must.iter().any(|w| text.contains(w)) {
                 it.important = Some(true);
+            }
+            if !watch.is_empty() {
+                it.watch = crate::watch_words::first_match(&it, &watch);
             }
             Some(it)
         })
@@ -128,6 +136,11 @@ pub fn in_quiet(hour: i64, start: i64, end: i64) -> bool {
     } else {
         hour >= start || hour < end
     }
+}
+
+// 아침 브리핑·지켜볼 낱말 정리를 보내는 때: 정한 시각~정오 전(정오 이후 시각이면 그 한 시간) — 맥 AppModel.digestWindow
+pub fn digest_window(hour: i64, digest_hour: i64) -> bool {
+    hour >= digest_hour && hour < 12.max(digest_hour + 1)
 }
 
 pub fn tomorrow_morning(now: DateTime<Local>, hour: u32) -> DateTime<Utc> {
@@ -198,6 +211,7 @@ impl AppModel {
         let db = Arc::new(Database::open(&store.dir));
         let articles = ArticleService::new(store.dir.clone());
         let archive = db.issues(120);
+        let paywall = Arc::new(crate::paywall::PaywallBook::new(db.clone()));
         let me = Arc::new(AppModel {
             store,
             state: Mutex::new(state),
@@ -215,7 +229,12 @@ impl AppModel {
             grown: Mutex::new(vec![]),
             enrich_tried: Mutex::new(Default::default()),
             digest_cache: Mutex::new(Default::default()),
+            paywall,
+            weak: Mutex::new(std::sync::Weak::new()),
         });
+        *me.weak.lock().unwrap() = Arc::downgrade(&me);
+        let book = me.paywall.clone();
+        me.articles.set_recorder(Arc::new(move |it, failed, blocked| book.record(it, failed, blocked)));
         let weak = Arc::downgrade(&me);
         me.articles.set_pinned(Arc::new(move || weak.upgrade().map(|m| m.state().saved.iter().map(|s| s.link.clone()).collect()).unwrap_or_default()));
         me
@@ -388,6 +407,7 @@ impl AppModel {
         self.notify_grown_stories();
         // 알림을 끈 채널(논문·커뮤니티 등)은 매거진에만 싣고, 목록·알림에는 넣지 않는다
         let candidates: Vec<NewsItem> = found.into_iter().filter(|it| self.notifies(&it.source_id)).collect();
+        let focus = crate::focus_guard::MONITOR.reason(&self.settings()); // 상태 잠금 밖에서(프로세스 목록 읽기)
         let (listed, quiet, sound, style) = {
             let mut st = self.state.lock().unwrap();
             let listed = group_same_story(candidates.clone(), &mut st.recent, now);
@@ -399,8 +419,8 @@ impl AppModel {
             st.last_check = Some(now);
             // 저장 파일만이 아니라 메모리의 기억도 정리(오래 켜 두면 끝없이 커지고 저장마다 정렬하던 문제)
             crate::store::trim_seen(&mut st.seen, crate::store::SEEN_LIMIT);
-            // 방해 금지 시간·잠시 끄기: 알리지 않고 안 읽은 소식으로만 쌓는다
-            let q = (Self::quiet_now(&st.settings) || st.snooze_until.map(|s| s > now).unwrap_or(false)) && !manual;
+            // 방해 금지 시간·잠시 끄기·회의 중: 알리지 않고 안 읽은 소식으로만 쌓는다
+            let q = (Self::quiet_now(&st.settings) || st.snooze_until.map(|s| s > now).unwrap_or(false) || focus.is_some()) && !manual;
             (listed, q, st.settings.sound, st.settings.style)
         };
         // 분야 정책: 즉시 알릴 것 · 묶음으로 고일 것 · 매거진에만 둘 것
@@ -494,6 +514,7 @@ impl AppModel {
                 lab: g.iter().any(|i| i.tier == "lab"),
                 important: g.iter().any(|i: &NewsItem| i.is_important()),
                 followed: st.followed_stories.contains(&story),
+                watched: g.iter().any(|i| i.watch.is_some()),
                 sent_in_section: Self::sent_today(&st, Some(&sec), now),
                 sent_total: Self::sent_today(&st, None, now),
             };
@@ -504,6 +525,7 @@ impl AppModel {
                 lab: false,
                 important: false,
                 followed: false,
+                watched: false,
                 sent_in_section: Self::sent_today(&st, Some(sections::TOP), now),
                 sent_total: Self::sent_today(&st, None, now),
             });
@@ -535,7 +557,7 @@ impl AppModel {
     // 묶음: 분야마다 정한 시각이 지나면 고인 소식을 한 방울로("경제 7건")
     pub fn deliver_bundles(&self, now: DateTime<Utc>) {
         let st = self.state();
-        if st.pending.is_empty() || self.is_quiet_time() || self.is_snoozed() {
+        if st.pending.is_empty() || self.is_hushed() {
             return;
         }
         let mut secs: Vec<String> = st.pending.iter().map(|p| p.section.clone()).collect();
@@ -552,10 +574,49 @@ impl AppModel {
                 s.last_bundle.insert(sec.clone(), now);
             });
             match st.settings.style {
-                Style::Drop => self.send(UiEvent::Bundle { section: sec.clone(), items, sound: st.settings.sound }),
-                Style::System => self.send(UiEvent::SystemBundle { section: sec.clone(), items, sound: st.settings.sound }),
+                Style::Drop => self.send(UiEvent::Bundle { section: sec.clone(), items: items.clone(), sound: st.settings.sound }),
+                Style::System => self.send(UiEvent::SystemBundle { section: sec.clone(), items: items.clone(), sound: st.settings.sound }),
+            }
+            if st.section_policy.get(&sec).map(|p| p.mode == NotifyMode::Bundle).unwrap_or(false) {
+                self.make_brief(&sec, &items, now);
             }
         }
+    }
+
+    // 분야별 저녁 정리(N-26): '묶음' 분야는 묶음을 보낼 때 기기 안 요약 3줄 + 근거 기사를 매거진 그 분야 지면 위에 둔다.
+    // 알림 문구는 그대로 원제목(D-7) — 요약은 지면 안에서만, 근거 링크와 함께.
+    pub fn make_brief(&self, sec: &str, items: &[NewsItem], now: DateTime<Utc>) {
+        let evidence: Vec<NewsItem> = items.iter().take(crate::brief::MAX_ITEMS).cloned().collect();
+        self.mutate(|s| {
+            s.briefs.insert(sec.to_string(), crate::brief::SectionBrief { section: sec.to_string(), at: now, items: evidence.clone(), lines: None });
+        });
+        if evidence.len() < 2 {
+            return;
+        }
+        let me = self.weak.lock().unwrap().clone();
+        let sec = sec.to_string();
+        self.rt.spawn(async move {
+            let Some(lines) = crate::brief::briefing(&sections::name(&sec), &evidence).await else { return };
+            let Some(me) = me.upgrade() else { return };
+            if me.state().briefs.get(&sec).map(|b| b.at) != Some(now) {
+                return; // 그 사이 새 묶음이 왔음
+            }
+            me.set_brief_lines(&sec, lines);
+        });
+    }
+
+    pub fn set_brief_lines(&self, sec: &str, lines: Vec<crate::brief::Line>) {
+        self.mutate(|s| {
+            if let Some(b) = s.briefs.get_mut(sec) {
+                b.lines = Some(lines);
+            }
+        });
+        self.send(UiEvent::Layout);
+    }
+
+    // 오늘 만든 저녁 정리(요약이 있는 것만)
+    pub fn brief(&self, sec: &str) -> Option<crate::brief::SectionBrief> {
+        self.state.lock().unwrap().briefs.get(sec).filter(|b| b.shown_on(Utc::now())).cloned()
     }
 
     // 처음 실행: 관심 분야를 고른다(설정에서 다시 고를 수도). 고른 분야의 기본 출처를 켜고 그 분야 최근 소식으로 매거진을 채운다.
@@ -659,6 +720,15 @@ impl AppModel {
         self.state().snooze_until.map(|s| s > Utc::now()).unwrap_or(false)
     }
 
+    // 회의·발표 중 자동 조용히(N-25): 지금 그 이유(설정에서 켠 것만)
+    pub fn auto_quiet_reason(&self) -> Option<crate::focus_guard::FocusReason> {
+        crate::focus_guard::MONITOR.reason(&self.settings())
+    }
+    // 알리지 않을 때: 방해 금지 시간 · 잠시 끄기 · 회의·발표 중
+    pub fn is_hushed(&self) -> bool {
+        self.is_quiet_time() || self.is_snoozed() || self.auto_quiet_reason().is_some()
+    }
+
     fn deliver(self: &Arc<Self>, items: Vec<NewsItem>, manual: bool, sound: bool, style: Style) {
         if items.is_empty() {
             if manual {
@@ -726,6 +796,10 @@ impl AppModel {
                     changed = true;
                 }
             }
+            // 최근 기사 사진의 점수를 미리 잰다(표지·분야 대표 사진 고르기, M-24)
+            if crate::photo_quality::score_recent(&me.db).await {
+                changed = true;
+            }
             me.enriching.store(false, Ordering::SeqCst);
             if changed {
                 me.send(UiEvent::Images);
@@ -736,7 +810,7 @@ impl AppModel {
     // 팔로우한 스토리에 새 보도가 붙으면 알림(그 출처의 알림을 꺼 두었어도)
     fn notify_grown_stories(&self) {
         let grown: Vec<_> = std::mem::take(&mut *self.grown.lock().unwrap());
-        if grown.is_empty() || self.is_quiet_time() || self.is_snoozed() {
+        if grown.is_empty() || self.is_hushed() {
             return;
         }
         for (c, it) in grown.into_iter().take(2) {
@@ -923,18 +997,42 @@ impl AppModel {
             self.publish_due(); // 지난 호 발행
         }
         self.deliver_bundles(now);
+        self.deliver_watch_digest(now);
         let st = self.settings();
-        if !st.digest_enabled || (local.hour() as i64) < st.digest_hour {
+        if !st.digest_enabled || !digest_window(local.hour() as i64, st.digest_hour) {
             return;
         }
         let done_today = self.state().last_digest.map(|d| d.with_timezone(&Local).date_naive() == local.date_naive()).unwrap_or(false);
-        if done_today || self.is_quiet_time() || self.is_snoozed() {
+        if done_today || self.is_hushed() {
             return; // 조용한 때가 끝나면 그날 안에 다시 시도
         }
         self.mutate(|s| s.last_digest = Some(now));
         let n = self.digest_items(now).len();
         if n > 0 {
             self.send(UiEvent::Digest { count: n });
+        }
+    }
+
+    // 지켜볼 낱말 하루 정리: 아침 브리핑 시각(브리핑을 꺼도 그 시각)에 지난 24시간 동안 낱말마다 걸린 소식 수.
+    // 조용한 때면 끝난 뒤 그날 안에 다시 시도. 정리 물방울은 세 개까지(낱말 순서), 숨긴 출처는 빼고
+    pub fn deliver_watch_digest(&self, now: DateTime<Utc>) {
+        let st = self.state();
+        let words = crate::watch_words::normalized(&st.settings.watch_keywords);
+        let local = now.with_timezone(&Local);
+        let done_today = st.last_watch_digest.map(|d| d.with_timezone(&Local).date_naive() == local.date_naive()).unwrap_or(false);
+        if words.is_empty() || !digest_window(local.hour() as i64, st.settings.digest_hour) || done_today || self.is_hushed() {
+            return;
+        }
+        self.mutate(|s| s.last_watch_digest = Some(now));
+        let hidden: std::collections::HashSet<String> = st.hidden_sources.iter().cloned().collect();
+        let recent: Vec<NewsItem> =
+            self.db.items(now - Duration::hours(24), None, 3000).into_iter().map(|s| s.item).filter(|i| !hidden.contains(&i.source_id)).collect();
+        for (word, items) in crate::watch_words::digest(&recent, &words).into_iter().take(3) {
+            let sound = st.settings.sound;
+            match st.settings.style {
+                Style::Drop => self.send(UiEvent::Watch { word, items, sound }),
+                Style::System => self.send(UiEvent::SystemWatch { word, items, sound }),
+            }
         }
     }
 
@@ -1053,6 +1151,7 @@ impl AppModel {
             section: None,
             lang: None,
             region: None,
+            paywall: None,
         };
         self.add(src).await
     }
@@ -1134,9 +1233,41 @@ impl AppModel {
             change(&mut s.settings);
             s.settings.clone()
         });
+        if after != before {
+            crate::focus_guard::MONITOR.invalidate();
+        }
         if after.interval_minutes != before.interval_minutes {
             self.restart_loop();
         }
+    }
+
+    // 기록 가져오기·되돌리기(P-08)에서만: 상태 여러 항목을 한 번에 바꾼다
+    pub fn replace_state(self: &Arc<Self>, change: impl FnOnce(&AppState) -> AppState) {
+        let before = self.settings();
+        self.mutate(|s| *s = change(s));
+        crate::focus_guard::MONITOR.invalidate();
+        if self.settings().interval_minutes != before.interval_minutes {
+            self.restart_loop();
+        }
+        self.reapply_keywords();
+        self.send(UiEvent::Layout);
+    }
+
+    // 지금 기록을 내보낼 파일로(스크랩·폴더는 화면 쪽이 넘겨 준다)
+    pub fn backup(&self, folders: &[String]) -> crate::backup::BackupFile {
+        crate::backup::make(&self.state(), &self.db.scraps(None), folders, Utc::now())
+    }
+
+    // 낱말 설정이 바뀌면 이미 받은 최근 목록에도 바로: ★ 다시 매기고, '알리지 않음' 낱말이 든 기사는 목록에서 뺌
+    pub fn reapply_keywords(&self) {
+        self.mutate(|s| {
+            let reset: Vec<NewsItem> = s.recent.drain(..).map(|mut it| {
+                it.important = None;
+                it.watch = None;
+                it
+            }).collect();
+            s.recent = apply_keywords(reset, &s.settings);
+        });
     }
 
     // 견본 카드. 실제 기사를 다시 띄우면 같은 소식이 또 온 것처럼 보이므로 쓰지 않는다

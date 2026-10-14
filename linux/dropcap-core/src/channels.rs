@@ -25,6 +25,7 @@ fn c(id: &str, name: &str, url: &str, kind: &str, group: &str, color: &str, noti
         section: None,
         lang: None,
         region: None,
+        paywall: None,
     }
 }
 

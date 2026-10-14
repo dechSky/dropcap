@@ -52,7 +52,7 @@ fn card_grid(items: &[NewsItem], width_hint: i32, decorate: impl Fn(&NewsItem, g
     flow.set_min_children_per_line(cols as u32);
     flow.set_max_children_per_line(cols as u32);
     for (i, it) in items.iter().enumerate() {
-        let c = StoryCard::build(it, i, None, &[], None);
+        let c = StoryCard::build(it, i, None, &[], None, items);
         flow.insert(&decorate(it, c), -1);
     }
     flow
@@ -469,6 +469,9 @@ fn timeline_row(it: &NewsItem, first: bool) -> gtk::Box {
     meta.append(&widgets::monogram(it, 18));
     meta.append(&label(&it.source_name, 12.5, 600, &[]));
     meta.append(&label(&resources::tier_label(&it.tier), 11.0, 400, &["dc-secondary"]));
+    if let Some(p) = widgets::paywall_mark(it) {
+        meta.append(&p);
+    }
     meta.append(&label(&format!("· {}", dropcap_core::app_model::clock(it.date)), 11.5, 400, &["dc-secondary"]));
     if first {
         let f = label("첫 보도", 10.5, 700, &[]);
@@ -544,6 +547,11 @@ pub fn saved() -> (gtk::Widget, gtk::ScrolledWindow) {
 }
 
 // MARK: 검색(M-16): 전체 기록에서 제목·출처·요약(2글자부터, 입력이 멈추면 0.25초 뒤)
+thread_local! {
+    // 다음에 여는 검색 지면에 미리 넣을 낱말(지켜볼 낱말 정리 물방울을 눌렀을 때)
+    pub static PENDING_QUERY: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
 pub fn search() -> (gtk::Widget, gtk::ScrolledWindow) {
     let (v, scroll) = wide_box();
     v.append(&big_title("검색"));
@@ -585,6 +593,9 @@ pub fn search() -> (gtk::Widget, gtk::ScrolledWindow) {
     let r1 = run.clone();
     entry.connect_search_changed(move |e| r1(e.text().to_string()));
     entry.connect_activate(move |e| run(e.text().to_string()));
+    if let Some(q) = PENDING_QUERY.with(|p| p.borrow_mut().take()) {
+        entry.set_text(&q);
+    }
     let e2 = entry.clone();
     widgets::later(300, move || {
         e2.grab_focus();

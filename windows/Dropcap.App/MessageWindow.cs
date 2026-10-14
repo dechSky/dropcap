@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using Dropcap.Core;
 using static Dropcap.App.Win32;
 
 namespace Dropcap.App;
@@ -47,6 +48,7 @@ internal sealed class MessageWindow : IDisposable
                 return 0;
             case WM_POWERBROADCAST:
                 if (wParam == PBT_APMRESUMEAUTOMATIC) Resumed?.Invoke();
+                if (wParam == PBT_APMSUSPEND) Store.Flush();   // 잠들기 전에는 묶어 둔 저장을 바로(C-13)
                 return 1;
             case WM_DISPLAYCHANGE:
                 DisplayChanged?.Invoke();

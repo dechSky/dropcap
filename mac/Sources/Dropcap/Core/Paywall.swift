@@ -108,6 +108,6 @@ final class PaywallBook {
     // 같은 스토리에서 무료로 읽을 수 있는 보도
     func alternatives(_ item: NewsItem) -> [NewsItem] {
         guard let c = Magazine.shared.clusterID(of: item.key) else { return [] }
-        return Paywall.freeAlternatives(item, story: Magazine.shared.storyItems(c), hidden: Set(AppModel.shared.state.hiddenSources), stats: stats)
+        return Paywall.freeAlternatives(item, story: Magazine.shared.storyItems(c), hidden: Set(AppModel.shared.state.hiddenSources), stats: stats) // storyItems 가 꺼진 출처를 이미 뺌
     }
 }

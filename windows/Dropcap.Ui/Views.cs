@@ -30,6 +30,8 @@ public sealed record ItemView
     public bool Important { get; init; }
     public bool Read { get; init; }
     public bool Saved { get; init; }
+    public string? Paywall { get; init; }            // hard · metered · learned(G-14 자물쇠). 없으면 무료
+    public string? PaywallHelp { get; init; }        // 마우스를 올리면 보이는 이유
 
     // 화면 CSS 에 들어가는 색은 #RRGGBB 만(출처 정보가 깨져도 스타일이 새지 않게)
     public static string SafeColor(string? hex) =>
@@ -38,6 +40,7 @@ public sealed record ItemView
     public static ItemView From(NewsItem it, AppModel? m, DateTimeOffset? now = null)
     {
         var src = m?.SourceById(it.SourceId);
+        var pw = it.ItemKind == ItemKind.Article && it.Link.Length > 0 ? Core.Paywall.Kind(it.SourceId, it.Link, stats: PaywallBook.Loaded?.Stats) : null;
         return new ItemView
         {
             Key = it.Key, Title = it.DisplayTitle, Original = it.Title, Translated = it.TitleKo is not null && it.TitleKo != it.Title,
@@ -47,6 +50,7 @@ public sealed record ItemView
             External = it.ItemKind.OpensExternally(), Related = it.Related?.Count ?? 0, RelatedNames = it.Related ?? new(),
             Time = RelativeTime.Format(it.Date, now), Date = it.Date?.ToUnixTimeMilliseconds(), Summary = it.Summary,
             Image = it.Image, Important = it.Important == true, Read = m?.IsRead(it) ?? false, Saved = m?.IsSaved(it) ?? false,
+            Paywall = pw?.Raw(), PaywallHelp = pw?.Help(),
         };
     }
 }

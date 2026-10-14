@@ -107,6 +107,7 @@ struct MagazineView: View {
     }
 
     private func go(_ p: Page) {
+        TestLog.write("[매거진] 지면 이동 \(p)")
         guard p != page else { return }
         turn = order(p) >= order(page) ? 1 : -1
         withAnimation(.spring(response: 0.62, dampingFraction: 0.9)) { page = p }
@@ -407,8 +408,51 @@ private struct CoverStory: View {
     // 사진이 없으면 사진 자리를 만들지 않고 글자 표지로(지어낸 그림은 쓰지 않음)
     private var hasPhoto: Bool { item.image != nil && !ImageKey.isJunk(item.image) }
     private var ink: Color { hasPhoto ? .white : .primary }
+    private var storyID: String? {
+        guard let c = stored.cluster, (Magazine.shared.cluster(c)?.size ?? 1) >= 2 else { return nil }
+        return c
+    }
 
+    private func openArticle() {
+        TestLog.write("[표지] 눌림 \(item.title.prefix(30))")
+        AppModel.shared.markOpened(item)
+        ReaderController.open(item, from: frame, sequence: sequence)
+    }
+
+    // 카드 전체가 하나의 단추(일반 카드와 같은 방식). 예전엔 카드에 onTapGesture 를 달았는데,
+    // 스크롤 지면 안에서 그 제스처가 클릭을 받지 못하고 안쪽 '기사 읽기' 단추까지 막아 표지가 통째로 반응이 없었다.
+    // '여러 시각' 단추는 카드 단추 안에 넣으면 눌리지 않으므로 같은 자리에 위로 겹쳐 둔다.
     var body: some View {
+        Button { openArticle() } label: { card }
+            .buttonStyle(.plain)
+            .overlay(alignment: .bottomLeading) {
+                if let c = storyID {
+                    HStack(spacing: 10) {
+                        readPill.hidden() // 자리만 맞춘다(누르면 아래 카드 단추로)
+                        Button { onStory(c) } label: { storyPill(c) }.buttonStyle(.plain)
+                    }
+                    .padding(30)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .onContinuousHover { phase in
+                switch phase { case .active: NSCursor.pointingHand.set(); case .ended: NSCursor.arrow.set() }
+            }
+            .shadow(color: .black.opacity(hover ? 0.28 : 0.16), radius: hover ? 26 : 16, y: hover ? 14 : 8)
+            .scaleEffect(hover ? 1.006 : 1)
+            .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hover)
+            .onHover { hover = $0 }
+            .selectionRing(selectedCard == item.key, radius: 22)
+            .id(item.key)
+            .background(ScreenFrame(frame: $frame))
+            .onAppear {
+                // 움직임 줄이기를 켠 사람에게는 끝없이 흐르는 켄 번스를 돌리지 않는다
+                guard !reduceMotion, ProcessInfo.processInfo.environment["DROPCAP_TEST_NOKB"] == nil else { return }
+                withAnimation(.easeInOut(duration: 22).repeatForever(autoreverses: true)) { drift = true }
+            }
+    }
+
+    private var card: some View {
         ZStack(alignment: .bottomLeading) {
             if hasPhoto {
                 // 켄 번스: 표지 사진이 아주 천천히 다가오며 흐른다
@@ -437,46 +481,38 @@ private struct CoverStory: View {
                     .font(.display(34, .bold))
                     .foregroundStyle(ink)
                     .lineLimit(3)
+                    .multilineTextAlignment(.leading)
                     .shadow(color: .black.opacity(hasPhoto ? 0.3 : 0), radius: 8, y: 2)
                 if item.titleKo != nil, item.titleKo != item.title {
                     Text(item.title).font(.app(13)).foregroundStyle(ink.opacity(0.7)).lineLimit(1)
                 }
                 HStack(spacing: 10) {
-                    Button { ReaderController.open(item, from: frame, sequence: sequence) ; AppModel.shared.markOpened(item) } label: {
-                        Label("기사 읽기", systemImage: "book").font(.app(13, .semibold))
-                            .padding(.horizontal, 14).padding(.vertical, 8)
-                            .background(ink, in: Capsule()).foregroundStyle(hasPhoto ? Color.black : Color(nsColor: .textBackgroundColor))
-                    }
-                    .buttonStyle(.plain)
-                    if let c = stored.cluster, (Magazine.shared.cluster(c)?.size ?? 1) >= 2 {
-                        Button { onStory(c) } label: {
-                            Label("여러 시각 \(Magazine.shared.cluster(c)?.size ?? 2)곳", systemImage: "rectangle.split.3x1")
-                                .font(.app(13, .semibold))
-                                .padding(.horizontal, 14).padding(.vertical, 8)
-                                .background(ink.opacity(0.12), in: Capsule()).foregroundStyle(ink)
-                                .overlay(Capsule().strokeBorder(ink.opacity(0.35), lineWidth: 0.5))
-                        }
-                        .buttonStyle(.plain)
-                    }
+                    readPill
+                    if let c = storyID { storyPill(c).hidden() } // 실제 단추는 위에 겹친다
                 }
                 .padding(.top, 4)
             }
             .padding(30)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: hasPhoto ? 400 : nil)
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .shadow(color: .black.opacity(hover ? 0.28 : 0.16), radius: hover ? 26 : 16, y: hover ? 14 : 8)
-        .scaleEffect(hover ? 1.006 : 1)
-        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hover)
-        .onHover { hover = $0 }
-        .selectionRing(selectedCard == item.key, radius: 22)
-        .id(item.key)
-        .background(ScreenFrame(frame: $frame))
-        .onAppear {
-            // 움직임 줄이기를 켠 사람에게는 끝없이 흐르는 켄 번스를 돌리지 않는다
-            guard !reduceMotion else { return }
-            withAnimation(.easeInOut(duration: 22).repeatForever(autoreverses: true)) { drift = true }
-        }
+        .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+    }
+
+    private var readPill: some View {
+        Label("기사 읽기", systemImage: "book").font(.app(13, .semibold))
+            .padding(.horizontal, 14).padding(.vertical, 8)
+            .background(ink, in: Capsule()).foregroundStyle(hasPhoto ? Color.black : Color(nsColor: .textBackgroundColor))
+    }
+
+    private func storyPill(_ c: String) -> some View {
+        Label("여러 시각 \(Magazine.shared.cluster(c)?.size ?? 2)곳", systemImage: "rectangle.split.3x1")
+            .font(.app(13, .semibold))
+            .padding(.horizontal, 14).padding(.vertical, 8)
+            .background(ink.opacity(0.12), in: Capsule()).foregroundStyle(ink)
+            .overlay(Capsule().strokeBorder(ink.opacity(0.35), lineWidth: 0.5))
     }
 }
 
@@ -634,6 +670,8 @@ struct ScreenFrame: NSViewRepresentable {
         @Binding var target: CGRect
         init(target: Binding<CGRect>) { _target = target; super.init(frame: .zero) }
         required init?(coder: NSCoder) { fatalError() }
+        // 위치만 재는 뷰라 클릭을 받지 않는다. 받으면 그 위의 카드·단추가 눌리지 않는다(매거진 표지 '기사 읽기'가 반응 없던 원인)
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
         override func layout() { super.layout(); report() }
         func report() {
             guard let w = window else { return }
@@ -932,7 +970,7 @@ struct SavedView: View {
 }
 
 struct SearchView: View {
-    @State private var q = ""
+    @State private var q = MagazineController.pendingSearch ?? ""
     @State private var results: [NewsItem] = []
     var body: some View {
         ScrollView {
@@ -950,6 +988,8 @@ struct SearchView: View {
                 }
                 .padding(12)
                 .background(.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .onReceive(NotificationCenter.default.publisher(for: .magazineSearch)) { n in if let w = n.object as? String { q = w } }
+                .onDisappear { MagazineController.pendingSearch = nil }
                 if !q.isEmpty { Text("\(results.count)건").foregroundStyle(.secondary) }
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 230, maximum: 360), spacing: 18)], alignment: .leading, spacing: 22) {
                     ForEach(Array(results.enumerated()), id: \.element.key) { i, it in StoryCard(item: it, order: i) }
@@ -974,6 +1014,13 @@ private struct Stagger: ViewModifier {
 enum MagazineController {
     private static var window: NSWindow?
     static var pendingPage: MagazineView.Page?
+    static var pendingSearch: String?   // 검색 화면을 이 낱말로 열기(지켜볼 낱말 정리 물방울)
+
+    static func search(_ word: String) {
+        pendingSearch = word
+        NotificationCenter.default.post(name: .magazineSearch, object: word)
+        open(page: .search)
+    }
 
     static func open(page: MagazineView.Page) {
         pendingPage = page
@@ -1250,7 +1297,10 @@ private struct StaggerIn: ViewModifier {
 }
 
 
-extension Notification.Name { static let magazineGo = Notification.Name("dropcap.magazineGo") }
+extension Notification.Name {
+    static let magazineGo = Notification.Name("dropcap.magazineGo")
+    static let magazineSearch = Notification.Name("dropcap.magazineSearch") // 열린 검색 화면의 낱말 바꾸기
+}
 
 // 마지막 줄에 카드 한 장만 남지 않게 칸 수를 고른다(4장이면 2×2, 7장이면 4+3 …). 폭에 들어가는 칸 수가 기준
 struct BalancedGrid<Content: View>: View {

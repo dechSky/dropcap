@@ -6,6 +6,7 @@ import Foundation
 // 편집에 필요한 앱 상태의 사본(메인에서 만들어 넘김)
 struct EditContext: Sendable {
     var hidden: Set<String> = []
+    var filter = SourceFilter()   // 숨긴 출처 + 꺼진·해지한 출처를 뺀다(SourceFilter)
     var chosen: [String]? = nil
     var limits = PolicyLimits()
     var interestCategory: [String: Double] = [:]
@@ -110,7 +111,7 @@ actor Editor {
     func makeIssue(kind: Issue.Kind, from: Date, to: Date, id: String, ctx: EditContext) -> Issue {
         // 기사와 구독 채널 글을 따로(논문이 많아도 기사가 잘리지 않게). 숨긴 출처는 스토리 대표를 고르기 전에 뺀다
         let stored = (db.items(from: from, to: to, limit: 4000, articlesOnly: true) + db.items(from: from, to: to, limit: 800, channelsOnly: true))
-            .filter { !ctx.hidden.contains($0.item.sourceId) }
+            .filter { ctx.filter.shows($0.item.sourceId) && !ctx.hidden.contains($0.item.sourceId) }
         // 같은 스토리는 대표 하나만 지면에(점수 높은 것)
         var sizes: [String: Int] = [:]
         for s in stored { if let c = s.cluster { sizes[c, default: 0] += 1 } }
@@ -189,7 +190,7 @@ actor Editor {
 
     // MARK: 꺼내 보기
     // 한 호를 화면에 그릴 재료를 한 번에(지면마다 DB 를 다시 읽지 않게)
-    func resolve(_ issue: Issue, hidden: Set<String>) -> Magazine.Resolved {
+    func resolve(_ issue: Issue, filter: SourceFilter) -> Magazine.Resolved {
         let keys = (issue.cover.map { [$0] } ?? []) + issue.sections.flatMap(\.keys)
         let map = Dictionary(db.items(keys: keys).map { ($0.item.key, $0) }, uniquingKeysWith: { a, _ in a })
         var clusters: [String: String] = [:]
@@ -198,20 +199,20 @@ actor Editor {
         var regions: [String: [NewsItem]] = [:]
         let sizes = db.coverage(Array(clusters.keys))
         for (k, c) in clusters where (sizes[k] ?? 1) >= 2 && regions[c] == nil {
-            let items = db.items(inCluster: c).map(\.item).filter { !hidden.contains($0.sourceId) }
+            let items = db.items(inCluster: c).map(\.item).filter { filter.shows($0.sourceId) }
             let split = Magazine.splitByRegion(items)
             if !split.intl.isEmpty, !split.kr.isEmpty { regions[c] = items }
         }
-        return Magazine.Resolved(issue: issue, cover: issue.cover.flatMap { map[$0] },
-                                 sections: issue.sections.map { s in (s, s.keys.compactMap { map[$0]?.item }) }.filter { !$0.1.isEmpty },
+        return Magazine.Resolved(issue: issue, cover: issue.cover.flatMap { map[$0] }.flatMap { filter.shows($0.item.sourceId) ? $0 : nil },
+                                 sections: issue.sections.map { s in (s, s.keys.compactMap { map[$0]?.item }.filter { filter.shows($0.sourceId) }) }.filter { !$0.1.isEmpty },
                                  clusters: clusters, regions: regions)
     }
 
-    func search(_ q: String) -> [NewsItem] { db.search(q) }
+    func search(_ q: String, filter: SourceFilter = SourceFilter()) -> [NewsItem] { filter.visible(db.search(q)) }
     func recentItems(since: Date, limit: Int) -> [Database.StoredItem] { db.items(from: since, limit: limit) }
 
     // 알림 판단용: 기사마다 스토리 id 와 같은 소식을 다룬 국내·해외 출처 수(숨긴 출처 제외)
-    func storyInfo(_ items: [NewsItem], hidden: Set<String>) -> [String: (story: String?, coverage: Coverage)] {
+    func storyInfo(_ items: [NewsItem], filter: SourceFilter) -> [String: (story: String?, coverage: Coverage)] {
         let ids = db.clusters(of: items.map(\.key))
         var members: [String: [NewsItem]] = [:]
         for c in Set(ids.values) { members[c] = db.items(inCluster: c).map(\.item) }
@@ -219,7 +220,7 @@ actor Editor {
         for it in items {
             var regions: [String: String] = [it.sourceId: Sections.region(ofSource: it.sourceId, tier: it.tier)]
             if let c = ids[it.key] {
-                for m in members[c] ?? [] where !hidden.contains(m.sourceId) { regions[m.sourceId] = Sections.region(ofSource: m.sourceId, tier: m.tier) }
+                for m in members[c] ?? [] where filter.shows(m.sourceId) { regions[m.sourceId] = Sections.region(ofSource: m.sourceId, tier: m.tier) }
             }
             out[it.key] = (ids[it.key], Coverage(kr: regions.values.filter { $0 == "kr" }.count, intl: regions.values.filter { $0 != "kr" }.count))
         }

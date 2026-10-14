@@ -176,7 +176,9 @@ struct ReaderLookPanel: View {
 // 바탕을 '어둡게'·'종이'로 고르면 창 전체(제목줄·도구 막대 포함)를 그 모양으로
 struct WindowAppearance: NSViewRepresentable {
     let scheme: ColorScheme?
-    func makeNSView(context: Context) -> NSView { NSView() }
+    func makeNSView(context: Context) -> NSView { PassThrough() }
+    // 창 모양만 바꾸는 뷰라 클릭을 받지 않는다(아래 글·단추가 가려지지 않게)
+    final class PassThrough: NSView { override func hitTest(_ point: NSPoint) -> NSView? { nil } }
     func updateNSView(_ v: NSView, context: Context) {
         DispatchQueue.main.async {
             v.window?.appearance = scheme.map { NSAppearance(named: $0 == .dark ? .darkAqua : .aqua) } ?? nil

@@ -21,10 +21,14 @@ final class Scrapbook: ObservableObject {
     @Published private(set) var scraps: [Scrap] = []
     @Published private(set) var collections: [String] = []
 
-    private init() { reload() }
+    private init() {
+        restoreFromCopyIfNeeded()
+        reload()
+    }
 
     func reload() {
         scraps = db.scraps()
+        writeCopy()
         let used = Set(scraps.map(\.collection))
         let extra = (UserDefaults.standard.stringArray(forKey: "scrapCollections") ?? []).filter { !used.contains($0) }
         collections = ([Self.defaultCollection] + used.sorted() + extra).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
@@ -65,6 +69,48 @@ final class Scrapbook: ObservableObject {
         reload()
         ScrapExport.shared.syncSoon(renamed: (from, n))
         return true
+    }
+
+    // MARK: JSON 사본(scraps.json)
+    // 스크랩은 매거진 DB 안에 있어, DB 가 통째로 못 읽히면 함께 사라졌다(E2E 12-다). 바뀔 때마다 전부를 사본으로 원자적으로 쓰고,
+    // DB 가 새로 만들어졌거나(깨짐) 비어 있는데 사본에 있으면 사본에서 되살린다.
+    // - 예전 판(사본 없음): 첫 실행의 reload 가 DB 내용으로 사본을 만든다.
+    // - 되돌리기: 예전 판은 이 파일을 모르고 무시한다. 끄기: UserDefaults scrapsCopyOff = true.
+    // - 기기 이동: 데이터 폴더(Store.dir)에 함께 있어 폴더째 옮기면 따라간다.
+    struct Copy: Codable { var version = 1; var scraps: [Scrap] }
+    nonisolated static func copyFile(_ dir: URL = Store.dir) -> URL { dir.appendingPathComponent("scraps.json") }
+    private static var copyOff: Bool { UserDefaults.standard.bool(forKey: "scrapsCopyOff") }
+
+    nonisolated static func readCopy(_ file: URL) -> [Scrap]? {
+        guard let d = try? Data(contentsOf: file) else { return nil }
+        return (try? Database.decoder.decode(Copy.self, from: d))?.scraps
+    }
+    nonisolated static func writeCopy(_ list: [Scrap], to file: URL) {
+        guard let d = try? Database.encoder.encode(Copy(scraps: list)) else { return }
+        try? d.write(to: file, options: .atomic)
+    }
+
+    // 사본에 있고 DB 에 없는 스크랩을 DB 로(같은 id 는 DB 쪽을 그대로 둠)
+    nonisolated static func restoreList(db: [Scrap], copy: [Scrap]) -> [Scrap] {
+        let have = Set(db.map(\.id))
+        return copy.filter { !have.contains($0.id) }
+    }
+
+    private func restoreFromCopyIfNeeded() {
+        guard !Self.copyOff, let copy = Self.readCopy(Self.copyFile()), !copy.isEmpty else { return }
+        let inDB = db.scraps()
+        // 평소에 사용자가 다 지운 것은 되살리지 않는다: DB 를 새로 만들었거나(깨짐·삭제) 기사도 하나 없는 빈 DB 일 때만
+        guard db.recreated || (inDB.isEmpty && db.itemCount == 0) else { return }
+        let missing = Self.restoreList(db: inDB, copy: copy)
+        for s in missing { db.saveScrap(s) }
+        if !missing.isEmpty { NSLog("[스크랩] 사본(scraps.json)에서 %d개를 되살렸습니다", missing.count) }
+    }
+
+    private func writeCopy() {
+        guard !Self.copyOff else { return }
+        // DB 가 깨져 새로 만들었는데 아무것도 못 건졌으면, 그 빈 목록으로 사본을 덮지 않는다
+        if scraps.isEmpty, db.recreated { return }
+        Self.writeCopy(scraps, to: Self.copyFile())
     }
 
     func isScrapped(_ item: NewsItem, quote: String? = nil) -> Bool {

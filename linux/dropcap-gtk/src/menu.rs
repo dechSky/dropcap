@@ -1,7 +1,7 @@
 // 상단바(트레이) 창(U-02~U-08, 맥 UI/MenuView.swift·MenuStyles.swift): 최근 소식(전체·안 읽음·저장) + 몇 가지 동작.
 // 트레이가 떠 있으면 아이콘 근처에 테두리 없이 뜨고 다른 곳을 누르면 닫힌다. 트레이가 없으면 보통 창으로 뜬다.
 // 목록은 맥 기본 모양 '첫 소식 크게'(첫 기사 큰 사진 카드 + 나머지 사진 카드). 사진이 없으면 사진 자리를 만들지 않는다.
-use crate::app::{bg, copy_text, open_external, open_item, ui};
+use crate::app::{bg, copy_text, open_external, ui};
 use crate::menu_chips::{ChipBar, Pick};
 use crate::widgets::{self, clear_box, icon, label, lines};
 use adw::prelude::*;
@@ -36,6 +36,7 @@ struct Menu {
     coverage: HashMap<String, i64>, // 중요순 점수에 쓰는 기사별 보도 수(뒤에서 받아 둠)
     // 머리
     quiet: gtk::Image,
+    hush: gtk::Image, // 회의·발표 중 자동 조용히(N-25) 이유
     status: gtk::Label,
     snooze_icon: gtk::Image,
     snooze_button: gtk::MenuButton,
@@ -47,6 +48,9 @@ struct Menu {
     chips: Rc<ChipBar>,
     // 목록
     list: gtk::Box,
+    scroll: gtk::ScrolledWindow,
+    shown: Vec<(NewsItem, gtk::Widget)>, // 지금 보이는 순서(키보드 탐색·읽기 창 J/K)
+    selected: Option<String>,            // 키보드로 고른 소식(H-03)
     stack: gtk::Stack,
     empty_icon: gtk::Image,
     empty_title: gtk::Label,
@@ -128,6 +132,9 @@ fn build() -> Rc<RefCell<Menu>> {
     quiet.set_tooltip_text(Some("방해 금지 시간이라 알림을 띄우지 않습니다"));
     css(&quiet, "image { color: #5856D6; }");
     title_row.append(&quiet);
+    let hush = icon("system-users-symbolic", 12);
+    css(&hush, "image { color: #5856D6; }");
+    title_row.append(&hush);
     titles.append(&title_row);
     let status = label("", 11.0, 400, &["dc-secondary", "numeric"]);
     status.set_wrap(false);
@@ -262,6 +269,7 @@ fn build() -> Rc<RefCell<Menu>> {
         pick: Pick::default(),
         coverage: HashMap::new(),
         quiet,
+        hush,
         status,
         snooze_icon,
         snooze_button: snooze_button.clone(),
@@ -271,6 +279,9 @@ fn build() -> Rc<RefCell<Menu>> {
         sort_button: sort_button.clone(),
         chips: chips.clone(),
         list,
+        scroll: scroll.clone(),
+        shown: vec![],
+        selected: None,
         stack,
         empty_icon,
         empty_title,
@@ -334,6 +345,23 @@ fn build() -> Rc<RefCell<Menu>> {
         search.connect_search_changed(move |e| {
             m.borrow_mut().query = e.text().to_string();
             refresh(&m);
+        });
+    }
+
+    // 키보드 탐색(H-03): 열면 목록이 키를 받고, 검색칸에서 ↓ 로 목록으로
+    {
+        let m = m.clone();
+        let win = window.clone();
+        crate::keynav::attach(&window, move |key, state| {
+            let Some(k) = crate::keynav::NavKey::from(key, state) else { return false };
+            if crate::keynav::typing(&win) {
+                if k != crate::keynav::NavKey::Next || !matches!(key, gdk::Key::Down | gdk::Key::KP_Down) {
+                    return false;
+                }
+                gtk::prelude::GtkWindowExt::set_focus(&win, None::<&gtk::Widget>);
+            }
+            key_nav(&m, k);
+            true
         });
     }
 
@@ -429,8 +457,13 @@ fn render(m: &Rc<RefCell<Menu>>) {
     chips.rebuild(&chosen, &HashMap::new());
     let mm = m.borrow();
 
-    // 머리
-    mm.quiet.set_visible(core.is_quiet_time());
+    // 머리: 회의·발표 중이면 그 이유, 아니면 방해 금지 달
+    let hush = core.auto_quiet_reason();
+    mm.hush.set_visible(hush.is_some());
+    if let Some(r) = hush {
+        mm.hush.set_tooltip_text(Some(&format!("{}이라 알림을 띄우지 않고 모아 둡니다", r.label())));
+    }
+    mm.quiet.set_visible(hush.is_none() && core.is_quiet_time());
     mm.status.set_text(&if checking { "확인하는 중…".to_string() } else { format!("마지막 확인 {}", clock(st.last_check)) });
     let snoozed = core.is_snoozed();
     mm.snooze_icon.set_icon_name(Some(if snoozed { "notifications-disabled-symbolic" } else { "preferences-system-notifications-symbolic" }));
@@ -484,6 +517,9 @@ fn render(m: &Rc<RefCell<Menu>>) {
     // 목록
     let list = items(&mm, &st.recent, &st.saved, &read);
     clear_box(&mm.list);
+    drop(mm);
+    m.borrow_mut().shown.clear();
+    let mm = m.borrow();
     if list.is_empty() {
         let filtered = !mm.query.trim().is_empty() || mm.pick.section.is_some() || mm.pick.sub.is_some();
         mm.empty_icon.set_icon_name(Some(if mm.tab == Tab::Saved { "user-bookmarks-symbolic" } else { "x-office-document-symbolic" }));
@@ -506,6 +542,7 @@ fn render(m: &Rc<RefCell<Menu>>) {
     }
     let saved_keys: HashSet<String> = st.saved.iter().map(|s| s.key()).collect();
     let by_source = sort == "source";
+    let mut shown: Vec<(NewsItem, gtk::Widget)> = vec![];
     for (i, it) in list.iter().enumerate() {
         let prev = if i > 0 { Some(&list[i - 1]) } else { None };
         // 출처별일 때는 출처가 바뀌는 곳에 이름표
@@ -520,10 +557,60 @@ fn render(m: &Rc<RefCell<Menu>>) {
             }
         }
         let r = read.contains(&it.key());
-        let w = if i == 0 && !by_source { hero_card(it, r) } else { card_row(it, r, saved_keys.contains(&it.key())) };
+        let w = if i == 0 && !by_source { hero_card(it, r, &list) } else { card_row(it, r, saved_keys.contains(&it.key()), &list) };
         mm.list.append(&w);
+        shown.push((it.clone(), w));
     }
     mm.stack.set_visible_child_name("list");
+    let sel = mm.selected.clone();
+    drop(mm);
+    let mut mb = m.borrow_mut();
+    mb.shown = shown;
+    // 다시 그려도 고른 것은 그대로(목록에서 빠졌으면 고르지 않음)
+    if mb.selected.is_some() && !mb.shown.iter().any(|(it, _)| Some(it.key()) == sel) {
+        mb.selected = None;
+    }
+    for (it, w) in &mb.shown {
+        crate::keynav::mark(w, Some(it.key()) == mb.selected);
+    }
+}
+
+// 시험용: 키를 누른 것처럼(DROPCAP_TEST_KEYNAV)
+pub fn test_key(k: crate::keynav::NavKey) -> Option<gtk::Window> {
+    let m = current()?;
+    key_nav(&m, k);
+    let w = m.borrow().window.clone();
+    Some(w)
+}
+
+// 고른 소식 옮기기·열기·저장·브라우저·읽음(H-03)
+fn key_nav(m: &Rc<RefCell<Menu>>, k: crate::keynav::NavKey) {
+    use crate::keynav::NavKey;
+    let (keys, sel) = {
+        let mb = m.borrow();
+        (mb.shown.iter().map(|(it, _)| it.key()).collect::<Vec<_>>(), mb.selected.clone())
+    };
+    match k {
+        NavKey::Next | NavKey::Prev => {
+            let next = crate::keynav::step(sel.as_deref(), &keys, if k == NavKey::Next { 1 } else { -1 });
+            let mut mb = m.borrow_mut();
+            mb.selected = next.clone();
+            for (it, w) in &mb.shown {
+                crate::keynav::mark(w, Some(it.key()) == next);
+            }
+            if let Some((_, w)) = mb.shown.iter().find(|(it, _)| Some(it.key()) == next) {
+                crate::keynav::center(&mb.scroll, w);
+            }
+        }
+        _ => {
+            let (item, seq) = {
+                let mb = m.borrow();
+                let Some(item) = mb.shown.iter().find(|(it, _)| Some(it.key()) == sel).map(|(it, _)| it.clone()) else { return };
+                (item, mb.shown.iter().map(|(it, _)| it.clone()).collect::<Vec<_>>())
+            };
+            crate::keynav::perform(k, &item, &seq, false);
+        }
+    }
 }
 
 // 시간 묶음: 방금(1시간 안) · 오늘 · 어제 · 이전 — 앞 기사와 묶음이 바뀔 때만(첫 카드 바로 뒤는 늘 붙임)
@@ -670,7 +757,7 @@ fn unread_dot(it: &NewsItem, size: i32) -> gtk::DrawingArea {
 }
 
 // 첫 소식 크게: 사진 위에 제목(아래 어둡게). 사진이 없으면 사진 없이 글자 카드로
-fn hero_card(it: &NewsItem, read: bool) -> gtk::Widget {
+fn hero_card(it: &NewsItem, read: bool, seq: &[NewsItem]) -> gtk::Widget {
     let overlay = gtk::Overlay::new();
     overlay.set_overflow(gtk::Overflow::Hidden);
     overlay.set_margin_top(4);
@@ -714,6 +801,9 @@ fn hero_card(it: &NewsItem, read: bool) -> gtk::Widget {
     src.set_wrap(false);
     src.set_opacity(0.85);
     meta.append(&src);
+    if let Some(p) = widgets::paywall_mark(it) {
+        meta.append(&p);
+    }
     text.append(&meta);
     let title = label(it.display_title(), 15.5, 700, &[]);
     lines(&title, 2);
@@ -738,12 +828,12 @@ fn hero_card(it: &NewsItem, read: bool) -> gtk::Widget {
             });
         });
     }
-    clickable(&overlay, it);
+    clickable(&overlay, it, seq);
     overlay.upcast()
 }
 
 // 사진 카드: 왼쪽 사진(없으면 자리 없음), 오른쪽 제목 두 줄 + 출처·분야·시각
-fn card_row(it: &NewsItem, read: bool, saved: bool) -> gtk::Widget {
+fn card_row(it: &NewsItem, read: bool, saved: bool, seq: &[NewsItem]) -> gtk::Widget {
     let h = gtk::Box::new(gtk::Orientation::Horizontal, 11);
     h.add_css_class("dc-card");
     h.set_margin_top(2);
@@ -767,6 +857,12 @@ fn card_row(it: &NewsItem, read: bool, saved: bool) -> gtk::Widget {
         let s = icon("starred-symbolic", 11);
         s.add_css_class("warning");
         meta.append(&s);
+    } else if let Some(w) = &it.watch {
+        // 지켜볼 낱말에 걸린 소식(★ 와 겹치면 ★ 만)
+        let e = icon("view-reveal-symbolic", 11);
+        css(&e, "image { color: #30B0C7; }");
+        e.set_tooltip_text(Some(&format!("지켜볼 낱말: {w}")));
+        meta.append(&e);
     }
     let mut srcname = it.source_name.clone();
     if it.related_count() > 0 {
@@ -775,6 +871,9 @@ fn card_row(it: &NewsItem, read: bool, saved: bool) -> gtk::Widget {
     let sl = label(&srcname, 10.5, 600, &[]);
     lines(&sl, 1);
     meta.append(&sl);
+    if let Some(p) = widgets::paywall_mark(it) {
+        meta.append(&p);
+    }
     meta.append(&topic(it));
     let tl = label(&widgets::time_text(it), 10.5, 400, &["dc-tertiary"]);
     tl.set_wrap(false);
@@ -789,22 +888,23 @@ fn card_row(it: &NewsItem, read: bool, saved: bool) -> gtk::Widget {
     if !read {
         h.append(&unread_dot(it, 6));
     }
-    clickable(&h, it);
+    clickable(&h, it, seq);
     h.upcast()
 }
 
 // 누르면 읽기 창, 오른쪽 클릭이면 메뉴
-fn clickable(w: &impl IsA<gtk::Widget>, it: &NewsItem) {
+fn clickable(w: &impl IsA<gtk::Widget>, it: &NewsItem, seq: &[NewsItem]) {
     let w = w.as_ref().clone();
     let click = gtk::GestureClick::new();
     click.set_button(0);
     let it = it.clone();
+    let seq = seq.to_vec();
     let w2 = w.clone();
     click.connect_released(move |g, _, x, y| {
         if g.current_button() == 3 {
             context_menu(&w2, &it, x, y);
         } else if g.current_button() == 1 {
-            open_item(&it, origin_of(&w2));
+            crate::app::open_item_in(&it, origin_of(&w2), seq.clone());
         }
     });
     w.add_controller(click);

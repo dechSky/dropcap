@@ -90,7 +90,7 @@ private func tempDB() throws -> (Database, URL) {
         // 다시 넣어도 스토리를 다시 정하지 않음
         _ = await ed.ingest([b], followed: [])
         #expect(db.cluster(story)?.size == 2)
-        let info = await ed.storyInfo([a, b], hidden: ["techcrunch"])
+        let info = await ed.storyInfo([a, b], filter: SourceFilter(hidden: ["techcrunch"]))
         #expect(info[a.key]?.story == story && info[a.key]?.coverage.total == 1) // 숨긴 출처는 보도 수에서 뺌
     }
 

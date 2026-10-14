@@ -21,8 +21,8 @@ struct MenuView: View {
     private var items: [NewsItem] {
         var list: [NewsItem]
         switch tab {
-        case .all: list = model.state.recent
-        case .unread: list = model.state.recent.filter { !model.isRead($0) }
+        case .all: list = model.visibleRecent
+        case .unread: list = model.visibleRecent.filter { !model.isRead($0) }
         case .saved: list = model.state.saved
         }
         if let s = section {
@@ -64,7 +64,7 @@ struct MenuView: View {
             header
             Picker("", selection: $tab) {
                 ForEach(Tab.allCases, id: \.self) { t in
-                    Text(t == .unread ? "안 읽음 \(model.state.recent.filter { !model.isRead($0) }.count)" : t.rawValue).tag(t)
+                    Text(t == .unread ? "안 읽음 \(model.visibleRecent.filter { !model.isRead($0) }.count)" : t.rawValue).tag(t)
                 }
             }
             .pickerStyle(.segmented)
@@ -315,6 +315,7 @@ private struct Row: View {
                         .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 4) {
                         if item.important == true { Image(systemName: "star.fill").foregroundStyle(.orange) }
+                        else if let w = item.watch { Image(systemName: "eye").foregroundStyle(.teal).help("지켜볼 낱말: \(w)") }
                         Image(systemName: item.topicSymbol).foregroundStyle(item.topicColor)
                         Text(item.sourceName)
                         PaywallMark(item: item)
@@ -354,7 +355,9 @@ struct RowThumb: View {
         Group {
             if let image = image ?? Self.preloaded[item.key] {
                 Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
+                    .allowsHitTesting(false)
                     .frame(width: width, height: height)
+                    .contentShape(Rectangle())
                     .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(.primary.opacity(0.08), lineWidth: 0.5))
                     .transition(.opacity)

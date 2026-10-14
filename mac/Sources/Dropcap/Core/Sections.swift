@@ -84,7 +84,11 @@ enum Sections {
     // MARK: 기사의 분야
     // 대표 분야 하나 + 칩 여러 개. 출처의 분야가 1순위, 출처가 '주요'·모름이면 낱말 규칙으로 보충.
     // AI 는 다른 분야 글에서도 끌어온다(aiPattern).
-    struct Placement: Hashable { var primary: String; var chips: [String] }
+    struct Placement: Hashable {
+        var primary: String
+        var chips: [String]
+        var strong: String? = nil   // 출처 분야와 다른데 낱말이 강하게 걸린 분야(목록에 칩을 하나 더 보임)
+    }
 
     static func place(_ it: NewsItem, meta m: [String: SourceMeta] = meta, aiRegex: NSRegularExpression? = Resources.aiRegex) -> Placement {
         let text = "\(it.title) \(it.titleKo ?? "") \(it.summary)"
@@ -93,7 +97,17 @@ enum Sections {
         var chips = [primary!]
         if primary != ai, let re = aiRegex, re.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil { chips.append(ai) }
         if primary != top, let g = classify(text), g != primary, !chips.contains(g), g != ai { chips.append(g) }
-        return Placement(primary: primary!, chips: chips)
+        // 출처 분야가 정한 대표와 달리 다른 분야 낱말이 2개 이상(그리고 대표 분야 낱말보다 많이) 걸리면 그 분야를 '강한' 칩으로
+        var strong: String?
+        if primary != top {
+            let h = hits(text)
+            if let best = h.filter({ $0.key != primary && $0.key != ai }).max(by: { ($0.value, -order($0.key)) < ($1.value, -order($1.key)) }),
+               best.value >= 2, best.value > h[primary!] ?? 0 {
+                strong = best.key
+                if !chips.contains(best.key) { chips.append(best.key) }
+            }
+        }
+        return Placement(primary: primary!, chips: chips, strong: strong)
     }
 
     nonisolated(unsafe) private static var cache: [String: Placement] = [:]
@@ -130,6 +144,20 @@ enum Sections {
         let pattern = english.map { "\\b" + NSRegularExpression.escapedPattern(for: $0.trimmingCharacters(in: .whitespaces)) + "\\b" }.joined(separator: "|")
         return (sec, english.isEmpty ? nil : try? NSRegularExpression(pattern: pattern), korean)
     }
+    // 분야마다 걸린 낱말 수(서로 다른 낱말)
+    static func hits(_ text: String) -> [String: Int] {
+        let t = text.lowercased()
+        let r = NSRange(t.startIndex..., in: t)
+        var out: [String: Int] = [:]
+        for (sec, re, korean) in compiled {
+            var found = Set<String>()
+            re?.enumerateMatches(in: t, range: r) { m, _, _ in if let m, let rr = Range(m.range, in: t) { found.insert(String(t[rr])) } }
+            for k in korean where t.contains(k) { found.insert(k) }
+            if !found.isEmpty { out[sec] = found.count }
+        }
+        return out
+    }
+
     static func classify(_ text: String) -> String? {
         let t = text.lowercased()
         let r = NSRange(t.startIndex..., in: t)
@@ -146,6 +174,8 @@ extension NewsItem {
     /// 이 기사에 다는 분야 칩(대표 포함)
     var sectionChips: [String] { Sections.cachedPlace(self).chips }
     func inSection(_ id: String) -> Bool { sectionChips.contains(id) }
+    /// 대표 분야 말고 낱말로 강하게 걸린 분야(목록에 칩을 하나 더)
+    var extraTopic: String? { Sections.cachedPlace(self).strong }
 }
 
 // 화면에 보이는 '분야' 표시: AI 분야 글은 그 안의 하위 분류(모델·연구…)까지, 나머지는 분야 이름

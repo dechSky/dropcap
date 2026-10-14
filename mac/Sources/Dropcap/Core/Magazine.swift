@@ -77,7 +77,7 @@ final class Magazine: ObservableObject {
     // 편집에 쓰는 앱 상태 사본
     var context: EditContext {
         let st = AppModel.shared.state
-        return EditContext(hidden: Set(st.hiddenSources), chosen: st.sectionsChosen, limits: st.settings.limits,
+        return EditContext(hidden: Set(st.hiddenSources), filter: AppModel.shared.sourceFilter, chosen: st.sectionsChosen, limits: st.settings.limits,
                            interestCategory: st.interestCategory, interestSource: st.interestSource, followed: Set(st.followedStories))
     }
 
@@ -145,7 +145,7 @@ final class Magazine: ObservableObject {
         var changed = false
         for it in recent.filter({ known[$0.image!] == nil }).prefix(16) {
             guard let img = await ImageLoader.shared.image(it.image!), let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) else { continue }
-            let s = await Task.detached(priority: .utility) { PhotoQuality.score(cg) }.value
+            let s = await PhotoQuality.scoreAsync(cg)
             db.saveImageScore(it.image!, s)
             if !PhotoQuality.good(s.total) { changed = true; NSLog("[사진 점수] 대표 사진에서 뺌 %.2f(글자 %.2f·색 %.2f·단색 %.2f) %@", s.total, s.textRatio, s.colorVariety, s.flatness, it.sourceName) }
         }
@@ -196,9 +196,9 @@ final class Magazine: ObservableObject {
     }
 
     // 지금 진행 중인 오늘 호·이번 주 호(아직 발행 전) — 엮기·꺼내기는 화면 줄기 밖에서
-    func today() async -> Resolved { let c = context; return await editor.resolve(await editor.liveDaily(c), hidden: c.hidden) }
-    func week() async -> Resolved { let c = context; return await editor.resolve(await editor.liveWeekly(c), hidden: c.hidden) }
-    func resolve(_ issue: Issue) async -> Resolved { await editor.resolve(issue, hidden: context.hidden) }
+    func today() async -> Resolved { let c = context; return await editor.resolve(await editor.liveDaily(c), filter: c.filter) }
+    func week() async -> Resolved { let c = context; return await editor.resolve(await editor.liveWeekly(c), filter: c.filter) }
+    func resolve(_ issue: Issue) async -> Resolved { await editor.resolve(issue, filter: context.filter) }
 
     // 지난 호 발행(확인마다·30분마다). 같은 목록이면 화면을 다시 그리지 않게 바뀔 때만 넣는다
     func publishDue() async {
@@ -232,7 +232,8 @@ final class Magazine: ObservableObject {
 
     func stored(_ key: String, near issue: Issue) -> Database.StoredItem? { db.items(keys: [key]).first }
 
-    func storyItems(_ cluster: String) -> [NewsItem] { db.items(inCluster: cluster).map(\.item) }
+    // 스토리의 보도들(꺼진·해지한·숨긴 출처 글은 빠짐)
+    func storyItems(_ cluster: String) -> [NewsItem] { AppModel.shared.sourceFilter.visible(db.items(inCluster: cluster).map(\.item)) }
     // 스토리 목록: 최근 24시간 안에 보도가 붙은 것(지금 커지는 스토리)과 나머지. 큰 것·최근 것이 앞
     func storyGroups() -> (live: [Database.Cluster], past: [Database.Cluster]) {
         let all = stories().sorted { a, b in
@@ -260,7 +261,7 @@ final class Magazine: ObservableObject {
 
     // 알림 판단용: 기사마다 스토리 id·국내/해외 보도 수(한 번에, 화면 줄기 밖에서)
     func storyInfo(_ items: [NewsItem]) async -> [String: (story: String?, coverage: Coverage)] {
-        await editor.storyInfo(items, hidden: context.hidden)
+        await editor.storyInfo(items, filter: context.filter)
     }
 
     // 스토리 보도를 해외·국내로 나눔(나란히 보기)
@@ -274,10 +275,16 @@ final class Magazine: ObservableObject {
 
     // 스토리: 최근 2주 동안 두 곳 이상이 다룬 것
     func stories() -> [Database.Cluster] {
-        db.recentClusters(since: Date().addingTimeInterval(-14 * 24 * 3600)).filter { $0.size >= 2 }
+        // 지금 보이는 출처로만 두 곳 이상이 다룬 스토리(출처를 끄면 그 스토리의 보도 수도 줄어 목록에서 빠질 수 있음)
+        db.recentClusters(since: Date().addingTimeInterval(-14 * 24 * 3600)).filter { $0.size >= 2 }.compactMap { c in
+            let n = Set(storyItems(c.id).map(\.sourceId)).count
+            guard n >= 2 else { return nil }
+            var v = c; v.size = storyItems(c.id).count; return v
+        }
     }
 
-    func search(_ q: String) async -> [NewsItem] { await editor.search(q) }
+    func search(_ q: String) async -> [NewsItem] { let f = context.filter; return await editor.search(q, filter: f) }
+    func recentItems(since: Date) async -> [NewsItem] { await editor.recentItems(since: since, limit: 3000).map(\.item) }
     func storedImage(_ key: String) -> String? { db.image(key) }
     func coverage(_ items: [NewsItem]) -> [String: Int] { db.coverage(items.map(\.key)) }
 }

@@ -3,7 +3,23 @@
 (() => {
   const doc = document.cloneNode(true);
   doc.querySelectorAll('.sr-only, .visually-hidden, .screen-reader-text, [class*="sr-only"], [class*="visually-hidden"]').forEach((n) => n.remove());
-  const art = new Readability(doc).parse();
+  // 기본 기준(500자)으로 못 찾으면 짧은 글(GeekNews 소개글 등)을 위해 100자 기준으로 한 번 더(parse 가 문서를 고치므로 새 사본으로)
+  const fresh = doc.cloneNode(true);
+  let art = new Readability(doc).parse();
+  if (!art || !art.content) art = new Readability(fresh.cloneNode(true), { charThreshold: 100 }).parse();
+  // 그래도 못 찾으면: 본문으로 보이는 영역(id·class 에 content·article·topic·post·entry·body 가 든 것) 가운데 글이 가장 많은 곳
+  if (!art || !art.content) {
+    let best = null, bestLen = 0;
+    fresh.querySelectorAll('article, main, [id*="content" i], [class*="content" i], [id*="topic" i], [class*="article" i], [class*="post" i], [class*="entry" i], [itemprop="articleBody"]').forEach((el) => {
+      if (el.closest('nav, header, footer, aside')) return;
+      const len = (el.textContent || '').replace(/\s+/g, ' ').trim().length;
+      if (len > bestLen && len < 40000) { best = el; bestLen = len; }
+    });
+    if (best && bestLen >= 80) {
+      best.querySelectorAll('script, style, nav, form, button, .related-topics, [class*="related" i], [class*="share" i]').forEach((n) => n.remove());
+      art = { title: document.title, content: '<div>' + best.innerHTML + '</div>' };
+    }
+  }
   if (!art || !art.content) return null;
   const box = new DOMParser().parseFromString(art.content, 'text/html').body;
   const blocks = [];
@@ -52,5 +68,9 @@
     }
   };
   walk(box);
+  // 문단 태그 없이 맨 글자로 든 본문(GeekNews 등): 줄 단위로 문단을 만든다
+  if (!blocks.some((b) => b.type === 'p' || b.type === 'li')) {
+    (box.innerText || box.textContent || '').split(/\n+/).map(clean).filter((t) => t.length > 1).forEach((t) => blocks.push({ type: 'p', text: t }));
+  }
   return JSON.stringify({ title: art.title, byline: art.byline, siteName: art.siteName, blocks });
 })();

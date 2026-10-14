@@ -79,6 +79,71 @@ public static class Summarizer
         catch { return null; }
     }
 
+    // 분야별 저녁 정리(N-26 · D-13): 묶음으로 모인 기사들로 "오늘 이 분야에서 무슨 일이 · 왜" 세 줄. 줄마다 근거 기사 번호를 단다.
+    // 맥은 Apple Intelligence, 윈도우는 이 PC 의 Ollama(T-06 과 같은 곳). 없으면 null — 매거진에 상자를 싣지 않는다.
+    public const string BriefingInstructions = """
+        당신은 뉴스 편집자입니다. 번호가 붙은 기사 제목과 요약만 읽고, 오늘 이 분야에서 무슨 일이 있었고 왜 중요한지 한국어 세 줄로 정리합니다.
+        각 줄은 "- " 로 시작하는 60자 안팎의 한 문장이고, 줄 끝에 근거가 된 기사 번호를 [1] 이나 [1][3] 처럼 붙입니다.
+        기사에 없는 내용·추측·평가는 쓰지 않습니다.
+        """;
+
+    public static async Task<List<SectionBrief.Line>?> BriefingAsync(string section, IReadOnlyList<NewsItem> items)
+    {
+        if (items.Count < 2 || !await AvailableAsync() || probe.Model is not { } model) return null;
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+            var resp = await local.PostAsJsonAsync("/api/generate", new
+            {
+                model,
+                system = BriefingInstructions,
+                prompt = BriefingPrompt(section, items),
+                stream = false,
+                options = new { temperature = 0.2 },
+            }, cts.Token);
+            if (!resp.IsSuccessStatusCode) return null;
+            var json = await resp.Content.ReadFromJsonAsync<JsonObject>(cts.Token);
+            return ParseBriefing(json?["response"]?.GetValue<string>() ?? "", items.Count);
+        }
+        catch { return null; }
+    }
+
+    public static string BriefingPrompt(string section, IReadOnlyList<NewsItem> items)
+    {
+        var o = new System.Text.StringBuilder($"분야: {section}\n");
+        for (var i = 0; i < items.Count; i++)
+        {
+            var it = items[i];
+            o.Append($"\n[{i + 1}] {it.Title}");
+            if (it.TitleKo is { } ko && ko != it.Title) o.Append($" ({ko})");
+            o.Append($" — {it.SourceName}\n");
+            var sum = System.Text.RegularExpressions.Regex.Replace(it.Summary, @"\s+", " ");
+            if (sum.Length > 300) sum = sum[..300];
+            if (sum.Length > 0) o.Append(sum).Append('\n');
+        }
+        return o.ToString();
+    }
+
+    // 모델 답을 줄로: "- 문장 [1][3]" → (문장, [0, 2]). 근거 번호가 없거나 범위를 벗어난 줄은 버린다(근거 없는 요약은 싣지 않음)
+    public static List<SectionBrief.Line>? ParseBriefing(string text, int count)
+    {
+        var re = new System.Text.RegularExpressions.Regex(@"\[(\d+)\]");
+        var o = new List<SectionBrief.Line>();
+        foreach (var raw in text.Split('\n'))
+        {
+            var line = raw.Trim();
+            if (!(line.StartsWith('-') || line.StartsWith('•'))) continue;
+            var body = line.TrimStart('-', '•', ' ');
+            var refs = new List<int>();
+            foreach (System.Text.RegularExpressions.Match m in re.Matches(body))
+                if (int.TryParse(m.Groups[1].Value, out var n) && n >= 1 && n <= count && !refs.Contains(n - 1)) refs.Add(n - 1);
+            var clean = re.Replace(body, "").Trim();
+            if (refs.Count == 0 || clean.Length == 0) continue;
+            o.Add(new SectionBrief.Line(clean, refs));
+        }
+        return o.Count == 0 ? null : o.Take(3).ToList();
+    }
+
     // "- " 또는 "•" 로 시작하는 줄만, 최대 3줄
     public static List<string>? ParseLines(string text)
     {
@@ -88,4 +153,16 @@ public static class Summarizer
             .Where(l => l.Length > 0).Take(3).ToList();
         return lines.Count == 0 ? null : lines;
     }
+}
+
+// 분야별 저녁 정리: 묶음을 보낸 때의 기사(근거)와 기기 안 요약(없을 수 있음)
+public sealed record SectionBrief
+{
+    public sealed record Line(string Text, List<int> Refs); // Refs: Items 의 번호(0부터)
+    public string Section { get; init; } = "";
+    public DateTimeOffset At { get; init; }
+    public List<NewsItem> Items { get; init; } = new();      // 근거 기사(원제목·링크)
+    public List<Line>? Lines { get; init; }                  // 요약 모델이 없으면 null — 매거진에는 싣지 않고 알림은 지금처럼 제목 2줄
+
+    public const int MaxItems = 8;
 }

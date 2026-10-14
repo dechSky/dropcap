@@ -16,6 +16,10 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
     private readonly Dictionary<string, NewsItem> shown = new();
     private bool attached;
 
+    // 분야 '오늘 얼굴' 사진(유리 띠). 시험에서는 바꿔 끼운다(바깥 피드를 받지 않게)
+    public Action<IEnumerable<string>> LoadPhotos { get; set; } = ids => SectionPhotos.Shared.Load(ids);
+    public Func<string, string?> PhotoUrl { get; set; } = id => SectionPhotos.Shared.Url(id);
+
     // MARK: 보기 데이터
     // 색은 라이트·다크 두 벌(#RRGGBB 만 — ItemView.SafeColor)
     public sealed record SideSection(string Id, string Name, string Icon, string Light, string Dark);
@@ -27,11 +31,21 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
     public sealed record RegionLines(List<string> Intl, List<string> Kr);                   // 카드의 '해외에서는·국내에서는' 두 줄(G-12)
 
     public sealed record CoverView(ItemView Item, string? Cluster, int Size);
-    public sealed record SectionView(string Id, string? Section, string Label, string Icon, string Tone, string Light, string Dark, bool ShowTopic, List<ItemView> Items);
+    // 분야 지면 머리의 유리 띠(맥 SectionGlassCard 높이 92): 영문 이름 · 'N건 · 첫 기사 제목' · 오늘의 사진(없으면 색면)
+    public sealed record GlassView(string English, string Sub, string? Photo);
+    public sealed record SectionView(string Id, string? Section, string Label, string Icon, string Tone, string Light, string Dark, bool ShowTopic, List<ItemView> Items,
+        GlassView? Glass = null);
     public sealed record EmptyView(bool Preparing, string Title, string Sub);
+    // 오늘 호 완독(M-23): 대표 기사 key·읽은 수·다 읽음·다음 호 안내
+    public sealed record TodayView(List<string> Keys, int Read, bool Done, string Next);
+    // 저녁 정리(N-26): 줄마다 근거 번호(1부터 — 화면의 [n]), 근거 기사는 원제목 그대로
+    public sealed record BriefLineView(string Text, List<int> Refs);
+    public sealed record BriefItemView(string Key, string Title, string Source, string Link);
+    public sealed record BriefView(string Section, string Title, string Time, string Light, string Dark, string Help, List<BriefLineView> Lines, List<BriefItemView> Items);
     public sealed record IssueView(string Id, string Title, bool Live, int Count, int SectionCount, string Sort, CoverView? Cover, EmptyView? Empty,
         List<SectionView> Sections, Dictionary<string, string> Clusters, int Revision, int ImageRevision, int LayoutRevision, bool Preparing,
-        string? Focus, string? Sub, List<ChipView> Chips, List<ChipView> SubChips, Dictionary<string, TopicView> Topics, Dictionary<string, RegionLines> Regions);
+        string? Focus, string? Sub, List<ChipView> Chips, List<ChipView> SubChips, Dictionary<string, TopicView> Topics, Dictionary<string, RegionLines> Regions,
+        TodayView? Today = null, bool TodayDone = false, BriefView? Brief = null);
 
     public sealed record SourceChip(string Name, string Initial, string Color);
     public sealed record StoryCard(string Id, string Title, int Size, int Fresh, bool Following, string? Photo, TopicView? Topic, List<SourceChip> Sources, string Times);
@@ -182,15 +196,31 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
                 ? new EmptyView(true, "첫 호를 엮는 중…", "구독한 출처에서 최근 사흘 소식을 모으고 번역하고 있어요. 잠시면 됩니다.")
                 : new EmptyView(false, live ? "아직 이번 호에 실을 소식이 없습니다" : "이 호에는 소식이 없습니다", "새 소식이 들어오는 대로 지면이 채워집니다.");
 
+        var glassIds = new List<string>();
         var sections = pages.Select(p =>
         {
             var (l, d) = Tint(p.Section.Color);
             // 주요 뉴스·그 밖의 소식처럼 여러 분야가 섞인 지면에서만 카드에 분야 표시
             var mixed = p.Section.Kind is null && (p.Section.SectionId is null || p.Section.SectionId == Sections.Top);
+            var items = Sort(p.Items, order);
+            // 분야 지면: 분야 고르기와 같은 유리 띠(구독 채널 지면·그 밖의 소식은 예전 머리 그대로)
+            GlassView? glass = null;
+            if (p.Section.Kind is null && p.Section.SectionId is { } sid && Sections.ById(sid) is not null)
+            {
+                glassIds.Add(sid);
+                glass = new GlassView(SectionPhotos.English(sid), $"{items.Count}건 · " + (items.FirstOrDefault()?.DisplayTitle ?? ""), PhotoUrl(sid));
+            }
             return new SectionView(p.Section.Id, p.Section.SectionId, p.Section.Label, p.Section.Glyph,
                 p.Section.Kind is { } k ? "kind-" + k : "cat-" + p.Section.Category.Raw(), l, d, mixed,
-                Sort(p.Items, order).Select(i => View(i, now)).ToList());
+                items.Select(i => View(i, now)).ToList(), glass);
         }).ToList();
+        if (glassIds.Count > 0) LoadPhotos(glassIds);   // 아직 없는 분야만 찾는다(찾으면 'photos' 알림)
+
+        // 오늘 호 완독(M-23): 오늘 호이고 한 분야만 보는 게 아닐 때 머리 아래 진행 막대
+        var today = source == "today" && focus is null
+            ? Today(TodayIssue.Keys(r.Cover?.Item.Key, r.Sections, model.ChosenSections), now) : null;
+        // 저녁 정리(N-26): 오늘 호의 한 분야 지면 맨 위
+        var brief = source == "today" && focus is not null ? BriefData(focus) : null;
 
         var all = (r.Cover is { } c0 && cover is not null ? new[] { c0.Item } : []).Concat(pages.SelectMany(p => p.Items)).ToList();
         // 해외·국내가 섞인 스토리의 카드에 두 줄(출처 이름 3곳까지)
@@ -202,7 +232,46 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
                 if (intl.Count > 0 && kr.Count > 0) regions[it.Key] = new RegionLines(Names(intl, 3), Names(kr, 3));
             }
         return new IssueView(r.Issue.Id, r.Issue.Title, live, r.Issue.Count, r.Issue.Sections.Count, order, cover, empty, sections, r.Clusters,
-            built.rev, built.img, built.lay, preparing, focus, sub, chips, subChips, Topics(all), regions);
+            built.rev, built.img, built.lay, preparing, focus, sub, chips, subChips, Topics(all), regions,
+            today, source == "today" && TodayIssue.IsMarkedDone(now), brief);
+    }
+
+    // MARK: 오늘 호 완독(M-23) — 맥 TodayProgressView 와 같은 판단
+    // 대표 기사를 다 읽으면 그날은 끝난 호로 정해 둔다(표지가 바뀌어도 그날은 '다 읽었어요', 새 소식 띠도 띄우지 않음)
+    public TodayView Today(IReadOnlyList<string> keys, DateTimeOffset now)
+    {
+        var read = keys.Count(k => model.State.Read.ContainsKey(k));
+        var all = keys.Count > 0 && read >= keys.Count;
+        if (all && !TodayIssue.IsMarkedDone(now)) TodayIssue.MarkDone(now);
+        var st = model.State.Settings;
+        return new TodayView(keys.ToList(), read, all || TodayIssue.IsMarkedDone(now), TodayIssue.NextIssueText(st.DigestEnabled, st.DigestHour));
+    }
+
+    // MARK: 저녁 정리(N-26) — 오늘 만든 것이고 요약 줄이 있을 때만
+    public const string BriefHelp = "이 PC 의 Ollama 가 아래 기사들의 제목·요약만 보고 만든 정리입니다. 틀릴 수 있어 근거 기사를 함께 둡니다.";
+
+    public BriefView? BriefData(string section)
+    {
+        if (model.Brief(section) is not { Lines: { } lines } b) return null;
+        lock (shown) foreach (var it in b.Items) shown[it.Key] = it;   // 근거 기사를 누르면 다시 찾게
+        var s = Sections.ById(section);
+        var (l, d) = Tint(s is null ? DualColor.Gray : DualColor.Fixed(s.Color));
+        return new BriefView(section, $"저녁 정리 · {Sections.Name(section)}", RelativeTime.Clock(b.At), l, d, BriefHelp,
+            lines.Select(x => new BriefLineView(x.Text, x.Refs.Where(i => i >= 0 && i < b.Items.Count).Select(i => i + 1).ToList())).ToList(),
+            b.Items.Select(it => new BriefItemView(it.Key, it.Title, it.SourceName, it.Link)).ToList());
+    }
+
+    // MARK: 지면 넘기기(H-04): 옆 목록 순서 — 오늘·이번 주·분야들·스토리·저장·스크랩북·검색·지난 호
+    public static List<string> PageOrder(IEnumerable<string> chosen, IEnumerable<string> archive) =>
+        ["today", "week", .. chosen.Select(id => "section:" + id), "stories", "saved", "scrapbook", "search", .. archive.Select(id => "issue:" + id)];
+
+    // 끝이면 null(부르는 쪽이 경고음). 한 스토리를 보는 중이면 '스토리' 자리에서
+    public static string? Flip(string page, int dir, IReadOnlyList<string> order)
+    {
+        var here = page.StartsWith("story:", StringComparison.Ordinal) ? "stories" : page;
+        var i = order.ToList().IndexOf(here);
+        if (i < 0 || i + dir < 0 || i + dir >= order.Count) return null;
+        return order[i + dir];
     }
 
     // MARK: 스토리(M-14)
@@ -351,6 +420,17 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
         model.Changed += () => bridge.Emit(Name, "changed", Signal());
         // 숨긴 출처·고른 분야가 바뀜: 화면은 띠 없이 바로 다시 엮는다(layoutRevision 이 바뀐 것으로 안다)
         mag.LayoutChanged += () => bridge.Emit(Name, "changed", Signal());
+        // 분야 사진을 찾음: 유리 띠의 사진만 바꿔 끼운다(지면은 그대로)
+        SectionPhotos.Shared.Changed += () => bridge.Emit(Name, "photos", SectionPhotos.Shared.All);
+    }
+
+    // 분야 → 사진 주소(찾은 것만)
+    private Dictionary<string, string> PhotoUrls(JsonArray? ids)
+    {
+        var o = new Dictionary<string, string>();
+        foreach (var n in ids ?? new())
+            if (n is JsonValue v && v.TryGetValue<string>(out var id) && PhotoUrl(id) is { } u) o[id] = u;
+        return o;
     }
 
     private object Signal() => new { revision = mag.Revision, imageRevision = mag.ImageRevision, layoutRevision = mag.LayoutRevision, preparing = mag.Preparing };
@@ -375,6 +455,17 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
         var less = model.ChosenSections.Contains(sec) && mode != NotifyMode.Magazine
             ? $"{Sections.Name(sec)} 덜 받기 — {(mode == NotifyMode.Instant ? "묶음으로" : "매거진에만")}" : null;
         return new ReduceView($"이 출처 숨기기 — {it.SourceName}", less, AppModel.TitleWords(it));
+    }
+
+    // 읽기 창 J·K 로 넘길 목록(H-05): 화면이 보낸 지면 순서의 key → 기사(화면에 보낸 것만)
+    private List<NewsItem> Sequence(JsonArray? keys)
+    {
+        var o = new List<NewsItem>();
+        if (keys is null) return o;
+        lock (shown)
+            foreach (var n in keys)
+                if (n is JsonValue v && v.TryGetValue<string>(out var k) && shown.TryGetValue(k, out var it) && o.All(x => x.Key != k)) o.Add(it);
+        return o;
     }
 
     private Scrap ScrapOf(string id) => book.Scraps.FirstOrDefault(s => s.Id == id) ?? throw new KeyNotFoundException("스크랩을 찾지 못함");
@@ -431,11 +522,32 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
                 var it = await Find(a.Str("key"));
                 model.MarkOpened(it);
                 if (it.ItemKind.OpensExternally()) ExternalLink.Open(it.Link);
-                else platform.OpenReader(it);
+                else
+                {
+                    ReadingList.Remember(it, Sequence(a["seq"] as JsonArray));   // 연 지면(또는 저녁 정리 근거 기사)의 순서
+                    platform.OpenReader(it);
+                }
                 return null;
             }
             case "toggleSaved": model.ToggleSaved(await Find(a.Str("key"))); return null;
-            case "browser": ExternalLink.Open((await Find(a.Str("key"))).Link); return null;
+            // 브라우저로: 키보드 O 는 읽음 처리까지(맥 ItemKeys.browser), 오른쪽 클릭 메뉴는 그대로
+            case "browser":
+            {
+                var it = await Find(a.Str("key"));
+                ExternalLink.Open(it.Link);
+                if (a.Bool("read")) model.SetRead(it, true);
+                return null;
+            }
+            case "toggleRead": { var it = await Find(a.Str("key")); model.SetRead(it, !model.IsRead(it)); return null; }
+            case "todayProgress":
+                return Today((a["keys"] as JsonArray ?? new()).Select(n => n?.GetValue<string>() ?? "").Where(k => k.Length > 0).ToList(), model.Now());
+            case "flip":
+            {
+                var to = Flip(a.Str("page"), a.Bool("back") ? -1 : 1, PageOrder(model.ChosenSections, mag.Archive.Select(i => i.Id)));
+                if (to is null) platform.Beep();
+                return to;
+            }
+            case "photos": return PhotoUrls(a["ids"] as JsonArray);
             case "check": await model.CheckAllAsync(manual: false); return null;
 
             // 스크랩북(M-17·M-18)

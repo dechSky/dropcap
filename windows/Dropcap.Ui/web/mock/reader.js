@@ -1,5 +1,6 @@
 // 미리 보기 전용(WebView2 밖에서만): reader.html?key=x 를 열어 모양을 확인.
 // ?phase=loading|translating|failed 로 단계별 화면, ?cover=0 으로 표지 없이.
+// ?free=1 로 '같은 소식을 무료로 읽기' 상자(유료 기사), ?blocked=1 로 본문을 막아 둔 사이트의 실패 문구.
 if (!(window.chrome && window.chrome.webview)) {
   const q = new URLSearchParams(location.search);
   const phase = q.get('phase') || 'done';
@@ -23,6 +24,7 @@ if (!(window.chrome && window.chrome.webview)) {
     B('p', '가격은 이전 모델과 같으며, 이번 주부터 유료 사용자에게 차례로 열린다. 무료 사용자는 다음 달부터 하루 몇 번씩 쓸 수 있다.', 'Pricing is unchanged, and it rolls out to paid users this week. Free users get limited daily access next month.'),
   ].map((b, i) => ({ ...b, i }));
   const translating = phase === 'translating';
+  const free = q.get('free') === '1';
   const doc = {
     key: q.get('key') || 'x',
     item: { key: 'x', title: 'OpenAI, 추론 기능 강화한 GPT-6 공개', source: 'The Verge', initial: 'V', color: '#E1306C', tier: 'press', tierLabel: '언론', category: 'model', link: 'https://www.theverge.com/ai/openai-gpt-6' },
@@ -35,6 +37,15 @@ if (!(window.chrome && window.chrome.webview)) {
     summarizing: false,
     fallback: phase === 'failed' ? 'OpenAI가 추론 기능을 강화한 새 모델 GPT-6를 공개했다. 수학과 코딩 성능이 크게 좋아졌다고 회사는 밝혔다.' : '',
     translatedPage: true,
+    feedSummary: 'OpenAI가 수학·코딩 성능을 크게 끌어올린 새 추론 모델 GPT-6를 공개했다. 가격은 이전 모델과 같다.',
+    blockedHost: q.get('blocked') === '1',
+    paywall: free ? 'hard' : null,
+    paywalled: false,
+    alternatives: free ? [
+      { key: 'a1', source: 'OpenAI', title: 'GPT-6 소개: 더 깊이 생각하는 모델', color: '#10A37F' },
+      { key: 'a2', source: 'AI타임스', title: '오픈AI, 추론 강화한 GPT-6 출시… 가격은 동결', color: '#0F62FE' },
+    ] : [],
+    freeReason: free ? (phase === 'failed' ? '본문을 열지 못했습니다' : '유료 기사입니다') : null,
     cover: q.get('cover') === '0' ? null : svg(1600, 900, '#E1306C', '#5856D6'),
     date: '10월 13일 오후 3:05',
     minutes: { shown: 2, original: 1 },
@@ -67,6 +78,7 @@ if (!(window.chrome && window.chrome.webview)) {
       case 'scrapSelection': return add(a.quote);
       case 'updateScrap': { const s = marks.scraps.find((x) => x.quote === a.quote); if (s) { if (a.collection) s.collection = a.collection; if (a.memo != null) s.memo = a.memo; } return null; }
       case 'removeScrap': marks.scraps = marks.scraps.filter((x) => x.quote !== a.quote); setTimeout(() => bridge.emit('changed')); return null;
+      case 'step': console.log('mock step', a.dir); return { moved: false };
       default: console.log('mock', cmd, a); return null;
     }
   };

@@ -15,7 +15,7 @@ public sealed record NewsSection(string Id, string Name, string Symbol, string C
 }
 
 // sources.json 출처 항목의 분야 관련 필드
-public sealed record SourceMeta(string Id, string? Section = null, string? Lang = null, string? Region = null, string? Tier = null, bool? DefaultOn = null, string? Name = null);
+public sealed record SourceMeta(string Id, string? Section = null, string? Lang = null, string? Region = null, string? Tier = null, bool? DefaultOn = null, string? Name = null, string? Paywall = null);
 
 public static class Sections
 {

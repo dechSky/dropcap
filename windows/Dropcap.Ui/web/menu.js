@@ -1,9 +1,10 @@
 // 트레이 창(U 절). 거르기·정렬은 앱(MenuPage.cs)이 하고 여기서는 그리기만.
 (() => {
-  const { ic, esc, popMenu, popUnder } = window.ui;
+  const { ic, esc, popMenu, popUnder, lock } = window.ui;
   const $ = (s) => document.querySelector(s);
   const state = { tab: 'all', query: '', section: '', topic: '', sort: null };
   let view = null;
+  let sel = null; // 키보드로 고른 소식(H-03)
 
   const ask = (cmd) => bridge.send(cmd, { ...state }).then(render);
   const run = (cmd, args = {}) => bridge.send(cmd, args).then(() => refresh());
@@ -18,7 +19,12 @@
     // 머리(U-02)
     $('.row1 b').textContent = v.header.title;
     $('#status').textContent = v.header.status;
-    $('#quiet').hidden = !v.header.quiet;
+    // 회의·발표 중(N-25)이면 그 이유, 아니면 방해 금지 달
+    const hush = $('#hush');
+    hush.hidden = !v.header.autoQuiet;
+    hush.title = v.header.autoQuietHelp || '';
+    hush.setAttribute('aria-label', v.header.autoQuiet || '');
+    $('#quiet').hidden = !v.header.quiet || !!v.header.autoQuiet;
     const sn = $('#snooze');
     sn.classList.toggle('snoozed', v.header.snoozed);
     sn.innerHTML = ic(v.header.snoozed ? 'bell.slash' : 'bell');
@@ -43,6 +49,8 @@
       return;
     }
     list.innerHTML = v.rows.map(row).join('');
+    if (sel && !v.rows.some((r) => r.item.key === sel)) sel = null;
+    mark(false);
   }
 
   // 칩 하나(맥 SectionChip). 색은 앱이 보낸 #RRGGBB(라이트·다크)
@@ -74,12 +82,12 @@
     const attrs = `data-key="${esc(it.key)}" style="--c:${esc(it.color)};--tl:${esc(r.topicLight)};--td:${esc(r.topicDark)}"`;
     if (r.hero) {
       return head + `<div class="hero item" ${attrs}>${thumb(r)}<span class="shade"></span>
-        <div class="cap"><div class="tag"><span class="pill">${esc(r.topicLabel)}</span><span class="src">${esc(it.source)} · ${esc(it.time)}</span></div>
+        <div class="cap"><div class="tag"><span class="pill">${esc(r.topicLabel)}</span><span class="src">${esc(it.source)} · ${esc(it.time)}</span>${lock(it)}</div>
         <div class="t">${esc(it.title)}</div></div></div>`;
     }
     return head + `<div class="card item${it.read ? ' read' : ''}" ${attrs}>${thumb(r)}
       <div class="body"><div class="t">${esc(it.title)}</div>
-        <div class="meta"><span class="src">${esc(it.source)}</span><span class="cat">${esc(r.topicLabel)}</span><span class="tm">${esc(it.time)}</span>${it.saved ? `<span class="bm">${ic('bookmark.fill')}</span>` : ''}</div></div>
+        <div class="meta"><span class="src">${esc(it.source)}</span>${lock(it)}<span class="cat">${esc(r.topicLabel)}</span><span class="tm">${esc(it.time)}</span>${it.saved ? `<span class="bm">${ic('bookmark.fill')}</span>` : ''}</div></div>
       ${it.read ? '' : '<span class="dot"></span>'}
     </div>`;
   }
@@ -172,8 +180,39 @@
   ]));
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !document.querySelector('.pop')) bridge.send('close'); });
 
+  // 키보드 탐색(H-03, 맥 MenuView): ↓/J·↑/K 고르기(끝에서 멈춤), ⏎ 열기, S 나중에 읽기, O 브라우저(읽음 처리), M 읽음/안 읽음.
+  // 창을 열면 목록이 키를 받고, 검색칸에서 ↓ 로 목록으로 내려온다.
+  function mark(scroll) {
+    document.querySelectorAll('#list .kbsel').forEach((n) => n.classList.remove('kbsel'));
+    if (!sel) return;
+    const el = [...document.querySelectorAll('#list .item')].find((n) => n.dataset.key === sel);
+    if (!el) return;
+    el.classList.add('kbsel');
+    if (scroll) ui.scrollToCenter(el);
+  }
+  document.addEventListener('keydown', (e) => {
+    if (document.querySelector('.pop') || !view) return;
+    const k = ui.navKey(e);
+    if (!k) return;
+    const keys = view.rows.map((r) => r.item.key);
+    if (k === 'next' || k === 'prev') {
+      if (e.target === $('#q')) $('#q').blur();
+      sel = ui.navMove(sel, keys, k === 'next' ? 1 : -1);
+      mark(true);
+      e.preventDefault();
+      return;
+    }
+    const it = sel && itemOf(sel);
+    if (!it) return;
+    e.preventDefault();
+    if (k === 'open') bridge.send('open', { key: it.key });
+    else if (k === 'save') run('toggleSaved', { key: it.key });
+    else if (k === 'browser') run('browser', { key: it.key, read: true });
+    else if (k === 'toggleRead') run('setRead', { key: it.key, on: !it.read });
+  });
+
   // 창이 다시 보일 때마다 새로(입력 칸에 커서를 넣지 않음)
-  bridge.on('shown', () => { document.activeElement && document.activeElement.blur(); bridge.send('ready', { ...state }).then(render); });
+  bridge.on('shown', () => { document.activeElement && document.activeElement.blur(); sel = null; bridge.send('ready', { ...state }).then(render); });
   bridge.on('changed', refresh);
   bridge.send('ready', { ...state }).then(render);
 })();

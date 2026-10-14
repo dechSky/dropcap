@@ -162,7 +162,7 @@ enum SaveLink {
         let app = AppModel.shared
         if let had = app.state.saved.first(where: { $0.link == url.absoluteString }) { return .success(had) } // 이미 저장함
         var head = Head()
-        if let data = try? await FeedService.shared.fetch(url.absoluteString) {
+        if let data = try? await FeedService.shared.fetch(url.absoluteString, limit: .page) {
             head = parseHead(String(decoding: data.prefix(131_072), as: UTF8.self), base: url)
         }
         let item = makeItem(url: url, head: head, fallbackTitle: title)

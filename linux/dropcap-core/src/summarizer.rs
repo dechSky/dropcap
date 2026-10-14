@@ -34,13 +34,20 @@ pub async fn model() -> Option<String> {
         let v: serde_json::Value = r.json().await.ok()?;
         let names: Vec<String> = v["models"].as_array()?.iter().filter_map(|m| m["name"].as_str().map(|s| s.to_string())).collect();
         if let Ok(want) = std::env::var("DROPCAP_OLLAMA_MODEL") {
-            return names.iter().find(|n| **n == want || n.starts_with(&format!("{want}:"))).cloned();
+            return names.iter().find(|n| (**n == want || n.starts_with(&format!("{want}:"))) && local_text_model(n)).cloned();
         }
-        names.into_iter().find(|n| !n.contains("embed"))
+        // 임베딩 전용과 Ollama 클라우드 모델(이름에 cloud — 글을 바깥 서버로 보냄)은 빼고, 이 컴퓨터에서 도는 것만
+        names.into_iter().find(|n| local_text_model(n))
     }
     .await;
     *MODEL.lock().unwrap() = Some((found.clone(), Instant::now()));
     found
+}
+
+// 요약에 쓸 수 있는 이 컴퓨터 안의 글 모델인가(임베딩 전용·클라우드 모델 제외)
+pub fn local_text_model(name: &str) -> bool {
+    let n = name.to_lowercase();
+    !n.contains("embed") && !n.contains("cloud")
 }
 
 pub async fn available() -> bool {
@@ -84,19 +91,24 @@ pub fn parse_lines(content: &str) -> Option<Vec<String>> {
 }
 
 pub async fn summarize(title: &str, paragraphs: &[String]) -> Option<Vec<String>> {
-    let model = model().await?;
     let body = body(paragraphs);
     if body.chars().count() <= 200 {
         return None;
     }
+    parse_lines(&generate(INSTRUCTIONS, &format!("제목: {title}\n\n본문:\n{body}")).await?)
+}
+
+// 이 컴퓨터의 Ollama 에 한 번 묻기(요약·저녁 정리가 같이 쓴다). 모델이 없으면 None
+pub async fn generate(system: &str, prompt: &str) -> Option<String> {
+    let model = model().await?;
     let req = json!({
         "model": model,
         "stream": false,
-        "system": INSTRUCTIONS,
-        "prompt": format!("제목: {title}\n\n본문:\n{body}"),
+        "system": system,
+        "prompt": prompt,
         "options": {"temperature": 0.2}
     });
     let r = LOCAL.post(format!("{OLLAMA}/api/generate")).json(&req).send().await.ok()?;
     let v: serde_json::Value = r.json().await.ok()?;
-    parse_lines(v["response"].as_str()?)
+    v["response"].as_str().map(|s| s.to_string())
 }

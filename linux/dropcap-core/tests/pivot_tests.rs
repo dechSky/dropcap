@@ -97,6 +97,7 @@ fn input(mode: NotifyMode, kr: i64, intl: i64, lab: bool, star: bool, followed: 
         lab,
         important: star,
         followed,
+        watched: false,
         sent_in_section: sec,
         sent_total: total,
     }

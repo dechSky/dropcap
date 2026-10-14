@@ -44,7 +44,7 @@ actor ImageLoader {
             try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: f.path) // 자주 보는 사진은 정리에서 늦게(A-26)
             return img
         }
-        guard let data = try? await FeedService.shared.fetch(url), data.count < 8 << 20,
+        guard let data = try? await FeedService.shared.fetch(url, limit: .image), // 8MB 를 넘으면 받다가 끊는다(R-2)
               let src = CGImageSourceCreateWithData(data as CFData, nil),
               let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, [
                   kCGImageSourceCreateThumbnailFromImageAlways: true,
@@ -92,9 +92,11 @@ struct RemoteImage: View {
                     .aspectRatio(contentMode: .fill)
                     .opacity(shown ? 1 : 0)
                     .scaleEffect(shown ? 1 : 1.04)
+                    .allowsHitTesting(false) // '채우기'로 넘친 부분이 이웃 카드·단추의 클릭을 가로채지 않게
             }
         }
         .clipped()
+        .contentShape(Rectangle())
         .task(id: url) {
             // 주소가 바뀌면(같은 칸에 다른 기사) 이전 사진을 비우고 새로 받는다
             image = nil

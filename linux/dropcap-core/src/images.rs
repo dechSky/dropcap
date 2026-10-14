@@ -78,7 +78,7 @@ impl ImageLoader {
 
     async fn load(&self, url: &str) -> Option<PathBuf> {
         let f = self.dir.join(file_name(url));
-        let r = net::get(url, &[("accept", "image/*".into())], MAX_BYTES).await.ok()?;
+        let r = net::get(url, &[("accept", "image/*".into())], crate::feed_service::FetchLimit::Image.bytes()).await.ok()?;
         if !(200..300).contains(&r.status) {
             return None;
         }

@@ -4,7 +4,7 @@ import SwiftUI
 // 상단바 바로 아래 오른쪽에 떠 있는 투명한 패널 하나에 물방울 알림을 쌓는다.
 // 카드가 없는 곳은 클릭이 뒤쪽 앱으로 그대로 지나간다.
 struct Toast: Identifiable, Equatable {
-    enum Kind: Equatable { case news(NewsItem), info(String, String), more(Int), digest(Int), bundle(String, [NewsItem]) }
+    enum Kind: Equatable { case news(NewsItem), info(String, String), more(Int), digest(Int), bundle(String, [NewsItem]), watch(String, [NewsItem]) }
     let id = UUID()
     let kind: Kind
     var playSound = false
@@ -48,6 +48,14 @@ final class ToastCenter: ObservableObject {
     }
 
     func showInfo(_ title: String, sub: String) { push(Toast(kind: .info(title, sub))) }
+
+    // 지켜볼 낱말 하루 정리("오늘 ○○ 소식 3건")
+    func showWatch(word: String, items: [NewsItem]) {
+        guard !items.isEmpty else { return }
+        var t = Toast(kind: .watch(word, items))
+        t.playSound = AppModel.shared.state.settings.sound
+        push(t)
+    }
 
     func showDigest(count: Int) {
         var t = Toast(kind: .digest(count))
@@ -98,6 +106,7 @@ final class ToastCenter: ObservableObject {
         case .news(let item): AppModel.shared.open(item)
         case .digest: MagazineController.open()
         case .bundle(let sec, _): MagazineController.open(page: .section(sec))
+        case .watch(let word, _): MagazineController.search(word)
         default: break
         }
     }

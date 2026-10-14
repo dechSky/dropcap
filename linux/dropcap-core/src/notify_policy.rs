@@ -107,6 +107,7 @@ pub struct Input {
     pub lab: bool,       // 공식 발표 등급(tier lab)
     pub important: bool, // ★ 꼭 알림 낱말
     pub followed: bool,  // 팔로우한 스토리
+    pub watched: bool,   // 지켜볼 낱말에 걸림(N-27)
     pub sent_in_section: i64,
     pub sent_total: i64,
 }
@@ -119,6 +120,10 @@ pub fn is_big(c: Coverage, l: PolicyLimits) -> bool {
 }
 
 pub fn decide(i: &Input, l: PolicyLimits) -> Decision {
+    // 지켜볼 낱말: 고른 분야·모드와 상관없이 알린다(같은 이야기는 한 번 — 부르는 쪽이 스토리로 기억). 전체 상한이 차면 고임
+    if i.watched {
+        return if i.sent_total >= l.total_cap && !is_big(i.coverage, l) { Decision::Pool } else { Decision::Drop };
+    }
     if !i.chosen {
         return Decision::Quiet;
     }

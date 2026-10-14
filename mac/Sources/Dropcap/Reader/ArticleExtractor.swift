@@ -21,6 +21,7 @@ struct Article: Codable {
 final class ArticleExtractor: NSObject, WKNavigationDelegate {
     private var web: WKWebView?
     private var continuation: CheckedContinuation<Void, Never>?
+    private var loadDone = false // 이번 기다림이 끝났다(다 뜸·실패·시간 초과) — 늦게 등록된 기다림은 바로 깨운다(A-22)
     private static let readability = (try? String(contentsOf: Resources.url("Readability.js"), encoding: .utf8)) ?? ""
 
     private static let script = """
@@ -110,7 +111,7 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
         var refused = false // 사이트가 접근을 거부(401·403·429)
         var richPage = false // 받은 HTML 에 글이 이미 많다(스크립트로 그리는 빈 껍데기가 아님)
         do {
-            if let got = try await FeedService.shared.fetchWithEncoding(url.absoluteString) {
+            if let got = try await FeedService.shared.fetchWithEncoding(url.absoluteString, limit: .page) {
                 if let art = await run(data: got.data, encoding: got.encoding ?? Self.sniffCharset(got.data), base: url) {
                     NSLog("[기사] 빠른 길 %.2f초 %@", Date().timeIntervalSince(t0), host)
                     return art
@@ -182,6 +183,7 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
         let w = await makeWeb(js: false, block: ["image", "media", "font", "style-sheet", "script", "raw", "svg-document", "popup", "fetch", "websocket", "other"], id: "ainews-fast")
         web = w
         defer { w.stopLoading(); web = nil }
+        loadDone = false
         w.load(data, mimeType: "text/html", characterEncodingName: encoding, baseURL: base)
         await waitForLoad(seconds: 6)
         return await tryExtract(w)
@@ -228,7 +230,11 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
 
     private func waitForLoad(seconds: Double) async {
         await withTaskGroup(of: Void.self) { g in
-            g.addTask { @MainActor in await withCheckedContinuation { self.continuation = $0 } }
+            g.addTask { @MainActor in
+                await withCheckedContinuation { c in
+                    if self.loadDone { c.resume() } else { self.continuation = c }
+                }
+            }
             g.addTask { try? await Task.sleep(for: .seconds(seconds)) }
             await g.next()
             g.cancelAll()
@@ -237,6 +243,7 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
     }
 
     private func finishWait() {
+        loadDone = true
         continuation?.resume()
         continuation = nil
     }

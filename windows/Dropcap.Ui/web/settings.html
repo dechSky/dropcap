@@ -50,6 +50,13 @@
     <div class="group">
       <div class="row"><span class="lb">3줄 요약</span><span class="val" id="summary"></span></div>
     </div>
+    <h3>내 기록</h3>
+    <div class="group">
+      <div class="row" id="backupIntro"></div>
+      <div class="row"><button class="btn" id="exportBackup">내 기록 내보내기…</button><button class="btn" id="importBackup">가져오기…</button><button class="btn" id="undoImport" hidden title="가져오기 전에 자동으로 남긴 기록으로 되돌립니다">마지막 가져오기 되돌리기</button></div>
+      <div class="row note" id="backupNote"></div>
+      <div class="row note" id="backupMsg" hidden></div>
+    </div>
     <h3>시작</h3>
     <div class="group">
       <label class="row"><span class="lb">로그인할 때 자동 실행</span><input type="checkbox" class="switch" data-set="launchAtLogin"></label>
@@ -91,6 +98,8 @@
     <div class="group">
       <label class="row"><span class="lb">꼭 알림 (★ 중요 표시)</span><input class="field kw" id="must" placeholder="예: GPT-6, Claude, Gemini, 오픈소스" autocomplete="off" spellcheck="false"></label>
       <label class="row"><span class="lb">알리지 않음</span><input class="field kw" id="mute" placeholder="예: 주식, 채용, 이벤트" autocomplete="off" spellcheck="false"></label>
+      <label class="row"><span class="lb">지켜볼 낱말 (회사·인물·법안)</span><input class="field kw" id="watch" placeholder="예: 삼성전자, 엔비디아, AI 기본법" autocomplete="off" spellcheck="false"></label>
+      <div class="row note">지켜볼 낱말이 든 소식은 분야 설정과 상관없이 같은 이야기마다 한 번 알리고, 아침 브리핑 시각에 "오늘 ○○ 소식 3건"으로 모아 알립니다. 꼭 알림(★)과 겹치면 ★ 로 표시합니다.</div>
       <div class="row"><span class="note grow">쉼표로 나눠 적으면 바로 저장·적용됩니다. 제목·요약에 그 낱말이 들어가면 걸립니다.</span><button class="btn" id="saveKw">저장</button></div>
     </div>
     <h3>방해 금지 시간</h3>

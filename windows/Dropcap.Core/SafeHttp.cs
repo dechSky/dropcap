@@ -125,21 +125,24 @@ public static class SafeHttp
                 current = new Uri(new Uri(current), loc).AbsoluteUri;
                 continue;
             }
-            var body = await ReadCappedAsync(resp.Content, maxBody, cts.Token);
+            // 304·오류 응답의 본문은 받지 않는다(S-12)
+            var body = code is >= 200 and < 300 ? await ReadCappedAsync(resp.Content, maxBody, cts.Token) : [];
             return new Response(code, body, resp.Content.Headers.ContentType?.CharSet?.Trim('"'), resp.Headers, resp.Content.Headers, new Uri(current));
         }
         throw new FeedException("리다이렉트가 너무 많음");
     }
 
-    private static async Task<byte[]> ReadCappedAsync(HttpContent content, long max, CancellationToken ct)
+    // 받는 대로 모으다가 상한을 넘으면 그 자리에서 멈춘다(다 받은 뒤 버리지 않음). 헤더의 길이가 이미 넘으면 한 바이트도 받지 않는다(S-12)
+    internal static async Task<byte[]> ReadCappedAsync(HttpContent content, long max, CancellationToken ct)
     {
+        if (content.Headers.ContentLength is { } len && len > max) throw new TooLargeException(max);
         await using var s = await content.ReadAsStreamAsync(ct);
         using var ms = new MemoryStream();
         var buf = new byte[81920];
         int n;
         while ((n = await s.ReadAsync(buf, ct)) > 0)
         {
-            if (ms.Length + n > max) throw new FeedException("응답이 너무 큼");
+            if (ms.Length + n > max) throw new TooLargeException(max);
             ms.Write(buf, 0, n);
         }
         return ms.ToArray();
@@ -154,4 +157,17 @@ public static class SafeHttp
     }
 
     static SafeHttp() => Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+}
+
+// 받는 크기 상한(S-12 · 맥 FetchLimit): 피드·사이트맵·채널 찾기 10MB · 기사 페이지 2MB · 사진 8MB. gzip 을 푼 뒤에는 32MB(Gzip)
+public static class FetchLimit
+{
+    public const long Feed = 10_485_760;
+    public const long Page = 2_097_152;
+    public const long Image = 8_388_608;
+}
+
+public sealed class TooLargeException(long limit) : FeedException($"응답이 너무 커서 받다가 멈춤({limit >> 20}MB 넘음)")
+{
+    public long Limit { get; } = limit;
 }

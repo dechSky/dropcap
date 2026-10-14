@@ -618,7 +618,7 @@ fn ingest_clusters_stories_and_search() {
     let mut c = NewsItem::new("c", "Totally unrelated robotics piece", "https://c.com/1", "ars", "Ars", "press");
     c.date = Some(now);
     magazine::ingest(&db, &[a, b.clone(), c], &[]);
-    let stories = magazine::stories(&db);
+    let stories = magazine::stories(&db, &Default::default());
     assert_eq!(stories.len(), 1);
     assert_eq!(stories[0].size, 2);
     assert_eq!(stories[0].title, b.title); // 공식 발표 제목을 스토리 이름으로
@@ -1107,9 +1107,9 @@ fn recluster_and_follow() {
     assert_eq!(grown.len(), 1);
     assert_eq!(grown[0].1.key(), b.key());
     assert_eq!(magazine::recluster(&db), 2);
-    let stories = magazine::stories(&db);
+    let stories = magazine::stories(&db, &Default::default());
     assert_eq!(stories.len(), 1);
-    let (live, past) = magazine::story_groups(&db, now);
+    let (live, past) = magazine::story_groups(&db, now, &Default::default());
     assert_eq!((live.len(), past.len()), (1, 0));
     assert_eq!(db.coverage(&[a.key(), b.key()]).get(&a.key()), Some(&2));
 }

@@ -32,6 +32,7 @@ public sealed record ItemView
     public bool Saved { get; init; }
     public string? Paywall { get; init; }            // hard · metered · learned(G-14 자물쇠). 없으면 무료
     public string? PaywallHelp { get; init; }        // 마우스를 올리면 보이는 이유
+    public string? Watch { get; init; }              // 걸린 지켜볼 낱말(N-27 눈 표시 — 꼭 알림 ★ 와 겹치면 ★ 만)
 
     // 화면 CSS 에 들어가는 색은 #RRGGBB 만(출처 정보가 깨져도 스타일이 새지 않게)
     public static string SafeColor(string? hex) =>
@@ -50,7 +51,7 @@ public sealed record ItemView
             External = it.ItemKind.OpensExternally(), Related = it.Related?.Count ?? 0, RelatedNames = it.Related ?? new(),
             Time = RelativeTime.Format(it.Date, now), Date = it.Date?.ToUnixTimeMilliseconds(), Summary = it.Summary,
             Image = it.Image, Important = it.Important == true, Read = m?.IsRead(it) ?? false, Saved = m?.IsSaved(it) ?? false,
-            Paywall = pw?.Raw(), PaywallHelp = pw?.Help(),
+            Paywall = pw?.Raw(), PaywallHelp = pw?.Help(), Watch = it.Important == true ? null : it.Watch,
         };
     }
 }

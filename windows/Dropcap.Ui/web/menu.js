@@ -87,7 +87,7 @@
     }
     return head + `<div class="card item${it.read ? ' read' : ''}" ${attrs}>${thumb(r)}
       <div class="body"><div class="t">${esc(it.title)}</div>
-        <div class="meta"><span class="src">${esc(it.source)}</span>${lock(it)}<span class="cat">${esc(r.topicLabel)}</span><span class="tm">${esc(it.time)}</span>${it.saved ? `<span class="bm">${ic('bookmark.fill')}</span>` : ''}</div></div>
+        <div class="meta">${it.important ? `<span class="imp">${ic('star.fill')}</span>` : it.watch ? `<span class="wt" title="지켜볼 낱말: ${esc(it.watch)}">${ic('eye')}</span>` : ''}<span class="src">${esc(it.source)}</span>${lock(it)}<span class="cat">${esc(r.topicLabel)}</span><span class="tm">${esc(it.time)}</span>${it.saved ? `<span class="bm">${ic('bookmark.fill')}</span>` : ''}</div></div>
       ${it.read ? '' : '<span class="dot"></span>'}
     </div>`;
   }

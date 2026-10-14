@@ -36,7 +36,7 @@ public class ReaderCatchupTests : IDisposable
     public ReaderCatchupTests()
     {
         db = new Database(Path.Combine(tmp.Path, "magazine.sqlite"));
-        model = new AppModel(new FakeUi(), new Magazine(db), new AppState { Recent = [Ft, LabAlt, PressAlt, Nyt] }, persist: false);
+        model = new AppModel(new FakeUi(), new Magazine(db), new AppState { Recent = [Ft, LabAlt, PressAlt, Nyt] }, persist: false) { ShowAllSourcesForTests = true };
         book = new Scrapbook(db);
         paywall = new PaywallBook(db);
         svc = new ArticleService(new NoExtract(), () => [], Path.Combine(tmp.Path, "articles"))

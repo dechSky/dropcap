@@ -104,6 +104,7 @@ public sealed record NewsItem
     public string? TitleEn { get; init; }        // 영어 제목(한국어 기사를 다른 기사와 같은 소식인지 비교할 때)
     public string? Kind { get; init; }           // ItemKind
     public bool? Important { get; init; }        // '꼭 알림' 낱말에 걸림
+    public string? Watch { get; init; }          // 걸린 '지켜볼 낱말'(★ 와 겹치면 표시는 ★, N-27)
 
     [JsonIgnore] public ItemKind ItemKind => ItemKinds.Parse(Kind);
     [JsonIgnore] public string Key => $"{SourceId}|{Id}";

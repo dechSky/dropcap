@@ -113,3 +113,6 @@ main > * { flex: none; }
 /* 유료 자물쇠(G-14): 큰 카드의 흰 글자 위에서는 같은 흰색 */
 .hero .pw { color: inherit; opacity: .85; }
 .meta .pw { margin-left: -1px; }
+/* 꼭 알림 ★ · 지켜볼 낱말 눈(N-27, 맥 teal) */
+.meta .imp { color: var(--orange); flex: none; display: inline-flex; }
+.meta .wt { color: var(--teal); flex: none; display: inline-flex; }

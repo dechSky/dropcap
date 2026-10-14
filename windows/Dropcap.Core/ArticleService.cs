@@ -65,7 +65,7 @@ public static class ArticleExtraction
     {
         if (!Uri.TryCreate(link, UriKind.Absolute, out var url)) return null;
         if (checkUrl && !await UrlSafety.ResolvesPublicAsync(link)) return null;
-        fetch ??= l => FeedService.Shared.FetchWithEncodingAsync(l);
+        fetch ??= l => FeedService.Shared.FetchWithEncodingAsync(l, limit: FetchLimit.Page);   // 기사 페이지 2MB(S-12) — 넘으면 느린 길로
         var host = url.Host.ToLowerInvariant();
         var refused = false;   // 사이트가 접근을 거부(401·403·429)
         var richPage = false;  // 받은 HTML 에 글이 이미 많다(스크립트로 그리는 빈 껍데기가 아님)
@@ -291,12 +291,14 @@ public sealed class ArticleService
             Emit(item.Link, a);
             var idx = Enumerable.Range(0, blocks.Count).Where(i => blocks[i].Text is not null && blocks[i].Type != BlockKind.Pre).ToList();
             var chunks = new[] { idx.Take(8).ToList(), idx.Skip(8).ToList() };
+            var engine = Translator.EngineNone;
             for (var n = 0; n < 2; n++)
             {
                 var chunk = chunks[n];
                 if (chunk.Count == 0 && n != 0) continue;
                 var inputs = (n == 0 ? new List<string> { artTitle } : new()).Concat(chunk.Select(i => blocks[i].Text!)).ToList();
-                var outs = await Translator.Shared.TranslateManyAsync(inputs);
+                var (outs, used) = await Translator.Shared.TranslateManyReportingAsync(inputs);
+                if (used != Translator.EngineNone) engine = used; // 이 기사에 실제로 쓴 엔진(T-08 · A-24)
                 var title = a.Title;
                 if (n == 0) { title = outs[0]; outs.RemoveAt(0); }
                 var nb = a.Blocks.ToList();
@@ -308,7 +310,7 @@ public sealed class ArticleService
                 a = a with { Title = title, Blocks = nb, Translated = true };
                 Emit(item.Link, a);
             }
-            a = a with { Engine = Translator.Shared.LastEngine };
+            a = a with { Engine = engine };
         }
         else
         {

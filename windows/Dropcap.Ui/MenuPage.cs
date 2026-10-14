@@ -19,9 +19,9 @@ public sealed class MenuPage(AppModel model, IPlatform platform) : IPage
     {
         IEnumerable<NewsItem> list = tab switch
         {
-            Tab.Unread => m.State.Recent.Where(i => !m.IsRead(i)),
-            Tab.Saved => m.State.Saved,
-            _ => m.State.Recent,
+            Tab.Unread => m.VisibleRecent.Where(i => !m.IsRead(i)),   // 꺼진·해지한·숨긴 출처 글은 빠짐(S-13)
+            Tab.Saved => m.State.Saved,                               // 저장한 기사는 사용자가 고른 것이라 그대로
+            _ => m.VisibleRecent,
         };
         if (section is { } s)
             list = s == Sections.Top
@@ -194,7 +194,7 @@ public sealed class MenuPage(AppModel model, IPlatform platform) : IPage
                 snoozed = model.IsSnoozed,
                 snoozeHelp = model.IsSnoozed ? $"알림 꺼짐 — {RelativeTime.Clock(model.State.SnoozeUntil)}까지" : "알림 잠시 끄기",
             },
-            unread = model.State.Recent.Count(i => !model.IsRead(i)),
+            unread = model.VisibleRecent.Count(i => !model.IsRead(i)),
             sort,
             sortLabel = sort switch { "important" => "중요순", "source" => "출처별", _ => null },
             rows = Rows(model, items, sort, now),

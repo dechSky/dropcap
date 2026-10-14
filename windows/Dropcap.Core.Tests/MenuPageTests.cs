@@ -39,7 +39,7 @@ public class MenuPageTests : IDisposable
     {
         db = new Database(System.IO.Path.Combine(tmp.Path, "magazine.sqlite"));
         mag = new Magazine(db);
-        model = new AppModel(new FakeUi(), mag, new AppState(), persist: false) { Now = () => now };
+        model = new AppModel(new FakeUi(), mag, new AppState(), persist: false) { ShowAllSourcesForTests = true, Now = () => now };
         page = new MenuPage(model, new FakePlatform());
     }
 

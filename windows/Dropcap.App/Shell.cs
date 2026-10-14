@@ -56,7 +56,7 @@ internal sealed class Shell : IAppUi
         ExternalLink.Opener = u => { _ = Windows.System.Launcher.LaunchUriAsync(u); return true; };
 
         Bridge.Register(new MenuPage(Model, platform));
-        Bridge.Register(new SettingsPage(Model, platform));
+        Bridge.Register(new SettingsPage(Model, platform, Scrapbook));
         Bridge.Register(new OnboardingPage(Model, platform, Bridge));   // 분야 사진이 오면 밀어 줌
         readerPage = new ReaderPage(Model, Articles, Scrapbook, platform, Bridge);
         Bridge.Register(readerPage);
@@ -71,6 +71,7 @@ internal sealed class Shell : IAppUi
         {
             if (c.Kind == Ui.Toast.ToastKind.Digest) OpenMagazine(null);
             else if (c.Kind == Ui.Toast.ToastKind.Bundle && c.Section is { } sec) OpenMagazine("section:" + sec);   // 그 분야 지면(G-07)
+            else if (c.Kind == Ui.Toast.ToastKind.Watch) OpenMagazine("search:" + c.Title);                          // 그 낱말 검색(N-27)
             else if (c.Item is { } it) { pendingFrom = toasts.CardScreenRect(c); Model.Open(it); pendingFrom = null; }
         };
         system.Invoked += key => ui.TryEnqueue(() =>
@@ -78,6 +79,7 @@ internal sealed class Shell : IAppUi
             if (Model.State.Recent.FirstOrDefault(i => i.Key == key) is { } it) Model.Open(it);
         });
         system.BundleInvoked += sec => ui.TryEnqueue(() => OpenMagazine("section:" + sec));
+        system.SearchInvoked += w => ui.TryEnqueue(() => OpenMagazine("search:" + w));
 
         // 상태가 바뀌면: 트레이 아이콘(안 읽음), 열린 화면들에 알림
         Model.Changed += () => ui.TryEnqueue(Refresh);
@@ -304,6 +306,8 @@ internal sealed class Shell : IAppUi
     public void ShowBundle(string section, IReadOnlyList<NewsItem> items, bool sound) { if (!UserBusy()) toasts.ShowBundle(section, items, sound); }
     public void PostBundle(string section, IReadOnlyList<NewsItem> items, bool sound) { if (!UserBusy()) system.PostBundle(section, items, sound); }
     public void OpenReader(NewsItem item) => OpenReader(item, pendingFrom);
+    public void ShowWatch(string word, IReadOnlyList<NewsItem> items, bool sound) { if (!UserBusy()) toasts.ShowWatch(word, items, sound); }
+    public void PostWatch(string word, IReadOnlyList<NewsItem> items, bool sound) { if (!UserBusy()) system.PostWatch(word, items, sound); }
 
     public void Quit()
     {

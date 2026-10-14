@@ -38,9 +38,7 @@ public static class Summarizer
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(1.5));
                 var tags = await local.GetFromJsonAsync<JsonObject>("/api/tags", cts.Token);
                 var names = (tags?["models"] as JsonArray)?.Select(m => m?["name"]?.GetValue<string>()).OfType<string>().ToList() ?? new();
-                var want = Environment.GetEnvironmentVariable("DROPCAP_OLLAMA_MODEL");
-                model = names.FirstOrDefault(n => want is not null && n.StartsWith(want, StringComparison.OrdinalIgnoreCase))
-                    ?? names.FirstOrDefault(n => !n.Contains("embed", StringComparison.OrdinalIgnoreCase));
+                model = PickModel(names, Environment.GetEnvironmentVariable("DROPCAP_OLLAMA_MODEL"));
             }
             catch { model = null; }
             probe = (model, DateTime.UtcNow);
@@ -48,6 +46,18 @@ public static class Summarizer
         }
         finally { gate.Release(); }
     }
+
+    // 쓸 모델: 정한 이름(DROPCAP_OLLAMA_MODEL — 그 이름이거나 "이름:태그")이 있으면 그것만, 없으면 첫 글 모델.
+    // 임베딩 전용과 Ollama 클라우드 모델(이름에 cloud, 예 gpt-oss:120b-cloud — 글을 바깥 서버로 보냄)은 '이 PC 안' 요약이 아니라 뺀다(리눅스와 같음)
+    public static string? PickModel(IReadOnlyList<string> names, string? want)
+    {
+        if (!string.IsNullOrWhiteSpace(want))
+            return names.FirstOrDefault(n => (string.Equals(n, want, StringComparison.OrdinalIgnoreCase) || n.StartsWith(want + ":", StringComparison.OrdinalIgnoreCase)) && LocalTextModel(n));
+        return names.FirstOrDefault(LocalTextModel);
+    }
+
+    public static bool LocalTextModel(string name) =>
+        !name.Contains("embed", StringComparison.OrdinalIgnoreCase) && !name.Contains("cloud", StringComparison.OrdinalIgnoreCase);
 
     public const string Instructions = """
         당신은 뉴스 편집자입니다. 기사를 읽고 핵심만 한국어로 세 줄 요약합니다.

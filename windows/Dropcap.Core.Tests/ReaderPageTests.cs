@@ -40,7 +40,7 @@ public class ReaderPageTests : IDisposable
     public ReaderPageTests()
     {
         db = new Database(Path.Combine(tmp.Path, "magazine.sqlite"));
-        model = new AppModel(new FakeUi(), new Magazine(db), new AppState { Recent = [Item] }, persist: false);
+        model = new AppModel(new FakeUi(), new Magazine(db), new AppState { Recent = [Item] }, persist: false) { ShowAllSourcesForTests = true };
         book = new Scrapbook(db);
         // 본문 추리기 기록(G-14)은 시험 DB 의 유료 기록으로만 — 사용자 데이터를 건드리지 않게
         svc = new ArticleService(new NoExtract(), () => [], Path.Combine(tmp.Path, "articles")) { RecordExtract = (_, _, _) => { } };

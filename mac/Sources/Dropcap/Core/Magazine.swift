@@ -38,6 +38,9 @@ struct Issue: Codable, Identifiable, Hashable {
     var sections: [Section]
     var count: Int
 
+    // 기사가 너무 적은 호(앱을 막 쓰기 시작한 주 등) — 목록에 '기록 적음'으로 표시
+    var isThin: Bool { count < Magazine.thinIssue }
+
     var title: String {
         let f = DateFormatter()
         f.locale = Locale(identifier: "ko_KR")
@@ -68,7 +71,7 @@ final class Magazine: ObservableObject {
     private var enrichTried: Set<String> = [] // 이번 실행에서 이미 찾아본 기사(사진이 없던 곳을 확인마다 다시 받지 않게)
 
     private init() {
-        archive = db.issues()
+        archive = Self.archiveOrder(db.issues())
     }
 
     // MARK: 받아 넣기 — 무거운 일은 Editor(화면 줄기 밖)가 하고 여기선 결과만 반영한다
@@ -198,12 +201,61 @@ final class Magazine: ObservableObject {
     // 지금 진행 중인 오늘 호·이번 주 호(아직 발행 전) — 엮기·꺼내기는 화면 줄기 밖에서
     func today() async -> Resolved { let c = context; return await editor.resolve(await editor.liveDaily(c), filter: c.filter) }
     func week() async -> Resolved { let c = context; return await editor.resolve(await editor.liveWeekly(c), filter: c.filter) }
+    // 분야 지면(왼쪽 목록의 분야): 오늘 호 기간의 그 분야 기사만으로 엮은 지면(표지·건수도 그 분야 기준)
+    func section(_ id: String) async -> Resolved { let c = context; return await editor.resolve(await editor.liveSection(c, id), filter: c.filter) }
     func resolve(_ issue: Issue) async -> Resolved { await editor.resolve(issue, filter: context.filter) }
 
     // 지난 호 발행(확인마다·30분마다). 같은 목록이면 화면을 다시 그리지 않게 바뀔 때만 넣는다
     func publishDue() async {
-        let list = await editor.publishDue(context)
+        let list = Self.archiveOrder(await editor.publishDue(context))
         if list != archive { archive = list }
+    }
+
+    // MARK: 지면 규칙(왼쪽 목록과 오른쪽 화면이 같은 기준을 쓰게 — 시험 SidebarRuleTests)
+
+    nonisolated static let thinIssue = 5
+
+    // 지난 호 목록: 최신부터 호의 끝 시각 순(주간은 그 주 끝 — 토요일 호 바로 위). 예전에 저장한 호는 정렬 값이 발행 시각이라 뒤섞였다
+    nonisolated static func archiveOrder(_ issues: [Issue]) -> [Issue] {
+        issues.sorted { a, b in a.to != b.to ? a.to > b.to : (a.kind == .weekly) && b.kind != .weekly }
+    }
+
+    // 주간 범위: 달력 한 주(이번 주 진행 중 호와 지난 주간이 겹치지 않고 이어짐, 각 7일)
+    nonisolated static func weekRange(containing d: Date, cal: Calendar = .current) -> (from: Date, to: Date) {
+        let i = cal.dateInterval(of: .weekOfYear, for: d) ?? DateInterval(start: cal.startOfDay(for: d), duration: 7 * 24 * 3600)
+        return (i.start, i.end)
+    }
+
+    // 머리 아래 숫자: 모은 소식 중 지면에 실은 수(표지 포함). 다 실었으면 한 숫자만
+    nonisolated static func subtitle(total: Int, shown: Int, sections: Int, noun: String = "소식") -> String {
+        let head = shown >= total ? "\(noun) \(total)건" : "\(noun) \(total)건 중 \(shown)건 실음"
+        return sections > 0 ? head + " · 분야 \(sections)개" : head
+    }
+
+    // 분야 개편(유리 띠 분야 지면) 전에 엮은 호: 기사 지면에 분야 id 가 없고 예전 AI 분류(모델·제품…)로 나뉨 → 지금 규칙으로 다시 엮는다
+    nonisolated static func needsRebuild(_ issue: Issue) -> Bool {
+        issue.sections.contains { $0.kind == nil && $0.section == nil && $0.category != .other }
+    }
+
+    // 스토리의 분야: 묶인 보도들의 대표 분야 다수결(같으면 분야 순서 앞). AI 면 AI 안 하위 분류도 다수결
+    nonisolated static func storyTopic(_ items: [NewsItem], place: (NewsItem) -> String = { Sections.place($0).primary }) -> (section: String, category: NewsCategory?)? {
+        guard !items.isEmpty else { return nil }
+        let secs = items.map(place)
+        var votes: [String: Int] = [:]
+        for s in secs { votes[s, default: 0] += 1 }
+        let sec = votes.max { a, b in a.value != b.value ? a.value < b.value : Sections.order(a.key) > Sections.order(b.key) }!.key
+        guard sec == Sections.ai else { return (sec, nil) }
+        var cats: [NewsCategory: Int] = [:]
+        for (it, s) in zip(items, secs) where s == Sections.ai { cats[it.category, default: 0] += 1 }
+        let cat = cats.max { a, b in a.value != b.value ? a.value < b.value : a.key.sortOrder > b.key.sortOrder }?.key
+        return (sec, cat)
+    }
+
+    // 최근 검색어: 맨 앞에 넣고 같은 것(대소문자 무시)은 하나로, 두 글자 이상, 8개까지
+    nonisolated static func rememberSearch(_ q: String, in list: [String], max: Int = 8) -> [String] {
+        let t = q.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard t.count >= 2 else { return list }
+        return Array(([t] + list.filter { $0.lowercased() != t.lowercased() }).prefix(max))
     }
 
     nonisolated static func dayID(_ d: Date) -> String {

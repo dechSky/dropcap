@@ -258,7 +258,7 @@ public class HushTests : IDisposable
     public HushTests()
     {
         db = new Database(Path.Combine(tmp.Path, "magazine.sqlite"));
-        model = new AppModel(ui, new Magazine(db), new AppState(), persist: false) { Now = () => now };
+        model = new AppModel(ui, new Magazine(db), new AppState(), persist: false) { ShowAllSourcesForTests = true, Now = () => now };
         model.ChooseSections(["economy"]);
         model.SetPolicy("economy", p => p with { Mode = NotifyMode.Bundle, BundleHour = 18 });
     }
@@ -602,7 +602,7 @@ public class MenuSettingsExtrasTests : IDisposable
     public MenuSettingsExtrasTests()
     {
         db = new Database(Path.Combine(tmp.Path, "magazine.sqlite"));
-        model = new AppModel(new FakeUi(), new Magazine(db), new AppState(), persist: false);
+        model = new AppModel(new FakeUi(), new Magazine(db), new AppState(), persist: false) { ShowAllSourcesForTests = true };
         menu = new MenuPage(model, new Platform());
         settings = new SettingsPage(model, new Platform());
     }

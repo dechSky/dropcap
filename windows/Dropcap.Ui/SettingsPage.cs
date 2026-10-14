@@ -4,9 +4,13 @@ using Dropcap.Core;
 namespace Dropcap.Ui;
 
 // 설정 창(P 절·K 절·G-13). 맥 SettingsView 와 같은 탭(일반·분야·구독·거르기), 같은 문구·선택지.
-public sealed class SettingsPage(AppModel model, IPlatform platform) : IPage
+public sealed class SettingsPage(AppModel model, IPlatform platform, Scrapbook? scrapbook = null) : IPage
 {
     public string Name => "settings";
+
+    // 내 기록 내보내기·가져오기(P-08): 마지막 결과 문구(화면 아래에 보임)
+    private string? backupMessage;
+    private Scrapbook Book => scrapbook ?? Scrapbook.Shared;
 
     // 시각 선택지: 방해 금지는 0~23시, 아침 브리핑은 오전 5시~낮 12시(C-19·C-21)
     public static readonly int[] DigestHours = [5, 6, 7, 8, 9, 10, 11, 12];
@@ -14,7 +18,7 @@ public sealed class SettingsPage(AppModel model, IPlatform platform) : IPage
     public static string DigestLabel(int h) => h == 12 ? "낮 12시" : $"오전 {h}시";
 
     // 분야 탭(G-13): 묶음 시각은 6~23시, 분야 하루 상한은 1~10번
-    public const int BundleFrom = 6, BundleTo = 23, CapMin = 1, CapMax = 10;
+    public const int BundleFrom = SettingsBounds.BundleFrom, BundleTo = SettingsBounds.BundleTo, CapMin = SettingsBounds.CapMin, CapMax = SettingsBounds.CapMax;
 
     // 알림 양(맥 Stepper 와 같은 범위). 키는 set 명령의 key
     public static readonly (string Key, int Min, int Max)[] Limits =
@@ -168,6 +172,14 @@ public sealed class SettingsPage(AppModel model, IPlatform platform) : IPage
                     + "전체 화면은 다른 앱이 화면을 통째로 덮을 때(전체 화면·발표·게임), 화면 공유는 Zoom 화면 공유를 알아봅니다. "
                     + "Teams·Meet 처럼 브라우저로 하는 공유는 알 수 없어 전체 화면일 때만 조용해집니다.",
                 calendarNote = model.Focus.CalendarSupported ? null : "윈도우 판은 설치 없이 푸는 앱이라 윈도우 캘린더(일정) 권한을 받을 수 없어 쓸 수 없습니다.",
+                // 내 기록(P-08) — 맥과 같은 파일 형식이라 Mac·리눅스와 옮길 수 있음
+                backup = new
+                {
+                    intro = "계정도 서버도 없습니다. 모든 기록은 이 PC 안에만 있습니다.",
+                    note = "다른 PC·Mac 으로 옮길 때: 저장·스크랩과 폴더·구독·분야·알림 설정·낱말·숨긴 출처를 JSON 파일 하나로 내보내고, 다른 기기에서 가져오면 없는 것만 더합니다(같은 것은 건너뜀). 기사 캐시·사진은 담지 않습니다. 가져오기 전 기록은 자동으로 남겨 되돌릴 수 있습니다.",
+                    canUndo = Backup.CanUndo,
+                    message = backupMessage,
+                },
             },
             sections = SectionsView(),
             sources = new
@@ -188,6 +200,7 @@ public sealed class SettingsPage(AppModel model, IPlatform platform) : IPage
             {
                 must = string.Join(", ", st.MustKeywords),
                 mute = string.Join(", ", st.MuteKeywords),
+                watch = string.Join(", ", st.WatchKeywords),   // 지켜볼 낱말(N-27)
                 quietEnabled = st.QuietEnabled,
                 quietStart = st.QuietStart,
                 quietEnd = st.QuietEnd,
@@ -302,13 +315,15 @@ public sealed class SettingsPage(AppModel model, IPlatform platform) : IPage
             case "keywords":
                 var must = SplitKeywords(a.Str("must"));
                 var mute = SplitKeywords(a.Str("mute"));
+                var watch = WatchWords.Normalized(SplitKeywords(a.Str("watch")));
                 // 바뀐 것이 있을 때만 저장하고, 이미 받은 목록에도 바로 적용(★ 다시 매기기·알리지 않음 낱말 빼기)
-                if (!must.SequenceEqual(model.State.Settings.MustKeywords) || !mute.SequenceEqual(model.State.Settings.MuteKeywords))
+                if (!must.SequenceEqual(model.State.Settings.MustKeywords) || !mute.SequenceEqual(model.State.Settings.MuteKeywords)
+                    || !watch.SequenceEqual(model.State.Settings.WatchKeywords))
                 {
-                    model.Update(s => { s.MustKeywords = must; s.MuteKeywords = mute; });
+                    model.Update(s => { s.MustKeywords = must; s.MuteKeywords = mute; s.WatchKeywords = watch; });
                     model.ReapplyKeywords();
                 }
-                return new { must = string.Join(", ", must), mute = string.Join(", ", mute) };
+                return new { must = string.Join(", ", must), mute = string.Join(", ", mute), watch = string.Join(", ", watch) };
             case "preview": model.Preview(); return null;
             // K-02: 주소로 구독. 실패하면 이유를 돌려준다(K-04)
             case "addChannel":
@@ -330,6 +345,22 @@ public sealed class SettingsPage(AppModel model, IPlatform platform) : IPage
                 if (!model.State.HiddenSources.Contains(a.Str("id"))) throw new KeyNotFoundException("숨긴 출처가 아님");
                 model.UnhideSource(a.Str("id"));
                 return null;
+            // 내 기록 내보내기·가져오기·되돌리기(P-08)
+            case "exportBackup":
+                if (await platform.SaveJsonFile(Backup.SuggestedFileName, Backup.Export(model, Book))) backupMessage = "내보냈습니다";
+                return new { message = backupMessage };
+            case "importBackup":
+            {
+                string? text;
+                try { text = await platform.OpenJsonFile(); }
+                catch (Exception e) { backupMessage = "가져오지 못했습니다: " + e.Message; return new { message = backupMessage }; }
+                if (text is null) return new { message = backupMessage };
+                backupMessage = Backup.Import(text, model, Book).Message;
+                return new { message = backupMessage };
+            }
+            case "undoImport":
+                backupMessage = Backup.UndoLastImport(model, Book).Message;
+                return new { message = backupMessage };
             case "onboarding": platform.OpenOnboarding(); return null;
             case "magazine": platform.OpenMagazine(); return null;
             case "close": platform.CloseWindow(Name); return null;

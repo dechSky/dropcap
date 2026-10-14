@@ -4,7 +4,7 @@
 
 ## 확인 방법과 결과(이 맥에서)
 
-- `dotnet test windows/Dropcap.slnx` — 핵심·화면 공용 시험 332 통과(추가 지시 4 뒤). 예전 기록: 267 통과(바깥 서버 시험 8개는 `DROPCAP_LIVE_TESTS=1` 일 때만, 1단계 때 돌려 통과 · YouTube 피드만 서버 쪽 404).
+- `dotnet test windows/Dropcap.slnx` — 핵심·화면 공용 시험 369 통과·8 건너뜀(S-13 뒤). 따라잡기 2차 뒤 360. 추가 지시 4 뒤 332. 예전 기록: 267 통과(바깥 서버 시험 8개는 `DROPCAP_LIVE_TESTS=1` 일 때만, 1단계 때 돌려 통과 · YouTube 피드만 서버 쪽 404).
 - `windows/scripts/check-on-mac.sh` — WinUI 앱 C# 전체 컴파일 통과(윈도우 전용 도구 단계 mt.exe·MakePri.exe 만 끔).
 - 물방울 장면 PNG(`DROPCAP_TOAST_FRAMES`)로 모양 확인: 맺힘 → 떨어짐 → 물 차오름 → 글자 떠오름, 맥 배치와 같음.
 - 웹 화면(트레이 창·설정·읽기 창·매거진)은 mock 데이터로 브라우저에서 라이트·다크 확인.
@@ -63,3 +63,23 @@
 - 나눠 맡김: 읽기 창·매거진/분야 고르기는 하위 작업자 둘이 맡고(각자 파일만), 핵심·트레이 창·설정·앱 연결·문서는 관리자 창이 함. 시험 `ExtrasTests`·`ReaderCatchupTests`·`MagazineCatchupTests`.
 - 확인: 시험 332 통과(8 건너뜀 — 바깥 서버), WinUI 앱 C# 컴파일 점검 경고 0·오류 0, 웹 JS 문법 점검 통과, 매거진·분야 고르기·읽기 창은 mock 으로 브라우저에서 라이트·다크 확인.
 - 윈도우에서 볼 것: README 확인 목록의 새 항목(자물쇠·무료 보도 상자·회의 중 조용히·오늘 호·저녁 정리·사진 점수·유리 카드·키보드).
+
+## 따라잡기 2차(남은 개선 2차) 반영
+
+기준: main 7ff35f5 병합 뒤 FEATURES 윈 열 ☐ — S-12·T-08·N-27·P-08, 그리고 병합에서 다시 ☐ 가 된 C-08(구현은 그대로, 칸만 다시 ✓). 모두 채움(☐ 없음).
+
+- 받는 크기 상한(S-12): `FetchLimit`(피드 10MB·기사 페이지 2MB·사진 8MB — 맥과 같은 값), `SafeHttp.ReadCappedAsync` 가 헤더 길이로 먼저 거절하고 받는 도중 끊음, 304·오류 응답 본문은 받지 않음. 기사 페이지가 2MB 를 넘으면 빠른 길 실패 → 사용자가 연 기사는 느린 길로.
+- 번역(T-08): `TranslateManyReportingAsync` — 읽기 창은 그 기사에 실제로 쓴 엔진(앱 전체 LastEngine 대신), 4500자 넘는 문단은 문장 끝에서 나눠 보내 이어 붙임(`SentenceChunks`, 이어 붙이면 원문 그대로).
+- 지켜볼 낱말(N-27): `Core/WatchWords.cs`(영어 낱말 경계·한국어 부분 일치), `NotifyPolicy.Watched`(분야·모드와 상관없이, 전체 상한이 차면 고임, 국내 8곳 이상은 넘음), `AppModel.DeliverWatchDigest`(브리핑 시각 창에 하루 한 번, 세 개까지, 조용한 때면 뒤로), 정리 물방울(눈 배지·teal)·시스템 알림 → 매거진 `search:<낱말>`, 트레이 창 줄 눈 표시(★ 와 겹치면 ★), 설정 거르기 칸.
+- 내 기록(P-08): `Core/Backup.cs` — 맥 `Backup.swift` 와 같은 글자의 JSON(format·version·키 정렬·들여쓰기·날짜). 맥 JSONEncoder 로 만든 견본과 같은지 시험. 설정 일반 › 내 기록(내보내기·가져오기·되돌리기, 저장·여는 대화상자는 `Platform`). `app` 값만 "windows"(맥은 읽지 않음).
+- Ollama 고르기: 이름에 cloud 가 든 클라우드 모델·임베딩 모델은 빼고 이 PC 에서 도는 글 모델만(리눅스에서 찾은 문제와 같았음 — 첫 모델을 고르던 코드). `DROPCAP_OLLAMA_MODEL` 로 정해도 클라우드면 쓰지 않음.
+- 나눠 맡김: P-08 핵심(Backup.cs·BackupTests)은 하위 작업자, 나머지·화면 연결·문서는 이 창.
+- 확인: 시험 360 통과(8 건너뜀 — 바깥 서버), WinUI C# 컴파일 점검 경고 0·오류 0, 웹 JS 문법 점검 통과.
+
+## S-13 끈 출처 글 바로 빼기(맥 SourceFilter 와 같게)
+
+- `Core/SourceFilter.cs` 한 곳: 출처 목록에 있고 · 켜져 있고 · 숨기지 않은 출처만 보임. 지우지 않고 거르기만(다시 켜면 돌아옴), 저장한 기사는 그대로.
+- 적용: 트레이 창 목록·안 읽음 수(`AppModel.VisibleRecent`), 매거진 엮기·지난 호·표지(`Magazine.Filter` — 예전 `Hidden` 을 바꿈), 스토리 목록(보이는 출처 두 곳 이상)·크기·상세, 검색, 알림 대기열·보도 수 판단, 지켜볼 낱말 하루 정리, 아침 브리핑 건수, 가장 최근 안 읽은 소식 단축키.
+- 출처 켜기·끄기·해지·분야 고르기·숨기기 직후 `SubscriptionsChanged`: 대기열 정리 · 안 읽음 수 맞추기 · 저장 · 매거진 다시 엮기(열린 화면은 changed 알림으로 바로).
+- 시험: 맥 SourceFilterTests 6개 + 끄기→목록·안 읽음·대기열·검색·스토리 크기·지난 호·오늘 호, 다시 켜기, 해지·분야 해제. 출처 목록에 없는 가짜 출처 id 를 쓰는 예전 시험은 `ShowAllSourcesForTests`(맥 active = nil 과 같음)로.
+- 위젯·단축어: 윈도우 판에 없는 기능이라 해당 없음.

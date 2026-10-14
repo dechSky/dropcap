@@ -57,7 +57,7 @@ public sealed class Magazine
     // 관심사 가중치(분야, 출처) → 0~1.5. AppModel 이 넣어 준다.
     public Func<NewsCategory, string?, double> Interest { get; set; } = (_, _) => 0;
     // 상태에서 오는 값(AppModel 이 넣어 줌)
-    public Func<IReadOnlySet<string>> Hidden { get; set; } = () => new HashSet<string>();   // 숨긴 출처(G-11)
+    public Func<SourceFilter> Filter { get; set; } = () => new SourceFilter();               // 보여 줄 출처(S-13 — 숨긴·꺼진·해지한 출처 글은 뺌)
     public Func<List<string>?> Chosen { get; set; } = () => null;                           // 고른 분야(G-10)
     public Func<PolicyLimits> Limits { get; set; } = () => new PolicyLimits();
     public Func<string, bool> IsFollowed { get; set; } = _ => false;
@@ -233,9 +233,9 @@ public sealed class Magazine
     public Issue MakeIssue(IssueKind kind, DateTimeOffset from, DateTimeOffset to, string id)
     {
         // 기사와 구독 채널 글을 따로(논문이 많아도 기사가 잘리지 않게)
-        var hidden = Hidden();   // 숨긴 출처는 스토리 대표를 고르기 전에 뺀다(G-11)
+        var filter = Filter();   // 숨긴·꺼진·해지한 출처는 스토리 대표를 고르기 전에 뺀다(G-11 · S-13)
         var stored = db.Items(from, to, limit: 4000, articlesOnly: true).Concat(db.Items(from, to, limit: 800, channelsOnly: true))
-            .Where(s => !hidden.Contains(s.Item.SourceId)).ToList();
+            .Where(s => filter.Shows(s.Item.SourceId)).ToList();
         // 같은 스토리는 대표 하나만 지면에(점수 높은 것)
         var sizes = new Dictionary<string, int>();
         foreach (var s in stored) if (s.Cluster is { } c) sizes[c] = sizes.GetValueOrDefault(c) + 1;
@@ -331,12 +331,12 @@ public sealed class Magazine
     }
 
     // 같은 소식을 다룬 출처 수(국내·해외, G-05). 스토리에 묶이지 않았으면 자기 하나.
-    public Coverage RegionCoverage(NewsItem it, IReadOnlySet<string>? hidden = null)
+    public Coverage RegionCoverage(NewsItem it, SourceFilter? filter = null)
     {
         var regions = new Dictionary<string, string> { [it.SourceId] = Dropcap.Core.Sections.RegionOf(it.SourceId, it.Tier) };
         if (db.ClusterOf(it.Key) is { } c)
             foreach (var s in db.ItemsInCluster(c))
-                if (hidden is null || !hidden.Contains(s.Item.SourceId)) regions[s.Item.SourceId] = Dropcap.Core.Sections.RegionOf(s.Item.SourceId, s.Item.Tier);
+                if (filter is null || filter.Shows(s.Item.SourceId)) regions[s.Item.SourceId] = Dropcap.Core.Sections.RegionOf(s.Item.SourceId, s.Item.Tier);
         return new Coverage(regions.Values.Count(v => v == "kr"), regions.Values.Count(v => v != "kr"));
     }
 
@@ -425,8 +425,8 @@ public sealed class Magazine
         var keys = (issue.Cover is { } ck ? new[] { ck } : []).Concat(issue.Sections.SelectMany(s => s.Keys)).ToList();
         var map = new Dictionary<string, Database.StoredItem>();
         foreach (var s in db.ItemsByKeys(keys)) map.TryAdd(s.Item.Key, s);
-        var hidden = Hidden();
-        foreach (var k in map.Where(p => hidden.Contains(p.Value.Item.SourceId)).Select(p => p.Key).ToList()) map.Remove(k);
+        var filter = Filter();   // 엮은 뒤에 끈 출처도 지난 호·표지에서 빠진다(S-13)
+        foreach (var k in map.Where(p => !filter.Shows(p.Value.Item.SourceId)).Select(p => p.Key).ToList()) map.Remove(k);
         var clusters = map.Where(p => p.Value.Cluster is not null).ToDictionary(p => p.Key, p => p.Value.Cluster!);
         // 여러 곳이 다룬 스토리만 보도를 꺼내 해외·국내가 섞였는지 본다
         var regions = new Dictionary<string, List<NewsItem>>();
@@ -434,7 +434,7 @@ public sealed class Magazine
         foreach (var (k, c) in clusters)
         {
             if (sizes.GetValueOrDefault(k, 1) < 2 || regions.ContainsKey(c)) continue;
-            var items = db.ItemsInCluster(c).Select(s => s.Item).Where(i => !hidden.Contains(i.SourceId)).ToList();
+            var items = filter.Visible(db.ItemsInCluster(c).Select(s => s.Item));
             var (intl, kr) = SplitByRegion(items);
             if (intl.Count > 0 && kr.Count > 0) regions[c] = items;
         }
@@ -446,19 +446,26 @@ public sealed class Magazine
     public Database.StoredItem? Stored(string key) => db.ItemsByKeys([key]).FirstOrDefault();
     public Dictionary<string, int> Coverage(IEnumerable<NewsItem> items) => db.Coverage(items.Select(i => i.Key).ToList());
     public string? StoredImage(string key) => db.Image(key);
-    public List<NewsItem> StoryItems(string cluster) => db.ItemsInCluster(cluster).Select(s => s.Item).ToList();
+    // 스토리의 보도들(꺼진·해지한·숨긴 출처 글은 빠짐, S-13)
+    public List<NewsItem> StoryItems(string cluster) => Filter().Visible(db.ItemsInCluster(cluster).Select(s => s.Item));
     public Database.Cluster? Cluster(string id) => db.GetCluster(id);
     public string? ClusterId(string key) => db.ClusterOf(key);
 
     // 스토리: 최근 2주 동안 두 곳 이상이 다룬 것(M-14)
-    // 숨긴 출처만으로 된 스토리는 빼고(숨긴 출처를 뺀 보도가 2곳 이상인 것만)
+    // 지금 보이는 출처로만 두 곳 이상이 다룬 스토리(출처를 끄면 그 스토리의 보도 수도 줄어 목록에서 빠질 수 있음, S-13). 크기도 보이는 보도 수로
     public List<Database.Cluster> Stories()
     {
-        var hidden = Hidden();
-        var list = db.RecentClusters(DateTimeOffset.Now.AddDays(-14)).Where(c => c.Size >= 2).ToList();
-        if (hidden.Count == 0) return list;
-        return list.Where(c => db.ItemsInCluster(c.Id).Count(s => !hidden.Contains(s.Item.SourceId)) >= 2).ToList();
+        var o = new List<Database.Cluster>();
+        foreach (var c in db.RecentClusters(DateTimeOffset.Now.AddDays(-14)).Where(c => c.Size >= 2))
+        {
+            var items = StoryItems(c.Id);
+            if (items.Select(i => i.SourceId).Distinct().Count() < 2) continue;
+            o.Add(c with { Size = items.Count });
+        }
+        return o;
     }
 
-    public List<NewsItem> Search(string q) => db.Search(q);
+    public List<NewsItem> Search(string q) => Filter().Visible(db.Search(q));
+    // 최근 기사(지켜볼 낱말 하루 정리, N-27)
+    public List<NewsItem> RecentItems(DateTimeOffset since) => Filter().Visible(db.Items(since, limit: 3000).Select(s => s.Item));
 }

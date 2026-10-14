@@ -15,6 +15,7 @@ struct PreparedArticle: Codable {
     var summarizing = false
     var fallback = ""                 // 본문을 못 추렸을 때 보여 줄 요약 번역
     var paywalled: Bool? = nil        // 맛보기만 나오고 구독을 권함(유료벽 뒤)
+    var failure: ReaderFailure? = nil // 못 추린 까닭(실패 화면 안내)
 }
 
 @MainActor
@@ -94,7 +95,10 @@ final class ArticleService {
     private func run(_ item: NewsItem, interactive: Bool) async -> PreparedArticle {
         var a = PreparedArticle(title: item.displayTitle, originalTitle: item.title)
         emit(item.link, a)
-        guard let url = URL(string: item.link), let art = await ArticleExtractor().extract(url, allowScripts: interactive) else {
+        let extractor = ArticleExtractor()
+        var got: Article?
+        if let url = URL(string: item.link) { got = await extractor.extract(url, allowScripts: interactive) }
+        guard let art = got else {
             if !interactive { // 미리 받기 실패는 조용히 넘기고, 열 때 다시 시도
                 memory.removeValue(forKey: item.link)
                 order.removeAll { $0 == item.link } // 다시 준비할 때 LRU 목록에 두 번 들어가지 않게(A-23)
@@ -102,6 +106,7 @@ final class ArticleService {
             }
             PaywallBook.shared.record(item, failed: true, blocked: false)
             a.fallback = await Translator.shared.translate(item.summary)
+            a.failure = URL(string: item.link) == nil ? .gone : extractor.trace.failure
             a.stage = .failed
             emit(item.link, a)
             return a

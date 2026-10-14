@@ -58,6 +58,12 @@
     $('#calendarNote').hidden = !g.calendarNote;
     $('#calendarNote').textContent = g.calendarNote || '';
     $('#autoQuietNote').textContent = g.autoQuietNote;
+    // 내 기록(P-08)
+    $('#backupIntro').textContent = g.backup.intro;
+    $('#backupNote').textContent = g.backup.note;
+    $('#undoImport').hidden = !g.backup.canUndo;
+    $('#backupMsg').hidden = !g.backup.message;
+    $('#backupMsg').textContent = g.backup.message || '';
     $('#engine').textContent = g.translation;
     $('#engineNote').textContent = g.translationNote;
     $('#summary').textContent = g.summary;
@@ -74,6 +80,7 @@
     if (!kwFilled || !document.activeElement.classList.contains('kw')) {
       $('#must').value = f.must;
       $('#mute').value = f.mute;
+      $('#watch').value = f.watch;
       kwFilled = true;
     }
     setSwitch('quietEnabled', f.quietEnabled);
@@ -244,10 +251,11 @@
   let kwTimer;
   function saveKeywords(tidy = true) {
     clearTimeout(kwTimer);
-    bridge.send('keywords', { must: $('#must').value, mute: $('#mute').value }).then((r) => {
+    bridge.send('keywords', { must: $('#must').value, mute: $('#mute').value, watch: $('#watch').value }).then((r) => {
       if (tidy) {
         $('#must').value = r.must;
         $('#mute').value = r.mute;
+        $('#watch').value = r.watch;
         ui.toast('저장했습니다');
       }
       refresh();
@@ -259,6 +267,9 @@
     el.addEventListener('blur', () => { if (kwTimer) saveKeywords(false); });
   });
   $('#saveKw').addEventListener('click', () => saveKeywords());
+
+  // 내 기록 내보내기·가져오기·되돌리기(P-08): 대화상자는 앱이 띄우고, 결과 문구는 다시 그릴 때 보임
+  ['exportBackup', 'importBackup', 'undoImport'].forEach((id) => $('#' + id).addEventListener('click', () => run(id)));
 
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !document.querySelector('.pop')) bridge.send('close'); });
 

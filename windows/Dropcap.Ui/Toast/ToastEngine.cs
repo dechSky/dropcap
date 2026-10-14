@@ -2,7 +2,7 @@ using Dropcap.Core;
 
 namespace Dropcap.Ui.Toast;
 
-public enum ToastKind { News, Info, More, Digest, Bundle }
+public enum ToastKind { News, Info, More, Digest, Bundle, Watch }
 
 // 알림 카드 하나와 그 시간표. 시각은 모두 엔진 시계(초) 기준.
 public sealed class ToastCard
@@ -34,7 +34,7 @@ public sealed class ToastCard
     public float Hover;          // 0~1 (마우스 올림)
     public bool Hovered;
 
-    public bool Clickable => Kind is ToastKind.News or ToastKind.Digest or ToastKind.Bundle;
+    public bool Clickable => Kind is ToastKind.News or ToastKind.Digest or ToastKind.Bundle or ToastKind.Watch;
     public bool Leaving => LeaveStart is not null;
     public float LandY => ToastEngine.Top + Height - Drip.DropRadius * 0.6f;
 }
@@ -89,6 +89,14 @@ public sealed class ToastEngine
     public void ShowBundle(string section, IReadOnlyList<NewsItem> items, bool sound, double now) =>
         Push(new ToastCard { Kind = ToastKind.Bundle, Section = section, Items = items, Count = items.Count, PlaySound = sound,
             Accent = Sections.ById(section)?.Color ?? DefaultAccent }, now);
+
+    // 지켜볼 낱말 하루 정리(N-27): "오늘 ○○ 소식 3건" + 제목 2줄, 누르면 매거진 검색(Title = 낱말)
+    public void ShowWatch(string word, IReadOnlyList<NewsItem> items, bool sound, double now)
+    {
+        if (items.Count == 0) return;
+        Push(new ToastCard { Kind = ToastKind.Watch, Title = word, Items = items, Count = items.Count, PlaySound = sound, Accent = WatchAccent }, now);
+    }
+    public const string WatchAccent = "#30B0C7";   // 맥 teal
 
     // N-16: 첫 실행 안내
     public void ShowWelcome(double now) => ShowInfo(Strings.WelcomeTitle, Strings.WelcomeSub, now);

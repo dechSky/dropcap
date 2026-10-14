@@ -15,5 +15,7 @@ public static class Strings
     public const string PreviewTitle = "This is how new stories will drop in";
     public const string TrayHint = "트레이 아이콘에서 확인";
     public static string Bundle(string section, int n) => $"{Sections.Name(section)} {n}건";             // 묶음 한 방울(G-07)
+    public static string Watch(string word, int n) => $"오늘 {word} 소식 {n}건";                          // 지켜볼 낱말 하루 정리(N-27)
+    public const string WatchHint = "검색에서 보기";
     public const string BundleSub = "누르면 매거진의 이 분야 지면";
 }

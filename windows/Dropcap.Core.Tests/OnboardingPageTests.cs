@@ -38,7 +38,7 @@ public class OnboardingPageTests : IDisposable
     public OnboardingPageTests()
     {
         db = new Database(System.IO.Path.Combine(tmp.Path, "magazine.sqlite"));
-        model = new AppModel(new FakeUi(), new Magazine(db), new AppState(), persist: false);
+        model = new AppModel(new FakeUi(), new Magazine(db), new AppState(), persist: false) { ShowAllSourcesForTests = true };
         // 기본 출처를 미리 켜 두어 고른 뒤 매거진 채우기(바깥 피드 받기)가 돌지 않게
         foreach (var m in Sections.Meta.Values.Where(m => m.DefaultOn == true)) model.State.Enabled[m.Id] = true;
         // 분야 사진은 바깥 피드를 받지 않게 바꿔 끼운다(경제만 사진이 있는 것으로)

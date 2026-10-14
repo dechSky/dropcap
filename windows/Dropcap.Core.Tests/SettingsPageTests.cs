@@ -17,7 +17,7 @@ public class SettingsPageTests : IDisposable
     public SettingsPageTests()
     {
         db = new Database(System.IO.Path.Combine(tmp.Path, "magazine.sqlite"));
-        model = new AppModel(ui, new Magazine(db), new AppState(), persist: false);
+        model = new AppModel(ui, new Magazine(db), new AppState(), persist: false) { ShowAllSourcesForTests = true };
         page = new SettingsPage(model, platform);
     }
 

@@ -108,10 +108,12 @@ actor Editor {
     }
 
     // MARK: 호 엮기
-    func makeIssue(kind: Issue.Kind, from: Date, to: Date, id: String, ctx: EditContext) -> Issue {
+    // only: 분야 지면(그 분야 칩이 달린 기사만, 구독 채널 지면 없이)
+    func makeIssue(kind: Issue.Kind, from: Date, to: Date, id: String, ctx: EditContext, only: String? = nil) -> Issue {
         // 기사와 구독 채널 글을 따로(논문이 많아도 기사가 잘리지 않게). 숨긴 출처는 스토리 대표를 고르기 전에 뺀다
-        let stored = (db.items(from: from, to: to, limit: 4000, articlesOnly: true) + db.items(from: from, to: to, limit: 800, channelsOnly: true))
+        let stored = (db.items(from: from, to: to, limit: 4000, articlesOnly: true) + (only == nil ? db.items(from: from, to: to, limit: 800, channelsOnly: true) : []))
             .filter { ctx.filter.shows($0.item.sourceId) && !ctx.hidden.contains($0.item.sourceId) }
+            .filter { s in only.map { Sections.cachedPlace(s.item).chips.contains($0) } ?? true }
         // 같은 스토리는 대표 하나만 지면에(점수 높은 것)
         var sizes: [String: Int] = [:]
         for s in stored { if let c = s.cluster { sizes[c, default: 0] += 1 } }
@@ -129,10 +131,18 @@ actor Editor {
         let limit = kind == .weekly ? 60 : 90
         let picked = ranked.filter { $0.0.item.itemKind == .article }.prefix(limit)
         // 표지: 사진이 있는 기사 중 점수 1등(없으면 그냥 1등). 화면 캡처·글자 그림·로고로 잰 사진은 건너뛴다(M-24)
-        let photoScores = db.imageScores(picked.prefix(30).compactMap(\.0.item.image))
-        let cover = Self.pickCover(picked.map(\.0.item), scores: photoScores).flatMap { k in picked.first { $0.0.item.key == k } } ?? picked.first
+        // 주간 표지는 그 주 가장 많이 다룬 이야기(스토리 보도 수 → 점수 순) — 오늘 표지와 같아지지 않게
+        let coverOrder = kind == .weekly
+            ? Array(picked).sorted { a, b in
+                let sa = a.0.cluster.flatMap { sizes[$0] } ?? 1, sb = b.0.cluster.flatMap { sizes[$0] } ?? 1
+                return sa != sb ? sa > sb : a.1 > b.1
+            }
+            : Array(picked)
+        let photoScores = db.imageScores(coverOrder.prefix(30).compactMap(\.0.item.image))
+        let cover = Self.pickCover(coverOrder.map(\.0.item), scores: photoScores).flatMap { k in picked.first { $0.0.item.key == k } } ?? coverOrder.first
         let articles = picked.filter { $0.0.item.itemKind == .article && $0.0.item.key != cover?.0.item.key }.map(\.0)
-        let sections = Magazine.sectionPages(articles, stored: stored, chosen: ctx.chosen, limits: ctx.limits, perSection: kind == .weekly ? 8 : 12)
+        let sections = Magazine.sectionPages(articles, stored: stored, chosen: only.map { [$0] } ?? ctx.chosen, limits: ctx.limits,
+                                             perSection: only != nil ? 40 : (kind == .weekly ? 8 : 12))
         // 구독 채널 지면: 종류별, 채널 하나당 4개까지(논문처럼 많은 곳이 지면을 덮지 않게)
         var channelSections: [Issue.Section] = []
         for k in [ItemKind.video, .release, .paper, .podcast, .post] {
@@ -152,8 +162,13 @@ actor Editor {
         let start = Calendar.current.startOfDay(for: Date())
         return makeIssue(kind: .daily, from: start.addingTimeInterval(-6 * 3600), to: Date().addingTimeInterval(60), id: "live-daily", ctx: ctx)
     }
+    // 이번 주: 달력 한 주의 시작부터 지금까지(지난 주간과 이어짐 — 예전엔 '지금부터 7일 전'이라 지난 주간과 날이 겹쳤다)
     func liveWeekly(_ ctx: EditContext) -> Issue {
-        makeIssue(kind: .weekly, from: Date().addingTimeInterval(-7 * 24 * 3600), to: Date().addingTimeInterval(60), id: "live-weekly", ctx: ctx)
+        makeIssue(kind: .weekly, from: Magazine.weekRange(containing: Date()).from, to: Date().addingTimeInterval(60), id: "live-weekly", ctx: ctx)
+    }
+    func liveSection(_ ctx: EditContext, _ id: String) -> Issue {
+        let start = Calendar.current.startOfDay(for: Date())
+        return makeIssue(kind: .daily, from: start.addingTimeInterval(-6 * 3600), to: Date().addingTimeInterval(60), id: "live-section-" + id, ctx: ctx, only: id)
     }
 
     // 하루가 지나면 그날 호를, 일요일이 지나면 그 주 호를 발행해 지난 호에 남긴다. 지난 호 목록을 돌려준다.
@@ -170,13 +185,17 @@ actor Editor {
             let issue = makeIssue(kind: .daily, from: day.addingTimeInterval(-6 * 3600), to: day.addingTimeInterval(18 * 3600), id: id, ctx: ctx)
             if issue.count > 0, !Self.sameContent(issue, existing) { db.saveIssue(issue) }
         }
-        if let weekStart = cal.dateInterval(of: .weekOfYear, for: today)?.start,
-           let lastWeekStart = cal.date(byAdding: .day, value: -7, to: weekStart) {
-            let id = "weekly-" + Magazine.weekID(lastWeekStart)
-            if !db.hasIssue(id) {
-                let issue = makeIssue(kind: .weekly, from: lastWeekStart, to: weekStart, id: id, ctx: ctx)
-                if issue.count > 0 { db.saveIssue(issue) }
-            }
+        let weekStart = Magazine.weekRange(containing: today, cal: cal).from
+        let last = Magazine.weekRange(containing: weekStart.addingTimeInterval(-3600), cal: cal)
+        let weekID = "weekly-" + Magazine.weekID(last.from)
+        if !db.hasIssue(weekID) {
+            let issue = makeIssue(kind: .weekly, from: last.from, to: last.to, id: weekID, ctx: ctx)
+            if issue.count > 0 { db.saveIssue(issue) }
+        }
+        // 분야 개편 전에 엮은 호는 그 기간 기사로 지금 규칙(분야 지면)에 맞춰 다시 엮는다(기사가 지워졌으면 그대로 둠)
+        for old in db.issues() where Magazine.needsRebuild(old) {
+            let again = makeIssue(kind: old.kind, from: old.from, to: old.to, id: old.id, ctx: ctx)
+            if again.count > 0 { db.saveIssue(again) }
         }
         db.prune()
         return db.issues()

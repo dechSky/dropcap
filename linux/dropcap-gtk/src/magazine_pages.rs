@@ -68,10 +68,11 @@ pub fn stories(on_story: Rc<dyn Fn(String)>) -> (gtk::Widget, gtk::ScrolledWindo
     let core = ui().core.clone();
     bg(
         async move {
-            let (live, past) = dropcap_core::magazine::story_groups(&core.db, Utc::now());
+            let filter = core.source_filter(); // 지금 보이는 출처로만(S-13)
+            let (live, past) = dropcap_core::magazine::story_groups(&core.db, Utc::now(), &filter);
             let load = |cs: Vec<Cluster>| -> Vec<(Cluster, Vec<NewsItem>)> {
                 cs.into_iter().map(|c| {
-                    let items = core.db.items_in_cluster(&c.id).into_iter().map(|s| s.item).collect();
+                    let items = dropcap_core::magazine::story_items(&core.db, &c.id, &filter);
                     (c, items)
                 }).collect()
             };
@@ -269,7 +270,7 @@ pub fn story(id: &str, back: Rc<dyn Fn()>) -> (gtk::Widget, gtk::ScrolledWindow)
     let cid = id.to_string();
     bg(
         async move {
-            let items: Vec<NewsItem> = core.db.items_in_cluster(&cid).into_iter().map(|s| s.item).collect();
+            let items: Vec<NewsItem> = core.story_items(&cid);
             (core.db.cluster(&cid), items)
         },
         {
@@ -580,7 +581,7 @@ pub fn search() -> (gtk::Widget, gtk::ScrolledWindow) {
             let count = count.clone();
             let serial = serial.clone();
             let q2 = q.clone();
-            bg(async move { core.db.search(&q2, 200) }, move |found| {
+            bg(async move { core.search(&q2, 200) }, move |found| {
                 if serial.get() != n {
                     return; // 그새 다른 글자를 입력함
                 }

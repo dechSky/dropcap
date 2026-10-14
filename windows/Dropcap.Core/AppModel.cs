@@ -11,6 +11,9 @@ public interface IAppUi
     void ShowBundle(string section, IReadOnlyList<NewsItem> items, bool sound);     // 묶음 한 방울("경제 7건", G-07)
     void PostBundle(string section, IReadOnlyList<NewsItem> items, bool sound);     // 시스템 알림 방식의 묶음
     void OpenReader(NewsItem item);
+    // 지켜볼 낱말 하루 정리("오늘 ○○ 소식 3건", N-27) — 누르면 매거진 검색
+    void ShowWatch(string word, IReadOnlyList<NewsItem> items, bool sound) { }
+    void PostWatch(string word, IReadOnlyList<NewsItem> items, bool sound) { }
 }
 
 // 앱의 두뇌: 확인 → 거르기 → 번역 → 묶기 → 알리기. 맥 AppModel 과 같은 순서·수치.
@@ -47,7 +50,7 @@ public sealed class AppModel
         FirstRun = state is null && !Store.Exists;
         State = state ?? Store.Load();
         Magazine.Interest = InterestWeight;
-        Magazine.Hidden = () => State.HiddenSources.ToHashSet();
+        Magazine.Filter = () => SourceFilter;
         Magazine.Chosen = () => State.SectionsChosen;
         Magazine.Limits = () => State.Settings.Limits;
         Magazine.IsFollowed = id => State.FollowedStories.Contains(id);
@@ -192,7 +195,7 @@ public sealed class AppModel
         if (items.Count == 0 || State.SectionsChosen is null) return new();
         var chosen = ChosenSections.ToHashSet();
         var limits = State.Settings.Limits;
-        var hidden = State.HiddenSources.ToHashSet();
+        var filter = SourceFilter;
         var rank = new Dictionary<string, int> { ["lab"] = 0, ["press"] = 1, ["kr"] = 2 };
         // 같은 이야기끼리 모아 대표 하나(공식 발표 > 언론 > 국내, 그다음 최신)
         var order = new List<string>();
@@ -210,11 +213,12 @@ public sealed class AppModel
             var g = groups[story];
             var rep = g.OrderBy(i => rank.GetValueOrDefault(i.Tier, 3)).ThenByDescending(i => i.Date ?? DateTimeOffset.MinValue).First();
             var sec = NotifySection(rep);
-            var cov = Magazine.RegionCoverage(rep, hidden);
+            var cov = Magazine.RegionCoverage(rep, filter);
             var input = new NotifyPolicy.Input
             {
                 Chosen = chosen.Contains(sec), Policy = Policy(sec), Coverage = cov,
                 Lab = g.Any(i => i.Tier == "lab"), Important = g.Any(i => i.Important == true), Followed = State.FollowedStories.Contains(story),
+                Watched = g.Any(i => i.Watch is not null),
                 SentInSection = SentToday(sec, now), SentTotal = SentToday(null, now),
             };
             var top = chosen.Contains(Sections.Top)
@@ -313,8 +317,7 @@ public sealed class AppModel
             }
         }
         State.Pending.RemoveAll(p => !ordered.Contains(p.Section));
-        Save();
-        Magazine.Refresh();
+        SubscriptionsChanged();   // 뺀 분야의 출처 글은 바로 안 보이게(S-13)
         if (turnedOn.Count > 0) _ = BackfillMagazineAsync(turnedOn);
     }
 
@@ -325,22 +328,36 @@ public sealed class AppModel
         return (ids.Count(id => State.Enabled.GetValueOrDefault(id)), ids.Count);
     }
 
+    // MARK: 보여 줄 출처(S-13 — SourceFilter 한 곳)
+    public SourceFilter SourceFilter => ShowAllSourcesForTests ? new SourceFilter { Hidden = State.HiddenSources.ToHashSet() } : SourceFilter.Make(State, AllSources);
+    // 시험용: 출처 목록에 없는 가짜 출처 id 를 쓰는 예전 시험은 켜짐 여부를 따지지 않고 숨긴 출처만 뺀다(맥 SourceFilter.active = nil 과 같음)
+    internal bool ShowAllSourcesForTests { get; set; }
+    // 트레이 창 목록·안 읽음 수가 쓰는 최근 소식(꺼진·해지한·숨긴 출처 글은 빠짐, 지우지는 않음)
+    public List<NewsItem> VisibleRecent => SourceFilter.Visible(State.Recent);
+
+    // 구독(출처 켜기·끄기·해지·분야·숨기기)이 바뀐 뒤: 알림 대기열에서 빠진 출처 글을 빼고, 안 읽음 수를 맞추고, 열린 화면을 바로 갱신
+    private void SubscriptionsChanged()
+    {
+        var f = SourceFilter;
+        State.Pending.RemoveAll(p => !f.Shows(p.Item.SourceId));
+        State.Unread = Math.Min(State.Unread, f.Visible(State.Recent).Count(i => !IsRead(i)));
+        Save();
+        Magazine.Refresh();
+    }
+
     // MARK: 바로 줄이기(G-11)
     public void HideSource(string id)
     {
         if (State.HiddenSources.Contains(id)) return;
         State.HiddenSources.Add(id);
         State.Recent.RemoveAll(i => i.SourceId == id);
-        State.Pending.RemoveAll(p => p.Item.SourceId == id);
-        Save();
-        Magazine.Refresh();
+        SubscriptionsChanged();
     }
 
     public void UnhideSource(string id)
     {
         State.HiddenSources.Remove(id);
-        Save();
-        Magazine.Refresh();
+        SubscriptionsChanged();
     }
 
     public void LessOf(string section) =>
@@ -410,12 +427,15 @@ public sealed class AppModel
     {
         var mute = Words(State.Settings.MuteKeywords);
         var must = Words(State.Settings.MustKeywords);
+        var watch = WatchWords.Normalized(State.Settings.WatchKeywords);
         var o = new List<NewsItem>();
         foreach (var it in items)
         {
             var text = $"{it.Title} {it.TitleKo ?? ""} {it.Summary}".ToLowerInvariant();
             if (mute.Any(text.Contains)) continue;
-            o.Add(must.Any(text.Contains) ? it with { Important = true } : it);
+            var x = must.Any(text.Contains) ? it with { Important = true } : it;
+            if (watch.Count > 0) x = x with { Watch = WatchWords.Match(x, watch) };
+            o.Add(x);
         }
         return o;
     }
@@ -423,7 +443,7 @@ public sealed class AppModel
     // 낱말 설정이 바뀌면 이미 받은 최근 목록에도 바로: ★ 다시 매기고, '알리지 않음' 낱말이 든 기사는 목록에서 뺌
     public void ReapplyKeywords()
     {
-        State.Recent = ApplyKeywords(State.Recent.Select(i => i with { Important = null }));
+        State.Recent = ApplyKeywords(State.Recent.Select(i => i with { Important = null, Watch = null }));
         Save();
     }
 
@@ -627,6 +647,7 @@ public sealed class AppModel
         if (State.SnoozeUntil is { } s && s <= now) { State.SnoozeUntil = null; Save(); }
         if (now.ToLocalTime().Minute % 30 == 0) _ = Task.Run(() => Magazine.PublishDue()); // 지난 호 발행(M-05)
         DeliverBundles();   // 분야 묶음 시각이 지났으면 고인 소식을 한 방울로(G-07)
+        DeliverWatchDigest();   // 지켜볼 낱말 하루 정리(N-27)
         var st = State.Settings;
         if (!st.DigestEnabled) return;
         var local = now.ToLocalTime();
@@ -639,6 +660,25 @@ public sealed class AppModel
         Ui.ShowDigest(items.Count); // C-21
     }
 
+    // 지켜볼 낱말 하루 정리(N-27): 아침 브리핑 시각(브리핑을 꺼도 그 시각)에 지난 24시간 동안 낱말마다 걸린 소식 수.
+    // 조용한 때면 끝난 뒤 그날 안에 다시 시도. 정리 물방울은 세 개까지(낱말 순서), 숨긴 출처 제외
+    public void DeliverWatchDigest()
+    {
+        var words = WatchWords.Normalized(State.Settings.WatchKeywords);
+        var now = Now();
+        var local = now.ToLocalTime();
+        if (words.Count == 0 || !DigestWindow(local.Hour, State.Settings.DigestHour)
+            || (State.LastWatchDigest is { } lw && lw.ToLocalTime().Date == local.Date) || IsHushed) return;
+        State.LastWatchDigest = now;
+        Save();
+        var recent = Magazine.RecentItems(now.AddHours(-24));   // 보이는 출처만(S-13)
+        foreach (var (word, items) in WatchWords.Digest(recent, words).Take(3))
+        {
+            if (State.Settings.Style == ToastStyle.Drop) Ui.ShowWatch(word, items, State.Settings.Sound);
+            else Ui.PostWatch(word, items, State.Settings.Sound);
+        }
+    }
+
     // 브리핑 시간대(C-21): 정한 시각부터 정오 전까지(정오 이후 시각이면 그 한 시간). 늦게 켜도 저녁에 아침 브리핑이 뜨지 않게
     public static bool DigestWindow(int hour, int digestHour) => hour >= digestHour && hour < Math.Max(12, digestHour + 1);
 
@@ -648,14 +688,15 @@ public sealed class AppModel
         get
         {
             var cutoff = Now().AddHours(-24);
-            return State.Recent.Where(i => (i.Date ?? DateTimeOffset.MinValue) > cutoff).ToList();
+            return VisibleRecent.Where(i => (i.Date ?? DateTimeOffset.MinValue) > cutoff).ToList();   // 보이는 출처만(S-13)
         }
     }
 
     // H-01
     public void OpenLatestUnread()
     {
-        if ((State.Recent.FirstOrDefault(i => !IsRead(i)) ?? State.Recent.FirstOrDefault()) is { } it) Open(it);
+        var list = VisibleRecent;   // 꺼진 출처 글은 열지 않음(S-13)
+        if ((list.FirstOrDefault(i => !IsRead(i)) ?? list.FirstOrDefault()) is { } it) Open(it);
     }
 
     // MARK: 읽음·저장(C-23·C-24)
@@ -779,7 +820,7 @@ public sealed class AppModel
         State.Enabled.Remove(id);
         State.Notify.Remove(id);
         State.Seeded.RemoveAll(s => s == id);
-        Save();
+        SubscriptionsChanged();   // 해지한 채널 글은 바로 빠짐(S-13)
     }
 
     // U-08: 창을 열면 안 읽음 수 초기화
@@ -793,7 +834,7 @@ public sealed class AppModel
     public void SetEnabled(string id, bool on)
     {
         State.Enabled[id] = on;
-        Save();
+        SubscriptionsChanged();   // 끄면 그 출처 글이 목록·매거진에서 바로 빠지고, 다시 켜면 돌아옴(S-13)
         if (on) _ = CheckAllAsync();
     }
 
@@ -804,6 +845,17 @@ public sealed class AppModel
         Focus.Invalidate();
         Save();
         if (State.Settings.IntervalMinutes != before.IntervalMinutes) RestartLoop();
+    }
+
+    // 상태를 통째로 바꾼다(내 기록 가져오기·되돌리기, P-08 — 맥 replaceState)
+    public void ReplaceState(Func<AppState, AppState> change)
+    {
+        var interval = State.Settings.IntervalMinutes;
+        State = change(State);
+        Focus.Invalidate();
+        Save();
+        if (State.Settings.IntervalMinutes != interval && loop is not null) RestartLoop();
+        Magazine.Refresh();
     }
 
     // 견본 카드(N-15). 실제 기사를 다시 띄우면 같은 소식이 또 온 것처럼 보이므로 쓰지 않는다

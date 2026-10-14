@@ -26,6 +26,8 @@
     'moon.stars': '<path fill="currentColor" d="M17 15.5A7 7 0 0 1 8.5 5a7 7 0 1 0 8.5 10.5z"/><path d="M17.5 3.5v3M16 5h3M20 9v2M19 10h2"/>',
     sparkles: '<path d="M10 4l1.6 4.4L16 10l-4.4 1.6L10 16l-1.6-4.4L4 10l4.4-1.6zM18 14l.8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8z"/>',
     'arrow.up.right': '<path d="M7 17L17 7M9 7h8v8"/>',
+    // 지켜볼 낱말(N-27)
+    eye: '<path d="M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12s-3.5 6.5-9.5 6.5S2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/>',
     filter: '<path d="M4 6h16M7 12h10M10 18h4"/>',
     sort: '<path d="M8 4v16M4 8l4-4 4 4M16 20V4M12 16l4 4 4-4"/>',
     clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',

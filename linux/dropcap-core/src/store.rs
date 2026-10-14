@@ -156,6 +156,8 @@ pub struct AppState {
     pub last_check: Option<DateTime<Utc>>,
     pub errors: HashMap<String, String>,
     pub unread: i64,
+    #[serde(rename = "unreadKeys")]
+    pub unread_keys: Vec<String>, // 안 읽음 수에 든 소식(출처를 껐다 켜도 수가 맞게 — 예전 파일엔 없음, S-13)
     pub read: HashMap<String, f64>, // 읽은 기사 key → 읽은 시각
     pub saved: Vec<NewsItem>,       // 나중에 읽기
     #[serde(rename = "customSources")]
@@ -213,6 +215,7 @@ impl<'de> Deserialize<'de> for AppState {
             last_check: date_field(m, "lastCheck"),
             errors: field(m, "errors").unwrap_or_default(),
             unread: field(m, "unread").unwrap_or(0),
+            unread_keys: field(m, "unreadKeys").unwrap_or_default(),
             read,
             saved: list_field(m, "saved"),
             custom_sources: list_field(m, "customSources"),

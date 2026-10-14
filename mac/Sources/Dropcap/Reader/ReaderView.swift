@@ -17,6 +17,7 @@ final class ReaderModel: ObservableObject {
     @Published var engine = ""
     @Published var cover: String?        // 표지 사진(피드 → 매거진 기록 → 기사 머리 대표 사진)
     @Published var paywalled = false     // 맛보기만 나옴(유료벽 뒤)
+    @Published var failure: ReaderFailure?
     @Published var alternatives: [NewsItem] = [] // 같은 스토리의 무료 보도(D-9)
     var paywall: PaywallKind?
     private var token: UUID?
@@ -50,6 +51,7 @@ final class ReaderModel: ObservableObject {
         summarizing = a.summarizing
         summary = a.fallback
         paywalled = a.paywalled == true
+        failure = a.failure
         if !a.blocks.isEmpty { blocks = a.blocks }
         let next: Phase
         switch a.stage {
@@ -72,10 +74,23 @@ final class ReaderModel: ObservableObject {
 
     // 상단바 목록의 기사 정보에는 대표 사진이 비어 있을 수 있다(매거진만 기사 머리에서 찾아 둠).
     // 그때 본문의 첫 그림(기자 프로필 등)을 표지로 쓰던 문제가 있어, 대표 사진을 먼저 찾는다.
+    // 피드 사진이 작은 미리보기거나 받지 못하면(8MB 넘는 원본 등) 기사 머리 대표 사진으로 바꾼다(READSWEEP)
     private func findCover() async {
-        if let i = item.image, !ImageKey.isJunk(i) { cover = i; return }
-        if let s = Magazine.shared.storedImage(item.key), !ImageKey.isJunk(s) { cover = s; return }
-        guard !item.link.isEmpty, let og = await FeedService.shared.ogImage(item.link), !ImageKey.isJunk(og) else { return }
+        var known: String?
+        if let i = item.image, !ImageKey.isJunk(i) { known = i }
+        else if let s = Magazine.shared.storedImage(item.key), !ImageKey.isJunk(s) { known = s }
+        var knownLoads = false
+        if let known {
+            cover = known
+            let img = await ImageLoader.shared.image(known)
+            if let img, CoverPick.bigEnough(img) { return }
+            knownLoads = img != nil
+        }
+        guard !item.link.isEmpty, let og = await CoverPick.ogImage(item.link), !ImageKey.isJunk(og), og != known,
+              let img = await ImageLoader.shared.image(og), !knownLoads || CoverPick.bigEnough(img) else {
+            if known != nil, !knownLoads { withAnimation(.easeOut(duration: 0.3)) { cover = nil } } // 깨진 사진 자리를 남기지 않는다
+            return
+        }
         withAnimation(.easeOut(duration: 0.3)) { cover = og }
     }
 
@@ -479,6 +494,8 @@ struct ReaderView: View {
         var out = BodyCleanup.analyze(blocks).skip
         if let c = coverURL, let dup = blocks.firstIndex(where: { $0.type == .img && ImageKey.same($0.src, c) }) { out.insert(dup) }
         for (i, b) in blocks.enumerated() where b.type == .img && ImageKey.isJunk(b.src) { out.insert(i) } // 기자 프로필·로고 같은 잡그림은 싣지 않음
+        // 뺀 그림 바로 뒤의 사진 설명도 함께 뺀다(사진 없이 설명만 남지 않게)
+        for i in out where i + 1 < blocks.count && blocks[i].type == .img && blocks[i + 1].type == .cap { out.insert(i + 1) }
         return out
     }
 
@@ -522,8 +539,8 @@ struct ReaderView: View {
                 Text(text).font(bf(17)).lineSpacing(8 * lineFactor).textSelection(.enabled)
             }
             let blocked = ArticleExtractor.blockedHosts.contains(URL(string: model.item.link)?.host?.lowercased() ?? "")
-            Text(blocked ? "이 사이트는 앱에서 본문을 가져가지 못하게 막아 두었습니다. 위는 피드가 준 요약입니다."
-                         : "이 기사는 본문을 추리지 못했습니다(유료 기사·차단 등). 위는 피드가 준 요약입니다.")
+            let why = blocked ? .blocked : (model.failure ?? .unknown)
+            Text(why.message)
                 .font(.app(13)).foregroundStyle(.secondary)
             let foreign = Translator.looksForeign(model.originalTitle)
             HStack {
@@ -531,6 +548,9 @@ struct ReaderView: View {
                     .buttonStyle(.borderedProminent)
                 if foreign, let u = model.translatedPageURL {
                     Button("번역된 웹페이지로 보기") { ExternalLink.open(u.absoluteString) }
+                }
+                if why.retryable {
+                    Button("다시 시도") { Task { await model.load() } }
                 }
             }
             .controlSize(.large)

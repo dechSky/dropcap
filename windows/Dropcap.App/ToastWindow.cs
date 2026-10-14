@@ -69,6 +69,7 @@ internal sealed class ToastWindow : IDisposable
     public void ShowDigest(int count, bool sound) { Prepare(); engine.ShowDigest(count, sound, Now); Start(); }
     public void ShowWelcome() { Prepare(); engine.ShowWelcome(Now); Start(); }
     public void ShowBundle(string section, IReadOnlyList<NewsItem> items, bool sound) { Prepare(); engine.ShowBundle(section, items, sound, Now); Start(); }
+    public void ShowWatch(string word, IReadOnlyList<NewsItem> items, bool sound) { Prepare(); engine.ShowWatch(word, items, sound, Now); Start(); }
 
     private void Prepare()
     {

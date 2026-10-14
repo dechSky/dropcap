@@ -10,6 +10,7 @@ internal sealed class SystemNotifier
     private bool registered;
     public event Action<string>? Invoked;   // 누른 기사의 key
     public event Action<string>? BundleInvoked;   // 누른 묶음의 분야
+    public event Action<string>? SearchInvoked;   // 누른 지켜볼 낱말 정리의 낱말(N-27)
 
     public void Register()
     {
@@ -20,6 +21,7 @@ internal sealed class SystemNotifier
             {
                 if (e.Arguments.TryGetValue("key", out var key)) Invoked?.Invoke(key);
                 else if (e.Arguments.TryGetValue("section", out var sec)) BundleInvoked?.Invoke(sec);
+                else if (e.Arguments.TryGetValue("search", out var w)) SearchInvoked?.Invoke(w);
             };
             AppNotificationManager.Default.Register();
             registered = true;
@@ -64,6 +66,19 @@ internal sealed class SystemNotifier
             .AddArgument("section", section)
             .AddText(Strings.Bundle(section, items.Count))
             .AddText(string.Join("\n", items.Take(3).Select(i => i.DisplayTitle)));
+        if (!sound) b.MuteAudio();
+        Show(b.BuildNotification());
+    }
+
+    // 지켜볼 낱말 하루 정리(N-27): "오늘 ○○ 소식 3건" + 제목 2줄, 누르면 매거진 검색
+    public void PostWatch(string word, IReadOnlyList<NewsItem> items, bool sound)
+    {
+        Register();
+        if (!registered || items.Count == 0) return;
+        var b = new AppNotificationBuilder()
+            .AddArgument("search", word)
+            .AddText(Strings.Watch(word, items.Count))
+            .AddText(string.Join("\n", items.Take(2).Select(i => i.DisplayTitle)));
         if (!sound) b.MuteAudio();
         Show(b.BuildNotification());
     }

@@ -70,6 +70,28 @@ pub fn words(list: &[String]) -> Vec<String> {
 }
 
 // '알리지 않음' 낱말이 든 소식은 빼고, '꼭 알림' 낱말이 든 소식은 중요 표시(번역 뒤 제목·한국어 제목·요약)
+// 보여 줄 소식: 출처 거르기 + '알리지 않음' 낱말(지우지 않고 거르기만)
+pub fn visible(items: &[NewsItem], filter: &crate::source_filter::SourceFilter, mute: &[String]) -> Vec<NewsItem> {
+    let m = words(mute);
+    filter
+        .visible(items)
+        .into_iter()
+        .filter(|it| {
+            let text = format!("{} {} {}", it.title, it.title_ko.as_deref().unwrap_or(""), it.summary).to_lowercase();
+            !m.iter().any(|w| text.contains(w))
+        })
+        .collect()
+}
+
+// 안 읽음 수: 어떤 소식이 들었는지 알면(unread_keys) 지금 보이는 것만 세고, 모르면(예전 파일) 줄이기만
+pub fn recount_unread(unread: i64, keys: &[String], visible_unread: &[NewsItem]) -> i64 {
+    if keys.is_empty() {
+        return unread.min(visible_unread.len() as i64);
+    }
+    let counted: std::collections::HashSet<&String> = keys.iter().collect();
+    visible_unread.iter().filter(|i| counted.contains(&i.key())).count() as i64
+}
+
 pub fn apply_keywords(items: Vec<NewsItem>, settings: &Settings) -> Vec<NewsItem> {
     let mute = words(&settings.mute_keywords);
     let must = words(&settings.must_keywords);
@@ -416,6 +438,10 @@ impl AppModel {
             recent.truncate(RECENT_LIMIT);
             st.recent = recent;
             st.unread += listed.len() as i64;
+            let mut keys = std::mem::take(&mut st.unread_keys);
+            keys.extend(listed.iter().map(|i| i.key()));
+            let cut = keys.len().saturating_sub(RECENT_LIMIT);
+            st.unread_keys = keys.split_off(cut);
             st.last_check = Some(now);
             // 저장 파일만이 아니라 메모리의 기억도 정리(오래 켜 두면 끝없이 커지고 저장마다 정렬하던 문제)
             crate::store::trim_seen(&mut st.seen, crate::store::SEEN_LIMIT);
@@ -486,7 +512,7 @@ impl AppModel {
         }
         let chosen: std::collections::HashSet<String> = st0.sections_chosen.clone().unwrap_or_default().into_iter().collect();
         let limits = st0.settings.limits();
-        let hidden: std::collections::HashSet<String> = st0.hidden_sources.iter().cloned().collect();
+        let filter = self.source_filter();
         // 같은 이야기끼리 모아 대표 하나(공식 발표 > 언론 > 국내, 그다음 최신)
         let mut order: Vec<String> = vec![];
         let mut groups: HashMap<String, Vec<NewsItem>> = HashMap::new();
@@ -506,7 +532,7 @@ impl AppModel {
             let g: &Vec<NewsItem> = &groups[&story];
             let Some(rep) = g.iter().min_by(|a, b| tier_rank(&a.tier).cmp(&tier_rank(&b.tier)).then(b.date_or_past().cmp(&a.date_or_past()))).cloned() else { continue };
             let sec = self.notify_section(&rep);
-            let cov = magazine::region_coverage(&self.db, &rep, &hidden);
+            let cov = magazine::region_coverage(&self.db, &rep, &filter);
             let input = notify_policy::Input {
                 chosen: chosen.contains(&sec),
                 policy: st.section_policy.get(&sec).cloned().unwrap_or_default(),
@@ -651,7 +677,7 @@ impl AppModel {
             }
             s.pending.retain(|p| ordered.contains(&p.section));
         });
-        self.send(UiEvent::Layout);
+        self.subscriptions_changed(); // 뺀 분야의 출처 글은 바로 안 보이게
         if !turned_on.is_empty() {
             let me = self.clone();
             self.rt.spawn(async move { me.backfill_magazine_only(Some(turned_on)).await });
@@ -670,15 +696,49 @@ impl AppModel {
         if self.state.lock().unwrap().hidden_sources.iter().any(|h| h == id) {
             return;
         }
-        self.mutate(|s| {
-            s.hidden_sources.push(id.to_string());
-            s.recent.retain(|i| i.source_id != id);
-            s.pending.retain(|p| p.item.source_id != id);
-        });
-        self.send(UiEvent::Layout);
+        // 지우지 않고 거르기만(SourceFilter): 숨김을 풀면 목록에 그대로 돌아온다
+        self.mutate(|s| s.hidden_sources.push(id.to_string()));
+        self.subscriptions_changed();
     }
     pub fn unhide_source(&self, id: &str) {
         self.mutate(|s| s.hidden_sources.retain(|h| h != id));
+        self.subscriptions_changed();
+    }
+
+    // MARK: 보여 줄 출처(SourceFilter 한 곳, S-13)
+    pub fn source_filter(&self) -> crate::source_filter::SourceFilter {
+        let sources = self.all_sources();
+        crate::source_filter::SourceFilter::make(&self.state.lock().unwrap(), &sources)
+    }
+
+    /// 상단바 목록·안 읽음 수·트레이가 쓰는 최근 소식(꺼진·지운·숨긴 출처 글과 '알리지 않음' 낱말 글은 빠짐, 지우지는 않음)
+    pub fn visible_recent(&self) -> Vec<NewsItem> {
+        let f = self.source_filter();
+        let st = self.state.lock().unwrap();
+        visible(&st.recent, &f, &st.settings.mute_keywords)
+    }
+
+    // 스토리 보도 중 지금 보이는 출처 것
+    pub fn story_items(&self, id: &str) -> Vec<NewsItem> {
+        magazine::story_items(&self.db, id, &self.source_filter())
+    }
+
+    // 검색(보이는 출처만)
+    pub fn search(&self, q: &str, limit: i64) -> Vec<NewsItem> {
+        self.source_filter().visible(&self.db.search(q, limit))
+    }
+
+    // 구독(출처 켜기·끄기·지우기·분야·숨기기)이 바뀐 뒤: 알림 대기열에서 빠진 출처 글을 빼고, 안 읽음 수를 맞추고, 열린 화면을 바로 갱신
+    pub fn subscriptions_changed(&self) {
+        let f = self.source_filter();
+        let visible_unread: Vec<NewsItem> = {
+            let st = self.state.lock().unwrap();
+            visible(&st.recent, &f, &st.settings.mute_keywords).into_iter().filter(|i| !st.read.contains_key(&i.key())).collect()
+        };
+        self.mutate(|s| {
+            s.pending.retain(|p| f.shows(&p.item.source_id));
+            s.unread = recount_unread(s.unread, &s.unread_keys, &visible_unread); // 끄면 줄고 다시 켜면 돌아옴
+        });
         self.send(UiEvent::Layout);
     }
     pub fn less_of(&self, section: &str) {
@@ -703,6 +763,10 @@ impl AppModel {
         magazine::Editorial {
             interest: Interest { category: st.interest_category.clone(), source: st.interest_source.clone() },
             hidden: st.hidden_sources.iter().cloned().collect(),
+            filter: crate::source_filter::SourceFilter::make(
+                &st,
+                &resources::CONFIG.sources.iter().cloned().chain(st.custom_sources.iter().cloned()).collect::<Vec<_>>(),
+            ),
             chosen: st.sections_chosen.clone(),
             limits: st.settings.limits(),
         }
@@ -1024,9 +1088,9 @@ impl AppModel {
             return;
         }
         self.mutate(|s| s.last_watch_digest = Some(now));
-        let hidden: std::collections::HashSet<String> = st.hidden_sources.iter().cloned().collect();
+        let filter = self.source_filter();
         let recent: Vec<NewsItem> =
-            self.db.items(now - Duration::hours(24), None, 3000).into_iter().map(|s| s.item).filter(|i| !hidden.contains(&i.source_id)).collect();
+            self.db.items(now - Duration::hours(24), None, 3000).into_iter().map(|s| s.item).filter(|i| filter.shows(&i.source_id)).collect();
         for (word, items) in crate::watch_words::digest(&recent, &words).into_iter().take(3) {
             let sound = st.settings.sound;
             match st.settings.style {
@@ -1039,12 +1103,13 @@ impl AppModel {
     // 지난 24시간 소식
     pub fn digest_items(&self, now: DateTime<Utc>) -> Vec<NewsItem> {
         let cutoff = now - Duration::hours(24);
-        self.state().recent.into_iter().filter(|i| i.date_or_past() > cutoff).collect()
+        self.visible_recent().into_iter().filter(|i| i.date_or_past() > cutoff).collect()
     }
 
     pub fn latest_unread(&self) -> Option<NewsItem> {
         let st = self.state();
-        st.recent.iter().find(|i| !st.read.contains_key(&i.key())).or(st.recent.first()).cloned()
+        let list = self.visible_recent(); // 꺼진·숨긴 출처 글은 단축키로도 열지 않음(S-13)
+        list.iter().find(|i| !st.read.contains_key(&i.key())).or(list.first()).cloned()
     }
 
     // MARK: 읽음·저장
@@ -1069,6 +1134,7 @@ impl AppModel {
                 s.read.entry(k).or_insert(now);
             }
             s.unread = 0;
+            s.unread_keys.clear();
         });
     }
 
@@ -1095,7 +1161,10 @@ impl AppModel {
 
     pub fn mark_read(&self) {
         if self.state().unread != 0 {
-            self.mutate(|s| s.unread = 0);
+            self.mutate(|s| {
+                s.unread = 0;
+                s.unread_keys.clear();
+            });
         }
     }
 
@@ -1215,12 +1284,14 @@ impl AppModel {
             s.notify.remove(id);
             s.seeded.retain(|x| x != id);
         });
+        self.subscriptions_changed(); // 지운 채널의 글은 바로 안 보이게
     }
 
     pub fn set_enabled(self: &Arc<Self>, id: &str, on: bool) {
         self.mutate(|s| {
             s.enabled.insert(id.to_string(), on);
         });
+        self.subscriptions_changed(); // 끄면 그 출처 글이 목록·매거진에서 바로 빠지고, 다시 켜면 돌아옴
         if on {
             let me = self.clone();
             self.rt.spawn(async move { me.check_all(false).await });
@@ -1259,15 +1330,18 @@ impl AppModel {
     }
 
     // 낱말 설정이 바뀌면 이미 받은 최근 목록에도 바로: ★ 다시 매기고, '알리지 않음' 낱말이 든 기사는 목록에서 뺌
+    // '알리지 않음'은 지우지 않고 visible_recent 가 거른다(낱말을 지우면 돌아옴, 맥과 같음)
     pub fn reapply_keywords(&self) {
         self.mutate(|s| {
-            let reset: Vec<NewsItem> = s.recent.drain(..).map(|mut it| {
-                it.important = None;
-                it.watch = None;
-                it
-            }).collect();
-            s.recent = apply_keywords(reset, &s.settings);
+            let must = words(&s.settings.must_keywords);
+            let watch = crate::watch_words::normalized(&s.settings.watch_keywords);
+            for it in s.recent.iter_mut() {
+                let text = format!("{} {} {}", it.title, it.title_ko.as_deref().unwrap_or(""), it.summary).to_lowercase();
+                it.important = must.iter().any(|w| text.contains(w)).then_some(true);
+                it.watch = if watch.is_empty() { None } else { crate::watch_words::first_match(it, &watch) };
+            }
         });
+        self.subscriptions_changed();
     }
 
     // 견본 카드. 실제 기사를 다시 띄우면 같은 소식이 또 온 것처럼 보이므로 쓰지 않는다

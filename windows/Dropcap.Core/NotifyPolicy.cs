@@ -72,6 +72,7 @@ public static class NotifyPolicy
         public bool Lab { get; init; }                      // 공식 발표 등급(tier lab)
         public bool Important { get; init; }                // ★ 꼭 알림 낱말
         public bool Followed { get; init; }                 // 팔로우한 스토리
+        public bool Watched { get; init; }                  // 지켜볼 낱말에 걸림(N-27)
         public int SentInSection { get; init; }             // 오늘 이 분야에서 이미 떨어뜨린 수
         public int SentTotal { get; init; }                 // 오늘 전체
     }
@@ -81,6 +82,8 @@ public static class NotifyPolicy
 
     public static NotifyDecision Decide(Input i, PolicyLimits l)
     {
+        // 지켜볼 낱말: 고른 분야·모드와 상관없이 알린다(같은 이야기는 한 번 — 부르는 쪽이 스토리로 기억). 전체 상한이 차면 고임
+        if (i.Watched) return i.SentTotal >= l.TotalCap && !IsBig(i.Coverage, l) ? NotifyDecision.Pool : NotifyDecision.Drop;
         if (!i.Chosen) return NotifyDecision.Quiet;
         switch (i.Policy.Mode)
         {

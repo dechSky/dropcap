@@ -196,7 +196,7 @@ impl IssuePage {
                     IssueSource::Week => magazine::live_weekly(&core.db, &ed),
                     IssueSource::Fixed(i) => i,
                 };
-                let r = magazine::resolve(&core.db, &issue, &ed.hidden);
+                let r = magazine::resolve(&core.db, &issue, &ed.filter);
                 let keys: Vec<String> = r.sections.iter().flat_map(|(_, items)| items.iter().map(|i| i.key())).collect();
                 let coverage = core.db.coverage(&keys);
                 let cover_size = r.cover.as_ref().and_then(|c| c.cluster.as_ref()).and_then(|c| core.db.cluster(c)).map(|c| c.size).unwrap_or(1);

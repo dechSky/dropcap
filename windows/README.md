@@ -51,7 +51,7 @@ scripts/check-on-mac.sh                                    # 윈도우 앱 C# �
 - [ ] `DROPCAP_TEST_URL=<기사 주소>` 로 읽기 창 바로 열기. 스크립트로 본문을 그리는 사이트도 열림(느린 길).
 - [ ] 매거진(`DROPCAP_TEST_MAGAZINE=1`): 작업 표시줄에 보이고, 표지 켄 번스·지면 넘김·스크랩북 Markdown 저장.
 - [ ] 설정: 로그인할 때 자동 실행을 켜면 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\Dropcap` 이 생김. Pretendard 끄기.
-- [ ] Ollama(`http://127.0.0.1:11434`)가 켜져 있으면 읽기 창에 3줄 요약 상자, 없으면 숨김. 모델은 `DROPCAP_OLLAMA_MODEL` 로 고를 수 있음.
+- [ ] Ollama(`http://127.0.0.1:11434`)가 켜져 있으면 읽기 창에 3줄 요약 상자, 없으면 숨김. 모델은 `DROPCAP_OLLAMA_MODEL` 로 고를 수 있음(이름에 cloud 가 든 Ollama 클라우드 모델은 글을 바깥으로 보내므로 쓰지 않음).
 - [ ] 처음 실행(빈 `DROPCAP_DATA_DIR`) → 관심 분야 고르기 창. 고르면 그 분야 기본 출처만 켜지고 매거진이 채워짐(알림 없음). 설정 › 분야에서 다시 열림.
 - [ ] `DROPCAP_TEST_SECTIONS=top,economy` · `DROPCAP_TEST_BUNDLE=economy` → "경제 7건" 묶음 물방울, 누르면 매거진 경제 지면(`DROPCAP_TEST_MAG_SECTION=economy`).
 - [ ] 물방울·트레이 창 줄·매거진 카드 오른쪽 클릭 → 바로 줄이기(이 출처 숨기기·이 분야 덜 받기·이 낱말 알리지 않기).
@@ -66,6 +66,9 @@ scripts/check-on-mac.sh                                    # 윈도우 앱 C# �
 - [ ] 분야 고르기·매거진 분야 머리의 유리 카드(흐린 사진·기울인 사진).
 - [ ] 키보드: 트레이 창·매거진 J/K·Enter·S·O·M, 매거진 Ctrl+[ ·Ctrl+], 읽기 창 J/K(같은 창에서 바뀜)·Esc.
 - [ ] 읽기 창 짧은 글(GeekNews 등)이 기다리지 않고 열림, 막는 사이트는 6초 안에 피드 요약 화면.
+- [ ] 지켜볼 낱말(N-27): 설정 › 거르기에 낱말을 넣으면 그 낱말이 든 소식은 분야와 상관없이 알림, 트레이 창 줄에 눈 표시. 아침 브리핑 시각에 "오늘 ○○ 소식 3건" 물방울(눈 배지) → 누르면 매거진 검색이 그 낱말로.
+- [ ] 내 기록(P-08): 설정 › 일반 › 내 기록 → 내보내기(.json 저장) → 같은 파일 가져오기 = "새로 더할 것이 없었습니다", '마지막 가져오기 되돌리기'. Mac 에서 내보낸 파일도 가져와짐.
+- [ ] 큰 응답(S-12): 10MB 넘는 피드는 받다가 멈추고 설정 › 구독에 "응답이 너무 커서 받다가 멈춤(10MB 넘음)".
 
 시험용 환경 변수(Q-03): `DROPCAP_DATA_DIR`, `DROPCAP_TEST_TOAST`, `DROPCAP_TEST_BURST`, `DROPCAP_TEST_URL`, `DROPCAP_TEST_MAGAZINE`(값이 있으면 그 지면), `DROPCAP_TEST_SETTINGS`, `DROPCAP_TEST_MENU`, `DROPCAP_TEST_SUBSCRIBE`(추천 채널 id 쉼표 목록), `DROPCAP_TEST_SECTIONS`(쉼표 목록 — 고르기 없이 고른 것으로), `DROPCAP_TEST_ONBOARD`, `DROPCAP_TEST_BUNDLE`(분야), `DROPCAP_TEST_MAG_SECTION`(분야), `DROPCAP_TEST_WELCOME`, `DROPCAP_TEST_FOCUS`(fullscreen·sharing·calendar·none — 회의 중 감지 흉내), `DROPCAP_REDUCE_MOTION=1`, `DROPCAP_DEVTOOLS=1`(웹 화면 개발자 도구).
 

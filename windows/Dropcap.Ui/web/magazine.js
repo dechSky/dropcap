@@ -710,7 +710,9 @@
     quietImages();
   });
   // 열린 창을 다른 지면으로(묶음 알림을 누르면 section:<id>)
-  bridge.on('go', (p) => { hideFresh(); go(String(p || 'today')); });
+  // search:<낱말> 이면 그 낱말로 검색 화면(지켜볼 낱말 정리 물방울, N-27)
+  const goTo = (p, opts) => { if (p.startsWith('search:')) { query = p.slice(7); go('search', { force: true }); } else go(p, opts); };
+  bridge.on('go', (p) => { hideFresh(); goTo(String(p || 'today')); });
   bridge.on('shown', () => bridge.send('sidebar').then(renderSide));
   bridge.on('photos', (map) => { if (isIssue(page) && map) patchPhotos(map); });
 
@@ -759,5 +761,5 @@
 
   // 첫 지면: 주소 ?page=… (앱이 열 때 정함 — 묶음 알림이면 section:<id>), 없으면 오늘
   const first = new URLSearchParams(location.search).get('page') || 'today';
-  bridge.send('ready').then((s) => { renderSide(s); go(first, { force: true }); });
+  bridge.send('ready').then((s) => { renderSide(s); goTo(first, { force: true }); });
 })();

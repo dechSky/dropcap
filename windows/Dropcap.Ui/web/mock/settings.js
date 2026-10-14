@@ -1,7 +1,7 @@
 // 미리 보기 전용(WebView2 밖에서만): 맥·브라우저에서 settings.html 을 열어 모양을 확인
 if (!(window.chrome && window.chrome.webview)) {
   const st = { style: 'drop', position: 'center', sound: true, interval: 5, pretendard: true, launchAtLogin: false, autoQuietFullscreen: true, autoQuietSharing: true,
-    must: 'GPT-6, Claude', mute: '', quietEnabled: false, quietStart: 23, quietEnd: 7, digestEnabled: true, digestHour: 9 };
+    watch: '엔비디아', must: 'GPT-6, Claude', mute: '', quietEnabled: false, quietStart: 23, quietEnd: 7, digestEnabled: true, digestHour: 9 };
   const enabled = { openai: true, anthropic: true, deepmind: true, nvidia: true, verge: true, aitimes: true, 'custom-1': true, 'custom-2': false };
   const notify = { 'custom-2': false };
   const subscribed = new Set(['cat-yt-2mp']);
@@ -64,6 +64,7 @@ if (!(window.chrome && window.chrome.webview)) {
         pretendard: st.pretendard, summary: 'Ollama 가 없어 요약 칸을 숨깁니다', summaryOn: false, launchAtLogin: st.launchAtLogin,
         autoQuietFullscreen: st.autoQuietFullscreen, autoQuietSharing: st.autoQuietSharing, autoQuietCalendar: false, calendarSupported: false,
         autoQuietNote: "이때 온 소식은 물방울 없이 '안 읽음'에 쌓이고, 알릴 만한 소식은 그 분야 묶음으로 모입니다.",
+        backup: { intro: '계정도 서버도 없습니다. 모든 기록은 이 PC 안에만 있습니다.', note: '다른 PC·Mac 으로 옮길 때: … JSON 파일 하나로 내보내고, 다른 기기에서 가져오면 없는 것만 더합니다.', canUndo: !!st.imported, message: st.backupMsg || null },
         calendarNote: '윈도우 판은 설치 없이 푸는 앱이라 윈도우 캘린더(일정) 권한을 받을 수 없어 쓸 수 없습니다.',
       },
       sections: sections(),
@@ -77,7 +78,7 @@ if (!(window.chrome && window.chrome.webview)) {
         })),
       },
       filters: {
-        must: st.must, mute: st.mute, quietEnabled: st.quietEnabled, quietStart: st.quietStart, quietEnd: st.quietEnd,
+        must: st.must, mute: st.mute, watch: st.watch, quietEnabled: st.quietEnabled, quietStart: st.quietStart, quietEnd: st.quietEnd,
         hours: Array.from({ length: 24 }, (_, h) => ({ value: h, label: `${String(h).padStart(2, '0')}:00` })),
         digestEnabled: st.digestEnabled, digestHour: st.digestHour,
         digestHours: [5, 6, 7, 8, 9, 10, 11, 12].map((h) => ({ value: h, label: h === 12 ? '낮 12시' : `오전 ${h}시` })),
@@ -92,7 +93,10 @@ if (!(window.chrome && window.chrome.webview)) {
     switch (cmd) {
       case 'ready': case 'view': return view();
       case 'set': st[a.key] = a.value; return null;
-      case 'keywords': st.must = split(a.must); st.mute = split(a.mute); return { must: st.must, mute: st.mute };
+      case 'exportBackup': st.backupMsg = '내보냈습니다'; return null;
+      case 'importBackup': st.imported = true; st.backupMsg = '가져왔습니다 — 새로 더할 것이 없었습니다(모두 이미 있음)'; return null;
+      case 'undoImport': st.imported = false; st.backupMsg = '가져오기 전으로 되돌렸습니다'; return null;
+      case 'keywords': st.must = split(a.must); st.mute = split(a.mute); st.watch = split(a.watch || ''); return { must: st.must, mute: st.mute, watch: st.watch };
       case 'setEnabled': enabled[a.id] = a.on; return null;
       case 'setNotify': notify[a.id] = a.on; return null;
       case 'setPolicy': policy[a.id][a.key] = a.value; return null;

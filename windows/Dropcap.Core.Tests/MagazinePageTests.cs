@@ -45,7 +45,7 @@ public class MagazinePageTests : IDisposable
         db = new Database(System.IO.Path.Combine(tmp.Path, "magazine.sqlite"));
         mag = new Magazine(db);
         book = new Scrapbook(db);
-        model = new AppModel(new FakeUi(), mag, new AppState(), persist: false);
+        model = new AppModel(new FakeUi(), mag, new AppState(), persist: false) { ShowAllSourcesForTests = true };
         // 분야 사진은 바깥 피드를 받지 않게 비워 둔다(유리 띠 사진은 MagazineCatchupTests)
         page = new MagazinePage(model, mag, book, platform, bridge) { LoadPhotos = _ => { }, PhotoUrl = _ => null };
         bridge.Register(page);

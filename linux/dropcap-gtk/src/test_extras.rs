@@ -132,11 +132,11 @@ async fn paywall_reader(dir: &std::path::Path) {
     let core = ui().core.clone();
     bg(
         async move {
-            let hidden = core.state().hidden_sources.into_iter().collect();
+            let filter = core.source_filter();
             let recent: Vec<NewsItem> = core.db.items(chrono::Utc::now() - chrono::Duration::days(3), None, 3000).into_iter().map(|s| s.item).collect();
             let walled: Vec<NewsItem> = recent.iter().filter(|i| core.paywall.kind(i).is_some()).cloned().collect();
             log::info!("[시험] 유료 표시 기사 {}건 / {}건", walled.len(), recent.len());
-            let with_alts: Vec<NewsItem> = walled.into_iter().filter(|i| !core.paywall.alternatives(i, &hidden).is_empty()).collect();
+            let with_alts: Vec<NewsItem> = walled.into_iter().filter(|i| !core.paywall.alternatives(i, &filter).is_empty()).collect();
             with_alts.iter().find(|i| core.paywall.kind(i).map(|k| k.blocks()).unwrap_or(false)).cloned().or_else(|| with_alts.first().cloned())
         },
         move |pick| {
@@ -164,7 +164,7 @@ async fn today(dir: &std::path::Path) {
     let core = ui().core.clone();
     let ed = core.editorial();
     let issue = dropcap_core::magazine::live_daily(&core.db, &ed);
-    let r = dropcap_core::magazine::resolve(&core.db, &issue, &ed.hidden);
+    let r = dropcap_core::magazine::resolve(&core.db, &issue, &ed.filter);
     let keys = dropcap_core::today_issue::keys(r.cover.as_ref().map(|c| c.item.key()).as_deref(), &r.sections, &core.chosen_sections());
     let all: Vec<NewsItem> = r.cover.iter().map(|c| c.item.clone()).chain(r.sections.iter().flat_map(|(_, i)| i.clone())).collect();
     for k in &keys {
@@ -181,7 +181,7 @@ async fn brief(dir: &std::path::Path) {
     let core = ui().core.clone();
     let ed = core.editorial();
     let issue = dropcap_core::magazine::live_daily(&core.db, &ed);
-    let r = dropcap_core::magazine::resolve(&core.db, &issue, &ed.hidden);
+    let r = dropcap_core::magazine::resolve(&core.db, &issue, &ed.filter);
     let Some((sec, items)) = r
         .sections
         .iter()

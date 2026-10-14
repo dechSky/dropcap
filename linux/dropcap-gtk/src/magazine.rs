@@ -476,7 +476,7 @@ pub fn seed_test_scraps() {
         async move {
             let ed = core.editorial();
             let issue = dropcap_core::magazine::live_daily(&core.db, &ed);
-            let r = dropcap_core::magazine::resolve(&core.db, &issue, &ed.hidden);
+            let r = dropcap_core::magazine::resolve(&core.db, &issue, &ed.filter);
             r.sections.into_iter().flat_map(|(_, items)| items).take(3).collect::<Vec<_>>()
         },
         |items| {

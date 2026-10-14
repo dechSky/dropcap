@@ -16,11 +16,49 @@ struct Article: Codable {
     var blocks: [Block]
 }
 
+// 한 번의 본문 추리기가 어떻게 흘러갔는지(전수 점검 READSWEEP 와 기록용)
+struct ExtractTrace: Codable {
+    var path = "none"          // fast · slow · none
+    var http: Int?             // 빠른 길에서 받은 거절 코드
+    var fetchError: String?    // 빠른 길에서 받기 자체가 실패한 까닭
+    var offline = false        // 그 까닭이 연결 문제(URLError: 끊김·시간 초과·이름 못 찾음)
+    var visible = 0            // 받은 HTML 의 보이는 글자 수(대략)
+    var shortText: Int?        // 추렸지만 글이 너무 짧아 버린 길이
+    var skipped: String?       // 느린 길을 건너뛴 까닭
+    var fastSeconds = 0.0
+    var slowSeconds = 0.0
+
+    // 못 추렸을 때 읽기 창에 알릴 까닭(ReaderFailure)
+    var failure: ReaderFailure {
+        if let c = http { return [401, 403, 429].contains(c) ? .blocked : ([404, 410].contains(c) ? .gone : .unknown) }
+        if skipped == "blockedHost" { return .blocked }
+        if shortText != nil { return .noText }
+        if offline { return .network }
+        return .unknown
+    }
+}
+
+enum ReaderFailure: String, Codable {
+    case blocked, gone, noText, network, unknown
+
+    var message: String {
+        switch self {
+        case .blocked: return "이 사이트는 앱에서 본문을 가져가지 못하게 막아 두었습니다. 위는 피드가 준 요약입니다."
+        case .gone: return "기사 페이지가 없어졌습니다(지워졌거나 주소가 바뀜). 위는 피드가 준 요약입니다."
+        case .noText: return "본문 글이 거의 없는 기사입니다(영상·사진 기사 등). 원문에서 보세요."
+        case .network: return "기사 페이지를 받지 못했습니다(연결 문제). 잠시 뒤 다시 시도해 보세요."
+        case .unknown: return "이 기사는 본문을 추리지 못했습니다(유료 기사·차단 등). 위는 피드가 준 요약입니다."
+        }
+    }
+    var retryable: Bool { self == .network || self == .unknown }
+}
+
 // 화면에 보이지 않는 웹 보기에 기사를 띄우고 Readability 로 본문만 추린다.
 @MainActor
 final class ArticleExtractor: NSObject, WKNavigationDelegate {
     private var web: WKWebView?
     private var continuation: CheckedContinuation<Void, Never>?
+    private(set) var trace = ExtractTrace()
     private var loadDone = false // 이번 기다림이 끝났다(다 뜸·실패·시간 초과) — 늦게 등록된 기다림은 바로 깨운다(A-22)
     private static let readability = (try? String(contentsOf: Resources.url("Readability.js"), encoding: .utf8)) ?? ""
 
@@ -105,41 +143,92 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
     // 2) 느린 길: 스크립트로 본문을 그리는 사이트만 실제로 띄운다. 그림·동영상·글꼴은 막고, 본문이 생기는 대로 바로 꺼낸다.
     // allowScripts: 사용자가 직접 연 기사일 때만 true. 미리 받기에서는 사이트의 스크립트를 돌리지 않는다.
     func extract(_ url: URL, allowScripts: Bool = true) async -> Article? {
-        guard await URLSafety.resolvesPublic(url) else { return nil }
+        trace = ExtractTrace()
+        guard await URLSafety.resolvesPublic(url) else { trace.skipped = "unsafe"; return nil }
         let t0 = Date()
+        defer { if trace.path == "slow" || trace.skipped != nil { trace.slowSeconds = Date().timeIntervalSince(t0) - trace.fastSeconds } }
         let host = url.host?.lowercased() ?? ""
         var refused = false // 사이트가 접근을 거부(401·403·429)
         var richPage = false // 받은 HTML 에 글이 이미 많다(스크립트로 그리는 빈 껍데기가 아님)
         do {
             if let got = try await FeedService.shared.fetchWithEncoding(url.absoluteString, limit: .page) {
-                if let art = await run(data: got.data, encoding: got.encoding ?? Self.sniffCharset(got.data), base: url) {
+                let art = await run(data: got.data, encoding: got.encoding ?? Self.sniffCharset(got.data), base: url)
+                trace.fastSeconds = Date().timeIntervalSince(t0)
+                trace.visible = Self.visibleTextLength(got.data)
+                if let art {
+                    trace.path = "fast"
                     NSLog("[기사] 빠른 길 %.2f초 %@", Date().timeIntervalSince(t0), host)
                     return art
                 }
-                richPage = Self.visibleTextLength(got.data) > 600 // 스크립트로 그리는 빈 껍데기는 보이는 글이 거의 없다
+                if let art = EmbeddedArticle.extract(got.data) { // 스크립트로 그리는 사이트가 HTML 에 실어 보낸 본문 자료
+                    trace.path = "embedded"
+                    trace.fastSeconds = Date().timeIntervalSince(t0)
+                    NSLog("[기사] 실린 본문 자료 %.2f초 %@", trace.fastSeconds, host)
+                    return art
+                }
+                richPage = trace.visible > 600 // 스크립트로 그리는 빈 껍데기는 보이는 글이 거의 없다
             }
         } catch FeedError.http(let code) where [401, 403, 429].contains(code) {
             refused = true
-        } catch {}
-        guard allowScripts else { return nil }
+            trace.http = code
+        } catch {
+            if case FeedError.http(let code) = error { trace.http = code } else { trace.fetchError = error.localizedDescription }
+            trace.offline = error is URLError
+        }
+        if trace.fastSeconds == 0 { trace.fastSeconds = Date().timeIntervalSince(t0) }
+        guard allowScripts else { trace.skipped = "noScripts"; return nil }
+        if let c = trace.http, [404, 410].contains(c) { trace.skipped = "gone"; return nil } // 없어진 페이지는 띄워 봐도 같다
         // 접근을 거부하는 사이트(예: GeekNews 403)는 느린 길도 대개 막힌다: 짧게만 시도하고, 그래도 막히면 이번 실행 동안은 바로 대체 화면
-        if Self.blockedHosts.contains(host) { NSLog("[기사] %@ 은 막힌 사이트라 건너뜀", host); return nil }
+        if Self.blockedHosts.contains(host) { trace.skipped = "blockedHost"; NSLog("[기사] %@ 은 막힌 사이트라 건너뜀", host); return nil }
         // 글이 다 들어 있는데도 못 추린 페이지는 스크립트를 돌려도 같으므로 느린 길(최대 15초)을 건너뛴다
-        if richPage { NSLog("[기사] 빠른 길 실패, 글이 있는 페이지라 느린 길 건너뜀 %@", host); return nil }
-        let art = await run(url: url, maxWait: refused ? 6 : 15)
-        if art == nil, refused { Self.blockedHosts.insert(host) }
+        if richPage { trace.skipped = "richPage"; NSLog("[기사] 빠른 길 실패, 글이 있는 페이지라 느린 길 건너뜀 %@", host); return nil }
+        trace.path = "slow"
+        let art = await run(url: url, maxWait: Self.slowWait(refused: refused, host: host))
+        Self.noteSlow(host: host, refused: refused, ok: art != nil)
         NSLog("[기사] 느린 길 %.2f초 %@ %@", Date().timeIntervalSince(t0), host, art == nil ? "실패" : "성공")
         return art
     }
 
     // 스크립트·스타일을 뺀 보이는 글자 수(대략)
-    static func visibleTextLength(_ data: Data) -> Int {
-        var h = String(decoding: data.prefix(800_000), as: UTF8.self)
-        for tag in ["script", "style", "noscript", "svg"] {
-            h = h.replacingOccurrences(of: "<\(tag)[^>]*>[\\s\\S]*?</\(tag)>", with: " ", options: [.regularExpression, .caseInsensitive])
+    // 정규식 대신 한 번 훑기: 닫히지 않은 <script 가 많은 페이지에서 정규식이 끝까지 되풀이해 훑는 일(시간 폭증)을 막는다(윈도우판과 같음)
+    nonisolated static func visibleTextLength(_ data: Data) -> Int {
+        let h = Array(String(decoding: data.prefix(800_000), as: UTF8.self).unicodeScalars)
+        let skip = ["script", "style", "noscript", "svg"].map { Array($0.unicodeScalars) }
+        func lower(_ c: Unicode.Scalar) -> Unicode.Scalar { c.value >= 65 && c.value <= 90 ? Unicode.Scalar(c.value + 32)! : c }
+        func find(_ needle: [Unicode.Scalar], from: Int) -> Int? { // 대소문자 무시
+            guard needle.count <= h.count - from else { return nil }
+            var i = from
+            while i + needle.count <= h.count {
+                var k = 0
+                while k < needle.count, lower(h[i + k]) == needle[k] { k += 1 }
+                if k == needle.count { return i }
+                i += 1
+            }
+            return nil
         }
-        h = h.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
-        return h.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression).count
+        var count = 0, space = true, i = 0
+        while i < h.count {
+            let c = h[i]
+            if c == "<" {
+                guard let close = h[i...].firstIndex(of: ">") else { break } // 닫히지 않은 꼬리표 뒤는 글이 아님
+                let tag = h[(i + 1)..<close]
+                let name = skip.first { t in
+                    tag.count >= t.count && zip(tag, t).allSatisfy { lower($0) == $1 }
+                        && (tag.count == t.count || !(tag[tag.startIndex + t.count].properties.isAlphabetic || tag[tag.startIndex + t.count].properties.numericType != nil))
+                }
+                i = close + 1
+                if let name {
+                    guard let end = find(Array("</".unicodeScalars) + name, from: i) else { break } // 끝까지 스크립트
+                    i = end + 2 + name.count
+                    i = h[i...].firstIndex(of: ">").map { $0 + 1 } ?? h.count
+                }
+                if !space { count += 1; space = true }
+                continue
+            }
+            if c.properties.isWhitespace { if !space { count += 1; space = true } } else { count += 1; space = false }
+            i += 1
+        }
+        return count
     }
 
     // <meta charset="euc-kr"> 처럼 문서 안에 적힌 인코딩을 찾는다
@@ -190,6 +279,21 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
     }
 
     @MainActor static var blockedHosts: Set<String> = []
+    @MainActor static var slowWorks: Set<String> = []        // 느린 길로 열린 적이 있는 사이트(NYT 처럼 빠른 길만 403)
+    @MainActor static var refusedFails: [String: Int] = [:]  // 거절된 뒤 느린 길도 못 연 횟수(이어서)
+
+    // 거절(401·403·429)한 사이트는 느린 길도 대개 막히니 짧게. 단, 느린 길로 열린 적이 있으면 넉넉히(READSWEEP: NYT 6초 넘는 기사 하나)
+    @MainActor static func slowWait(refused: Bool, host: String) -> TimeInterval {
+        !refused ? 15 : (slowWorks.contains(host) ? 10 : 6)
+    }
+
+    // 막힌 사이트로 기억(이번 실행 동안 바로 대체 화면)은 느린 길로 열린 적이 없고 두 번 이어서 못 열었을 때만 — 기사 하나 실패로 사이트 전체를 막지 않는다
+    @MainActor static func noteSlow(host: String, refused: Bool, ok: Bool) {
+        if ok { slowWorks.insert(host); refusedFails[host] = nil; return }
+        guard refused, !slowWorks.contains(host) else { return }
+        refusedFails[host, default: 0] += 1
+        if refusedFails[host]! >= 2 { blockedHosts.insert(host) }
+    }
 
     private func run(url: URL, maxWait: TimeInterval = 15) async -> Article? {
         let w = await makeWeb(js: true, block: ["image", "media", "font", "popup", "websocket"], id: "ainews-full")
@@ -221,10 +325,12 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
             catch { NSLog("[추출 진단] 오류 %@", String(describing: error)) }
         }
         guard let json = (try? await w.evaluateJavaScript(Self.script, in: nil, contentWorld: .defaultClient)) as? String,
-              let art = try? JSONDecoder().decode(Article.self, from: Data(json.utf8)),
-              // 짧은 글(소개글·단신)도 받는다: 글 100자 이상이면 본문으로(예전 '2문단·280자' 기준은 GeekNews 같은 짧은 글을 버렸다)
+              let art = try? JSONDecoder().decode(Article.self, from: Data(json.utf8)) else { return nil }
+        let textLen = art.blocks.compactMap(\.text).joined().count
+        guard // 짧은 글(소개글·단신)도 받는다: 글 100자 이상이면 본문으로(예전 '2문단·280자' 기준은 GeekNews 같은 짧은 글을 버렸다)
               !art.blocks.filter({ $0.text != nil }).isEmpty,
-              art.blocks.compactMap(\.text).joined().count >= 100 else { return nil }
+              textLen >= 100 else { trace.shortText = textLen; return nil }
+        trace.shortText = nil
         return art
     }
 

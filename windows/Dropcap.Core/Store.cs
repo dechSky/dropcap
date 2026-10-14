@@ -23,6 +23,7 @@ public sealed class AppState
     public List<Source> CustomSources { get; set; } = new();          // 직접 추가한 출처
     public DateTimeOffset? SnoozeUntil { get; set; }                  // 알림 잠시 끄기
     public DateTimeOffset? LastDigest { get; set; }                   // 마지막 아침 브리핑
+    public DateTimeOffset? LastWatchDigest { get; set; }              // 마지막 '지켜볼 낱말' 하루 정리(N-27)
     public Dictionary<string, double> InterestCategory { get; set; } = new(); // 분야별로 연 횟수(관심사)
     public Dictionary<string, double> InterestSource { get; set; } = new();
     public bool MagazineBackfilled { get; set; }                      // 처음 매거진을 채웠는지
@@ -68,6 +69,7 @@ public sealed class AppState
         s.CustomSources = Json.Field(o, "customSources", s.CustomSources);
         s.SnoozeUntil = Json.Field<DateTimeOffset?>(o, "snoozeUntil", null);
         s.LastDigest = Json.Field<DateTimeOffset?>(o, "lastDigest", null);
+        s.LastWatchDigest = Json.Field<DateTimeOffset?>(o, "lastWatchDigest", null);
         s.InterestCategory = Json.Field(o, "interestCategory", s.InterestCategory);
         s.InterestSource = Json.Field(o, "interestSource", s.InterestSource);
         s.MagazineBackfilled = Json.Field(o, "magazineBackfilled", false);
@@ -103,6 +105,7 @@ public sealed class StateSettings
     public int QuietEnd { get; set; } = 7;
     public List<string> MustKeywords { get; set; } = new(); // 꼭 알림(중요 표시)
     public List<string> MuteKeywords { get; set; } = new(); // 알리지 않음
+    public List<string> WatchKeywords { get; set; } = new(); // 지켜볼 낱말(회사·인물·법안) — 스토리마다 한 번 알림 + 하루 정리(N-27)
     public bool DigestEnabled { get; set; } = true;  // 아침 브리핑
     public int DigestHour { get; set; } = 9;
     public int TotalDailyCap { get; set; } = 10;    // 모든 분야를 합친 하루 물방울 수(G-06)
@@ -129,6 +132,7 @@ public sealed class StateSettings
         d.QuietEnd = Json.Field(o, "quietEnd", 7);
         d.MustKeywords = Json.Field(o, "mustKeywords", new List<string>());
         d.MuteKeywords = Json.Field(o, "muteKeywords", new List<string>());
+        d.WatchKeywords = Json.Field(o, "watchKeywords", new List<string>());
         d.DigestEnabled = Json.Field(o, "digestEnabled", true);
         d.DigestHour = Json.Field(o, "digestHour", 9);
         d.TotalDailyCap = Json.Field(o, "totalDailyCap", 10);
@@ -146,6 +150,7 @@ public sealed class StateSettings
         var c = (StateSettings)MemberwiseClone();
         c.MustKeywords = MustKeywords.ToList();
         c.MuteKeywords = MuteKeywords.ToList();
+        c.WatchKeywords = WatchKeywords.ToList();
         return c;
     }
 }

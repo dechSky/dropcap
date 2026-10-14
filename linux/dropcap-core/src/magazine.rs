@@ -151,6 +151,7 @@ pub fn score(s: &StoredItem, cluster_size: i64, now: DateTime<Utc>, interest: &I
 pub struct Editorial {
     pub interest: Interest,
     pub hidden: HashSet<String>,
+    pub filter: crate::source_filter::SourceFilter, // 꺼진·지운·숨긴 출처를 뺀다(S-13)
     pub chosen: Option<Vec<String>>,
     pub limits: PolicyLimits,
 }
@@ -159,7 +160,7 @@ pub fn make_issue(db: &Database, kind: IssueKind, from: DateTime<Utc>, to: DateT
     // 기사와 구독 채널 글을 따로(논문이 많아도 기사가 잘리지 않게). 숨긴 출처는 스토리 대표를 고르기 전에 뺀다.
     let mut stored = db.items_kind(from, Some(to), 4000, KindFilter::Articles);
     stored.extend(db.items_kind(from, Some(to), 800, KindFilter::Channels));
-    stored.retain(|s| !ed.hidden.contains(&s.item.source_id));
+    stored.retain(|s| !ed.hidden.contains(&s.item.source_id) && ed.filter.shows(&s.item.source_id));
     // 같은 스토리는 대표 하나만 지면에(점수 높은 것)
     let mut sizes: HashMap<String, i64> = HashMap::new();
     for s in &stored {
@@ -288,13 +289,13 @@ pub fn split_by_region(items: &[NewsItem], meta: &HashMap<String, SourceMeta>) -
 }
 
 // 같은 소식을 다룬 출처 수(국내·해외). 스토리에 묶이지 않았으면 자기 하나.
-pub fn region_coverage(db: &Database, it: &NewsItem, hidden: &HashSet<String>) -> Coverage {
+pub fn region_coverage(db: &Database, it: &NewsItem, filter: &crate::source_filter::SourceFilter) -> Coverage {
     let meta = &*sections::META;
     let mut regions: HashMap<String, String> = HashMap::new();
     regions.insert(it.source_id.clone(), sections::region_of_source(&it.source_id, &it.tier, meta));
     if let Some(c) = db.cluster_of(&it.key()) {
         for s in db.items_in_cluster(&c) {
-            if !hidden.contains(&s.item.source_id) {
+            if filter.shows(&s.item.source_id) {
                 regions.insert(s.item.source_id.clone(), sections::region_of_source(&s.item.source_id, &s.item.tier, meta));
             }
         }
@@ -480,18 +481,19 @@ pub struct Resolved {
     pub regions: HashMap<String, Vec<NewsItem>>, // 스토리 → 보도들(해외·국내가 섞인 스토리만)
 }
 
-pub fn resolve(db: &Database, issue: &Issue, hidden: &HashSet<String>) -> Resolved {
+// 지난 호도 지금 보이는 출처로만 그린다(끈 출처 글은 빠지고 다시 켜면 돌아옴, S-13)
+pub fn resolve(db: &Database, issue: &Issue, filter: &crate::source_filter::SourceFilter) -> Resolved {
     let keys: Vec<String> = issue.cover.iter().cloned().chain(issue.sections.iter().flat_map(|s| s.keys.clone())).collect();
     let mut map: HashMap<String, StoredItem> = HashMap::new();
     for s in db.items_by_keys(&keys) {
         map.entry(s.item.key()).or_insert(s);
     }
     let clusters: HashMap<String, String> = map.iter().filter_map(|(k, v)| v.cluster.clone().map(|c| (k.clone(), c))).collect();
-    let cover = issue.cover.as_ref().and_then(|k| map.get(k).cloned());
+    let cover = issue.cover.as_ref().and_then(|k| map.get(k).cloned()).filter(|c| filter.shows(&c.item.source_id));
     let sections = issue
         .sections
         .iter()
-        .map(|s| (s.clone(), s.keys.iter().filter_map(|k| map.get(k).map(|x| x.item.clone())).collect::<Vec<_>>()))
+        .map(|s| (s.clone(), s.keys.iter().filter_map(|k| map.get(k).map(|x| x.item.clone())).filter(|i| filter.shows(&i.source_id)).collect::<Vec<_>>()))
         .filter(|(_, v)| !v.is_empty())
         .collect();
     // 여러 곳이 다룬 스토리만 보도를 꺼내 해외·국내가 섞였는지 본다
@@ -501,7 +503,7 @@ pub fn resolve(db: &Database, issue: &Issue, hidden: &HashSet<String>) -> Resolv
         if sizes.get(k).cloned().unwrap_or(1) < 2 || regions.contains_key(c) {
             continue;
         }
-        let items: Vec<NewsItem> = db.items_in_cluster(c).into_iter().map(|s| s.item).filter(|i| !hidden.contains(&i.source_id)).collect();
+        let items: Vec<NewsItem> = db.items_in_cluster(c).into_iter().map(|s| s.item).filter(|i| filter.shows(&i.source_id)).collect();
         let (intl, kr) = split_by_region(&items, &sections::META);
         if !intl.is_empty() && !kr.is_empty() {
             regions.insert(c.clone(), items);
@@ -514,15 +516,32 @@ pub fn cluster_of(db: &Database, key: &str) -> Option<String> {
     db.cluster_of(key)
 }
 
-// 스토리: 최근 2주 동안 두 곳 이상이 다룬 것
-pub fn stories(db: &Database) -> Vec<Cluster> {
-    db.recent_clusters(Utc::now() - Duration::days(14)).into_iter().filter(|c| c.size >= 2).collect()
+// 스토리의 보도 중 지금 보이는 출처 것만(S-13)
+pub fn story_items(db: &Database, id: &str, filter: &crate::source_filter::SourceFilter) -> Vec<NewsItem> {
+    filter.visible(&db.items_in_cluster(id).into_iter().map(|s| s.item).collect::<Vec<_>>())
+}
+
+// 스토리: 최근 2주 동안 지금 보이는 출처로만 두 곳 이상이 다룬 것(출처를 끄면 그 스토리의 보도 수도 줄어 목록에서 빠질 수 있음)
+pub fn stories(db: &Database, filter: &crate::source_filter::SourceFilter) -> Vec<Cluster> {
+    db.recent_clusters(Utc::now() - Duration::days(14))
+        .into_iter()
+        .filter(|c| c.size >= 2)
+        .filter_map(|mut c| {
+            let items = story_items(db, &c.id, filter);
+            let outlets: HashSet<&str> = items.iter().map(|i| i.source_id.as_str()).collect();
+            if outlets.len() < 2 {
+                return None;
+            }
+            c.size = items.len() as i64;
+            Some(c)
+        })
+        .collect()
 }
 
 // 스토리 목록: 최근 24시간 안에 보도가 붙은 것(지금 커지는 스토리)과 나머지. 큰 것·최근 것이 앞
-pub fn story_groups(db: &Database, now: DateTime<Utc>) -> (Vec<Cluster>, Vec<Cluster>) {
+pub fn story_groups(db: &Database, now: DateTime<Utc>, filter: &crate::source_filter::SourceFilter) -> (Vec<Cluster>, Vec<Cluster>) {
     let score = |c: &Cluster| c.size as f64 + (24.0 - (now - c.last).num_seconds() as f64 / 3600.0).max(0.0) / 6.0;
-    let mut all = stories(db);
+    let mut all = stories(db, filter);
     all.sort_by(|a, b| score(b).partial_cmp(&score(a)).unwrap_or(std::cmp::Ordering::Equal).then(b.last.cmp(&a.last)));
     let cut = now - Duration::hours(24);
     all.into_iter().partition(|c| c.last >= cut)

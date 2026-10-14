@@ -51,7 +51,7 @@ public sealed class ToastRenderer(ToastEngine engine)
                     return 12 + Math.Max(30, 17 + 2 + lines * 15.5f) + 12;
                 }
             case ToastKind.Digest: return 12 + Math.Max(30, 17 + 2 + 15.5f) + 12;
-            case ToastKind.Bundle: return 12 + Math.Max(30, 17 + 2 + Math.Min(2, Math.Max(1, c.Items.Count)) * 15.5f) + 12;
+            case ToastKind.Bundle or ToastKind.Watch: return 12 + Math.Max(30, 17 + 2 + Math.Min(2, Math.Max(1, c.Items.Count)) * 15.5f) + 12;
             default: return 10 + 16 + 10;
         }
     }
@@ -344,6 +344,15 @@ public sealed class ToastRenderer(ToastEngine engine)
                 var color = Hex(sec?.Color ?? card.Accent);
                 DrawBadge(c, r.Left + 13, r.Top + (r.Height - 30) / 2, sec?.Icon ?? "cat.other", Mix(color, SKColors.White, 0.2f), color, Rise(card, now, 0));
                 DrawBundleLines(c, card, r, Strings.Bundle(card.Section ?? "", card.Count), card.Items.Take(2).Select(i => i.DisplayTitle).ToList(), now);
+                break;
+            }
+            case ToastKind.Watch:
+            {
+                var teal = Hex(ToastEngine.WatchAccent);
+                DrawBadge(c, r.Left + 13, r.Top + (r.Height - 30) / 2, "eye", Mix(teal, SKColors.White, 0.2f), teal, Rise(card, now, 0));
+                DrawBundleLines(c, card, r, Strings.Watch(card.Title, card.Count), card.Items.Take(2).Select(i => i.DisplayTitle).ToList(), now);
+                using (var hf = Font(11, 400, Strings.WatchHint))
+                    DrawText(c, Strings.WatchHint, r.Right - 16 - hf.MeasureText(Strings.WatchHint), r.Top + 12 + 13, 11, 400, Tertiary, Rise(card, now, 1));
                 break;
             }
             default:

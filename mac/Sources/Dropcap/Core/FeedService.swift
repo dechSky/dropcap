@@ -68,14 +68,22 @@ actor FeedService {
         } else {
             bytes.task.cancel() // 304·오류 응답의 본문은 받지 않는다
         }
-        // 실제로 접속한 IP 가 내부망이면(확인 뒤 DNS 응답을 바꾸는 공격) 받은 내용을 버린다
-        if !allowLocal { guard await guardian.isSafe() else { throw FeedError.blocked("접속 IP \(guardian.lastRemote ?? "확인 안 됨")") } }
-        if http?.statusCode == 304 { return nil }
-        if let code = http?.statusCode, !(200..<300).contains(code) { throw FeedError.http(code) }
+        if try await Self.settle(status: http?.statusCode, checkIP: !allowLocal, isSafe: { await guardian.isSafe() }, remote: { guardian.lastRemote }) { return nil }
         if conditional {
             pending[url] = (http?.value(forHTTPHeaderField: "ETag"), http?.value(forHTTPHeaderField: "Last-Modified"))
         }
         return (Gzip.inflateIfNeeded(data), resp.textEncodingName)
+    }
+
+    // 응답 코드와 접속 IP 판정 순서. 304 면 true(바뀐 것 없음).
+    // 2xx 가 아닌 응답은 본문을 받지 않고 쓰지도 않으므로 IP 판정 없이 바로 코드로 알린다 — 끊은 전송은 측정값이 오지 않아
+    // 예전엔 2초 기다린 뒤 403·401·404 가 '접속 IP 확인 안 됨'으로 바뀌었다(READSWEEP).
+    // 2xx 는 실제로 접속한 IP 가 내부망이면(확인 뒤 DNS 응답을 바꾸는 공격) 받은 내용을 버린다.
+    static func settle(status: Int?, checkIP: Bool, isSafe: () async -> Bool, remote: () -> String?) async throws -> Bool {
+        if status == 304 { return true }
+        if let code = status, !(200..<300).contains(code) { throw FeedError.http(code) }
+        if checkIP { guard await isSafe() else { throw FeedError.blocked("접속 IP \(remote() ?? "확인 안 됨")") } }
+        return false
     }
 
     // 받는 대로 모으다가 상한을 넘으면 그 자리에서 멈춘다. 헤더의 길이가 이미 상한을 넘으면 한 바이트도 받지 않는다
@@ -262,19 +270,10 @@ extension FeedService {
     // 대표 사진이 없는 기사는 페이지 머리의 og:image 를 찾아 채운다(공개 주소만, 앞 64KB 만 읽음)
     func ogImage(_ link: String) async -> String? {
         guard let data = try? await fetch(link, limit: .page) else { return nil }
-        let head = String(decoding: data.prefix(65536), as: UTF8.self)
-        for pattern in [#"<meta[^>]+property=["']og:image(?::url)?["'][^>]+content=["']([^"']+)"#,
-                        #"<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image"#,
-                        #"<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)"#] {
-            if let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
-               let m = re.firstMatch(in: head, range: NSRange(head.startIndex..., in: head)),
-               let r = Range(m.range(at: 1), in: head) {
-                let raw = String(head[r]).replacingOccurrences(of: "&amp;", with: "&")
-                return URL(string: raw, relativeTo: URL(string: link))?.absoluteString
-            }
-        }
-        return nil
+        // <meta> 를 하나씩 떼어 읽는다(예전 정규식은 content 를 먼저 쓴 og:image:type 을 사진 주소로 잡았다 — DW)
+        return CoverPick.ogImage(html: String(decoding: data.prefix(65536), as: UTF8.self), base: URL(string: link))
     }
+
 }
 
 // 출처 건강: 마지막 성공 시각·마지막 새 글 시각·연속 실패 수. 설정의 출처 줄에 '조용함·멈춤·오류'로 보인다.

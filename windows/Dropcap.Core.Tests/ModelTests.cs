@@ -21,6 +21,9 @@ internal sealed class FakeUi : IAppUi
     public List<(string Section, int Count)> Bundles { get; } = new();
     public void ShowBundle(string section, IReadOnlyList<NewsItem> items, bool sound) => Bundles.Add((section, items.Count));
     public void PostBundle(string section, IReadOnlyList<NewsItem> items, bool sound) => Bundles.Add((section, items.Count));
+    public List<(string Word, int Count)> Watches { get; } = new();
+    public void ShowWatch(string word, IReadOnlyList<NewsItem> items, bool sound) => Watches.Add((word, items.Count));
+    public void PostWatch(string word, IReadOnlyList<NewsItem> items, bool sound) => Watches.Add((word, items.Count));
 }
 
 public sealed class TempDir : IDisposable
@@ -45,7 +48,7 @@ public class AppModelTests : IDisposable
     public AppModelTests()
     {
         db = new Database(System.IO.Path.Combine(tmp.Path, "magazine.sqlite"));
-        model = new AppModel(ui, new Magazine(db), new AppState(), persist: false) { Now = () => now };
+        model = new AppModel(ui, new Magazine(db), new AppState(), persist: false) { ShowAllSourcesForTests = true, Now = () => now };
     }
 
     public void Dispose() { db.Dispose(); tmp.Dispose(); }

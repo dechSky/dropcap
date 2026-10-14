@@ -67,6 +67,31 @@ internal sealed class Platform(Shell shell) : IPlatform
         return true;
     }
 
+    // 내 기록 내보내기(P-08): JSON 저장 대화상자
+    public async Task<bool> SaveJsonFile(string suggestedName, string text)
+    {
+        var picker = new FileSavePicker { SuggestedFileName = Path.GetFileNameWithoutExtension(suggestedName) };
+        picker.FileTypeChoices.Add("Dropcap 기록(JSON)", [".json"]);
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, shell.OwnerHwnd());
+        var file = await picker.PickSaveFileAsync();
+        if (file is null) return false;
+        await Windows.Storage.FileIO.WriteTextAsync(file, text);
+        return true;
+    }
+
+    // 내 기록 가져오기(P-08): 여는 대화상자. 너무 큰 파일(32MB 넘음)은 읽지 않는다
+    public async Task<string?> OpenJsonFile()
+    {
+        var picker = new FileOpenPicker();
+        picker.FileTypeFilter.Add(".json");
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, shell.OwnerHwnd());
+        var file = await picker.PickSingleFileAsync();
+        if (file is null) return null;
+        var props = await file.GetBasicPropertiesAsync();
+        if (props.Size > 32UL << 20) throw new InvalidOperationException("파일이 너무 큽니다");
+        return await Windows.Storage.FileIO.ReadTextAsync(file);
+    }
+
     // 공유(R-10): 윈도우 공유 창. 기사 제목과 주소(공개 http(s) 만).
     public void Share(NewsItem item)
     {

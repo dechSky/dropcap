@@ -13,7 +13,7 @@ public sealed class ImageLoader
 {
     public static readonly ImageLoader Shared = new(Path.Combine(Store.Dir, "images"));
 
-    public const int MaxBytes = 8 << 20;
+    public const int MaxBytes = (int)FetchLimit.Image;   // 사진 8MB(S-12)
     public const int MaxPixels = 1400;
     public const int DiskLimit = 600, DiskKeep = 500;
 

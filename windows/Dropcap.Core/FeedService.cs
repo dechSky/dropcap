@@ -14,12 +14,12 @@ public sealed class FeedService
     private readonly Dictionary<string, DateTimeOffset> firstSeen = new();   // 날짜 없는 글을 처음 본 시각(FeedDates.Repair)
     private readonly ConcurrentDictionary<string, (string? ETag, string? Modified)> pending = new(); // 해석이 성공해야 확정
 
-    public async Task<byte[]?> FetchAsync(string url, bool conditional = false, CancellationToken ct = default) =>
-        (await FetchWithEncodingAsync(url, conditional, ct))?.Data;
+    public async Task<byte[]?> FetchAsync(string url, bool conditional = false, CancellationToken ct = default, long limit = FetchLimit.Feed) =>
+        (await FetchWithEncodingAsync(url, conditional, ct, limit))?.Data;
 
     // 본문과 함께 문자 인코딩 이름(헤더 기준)을 돌려준다
     // 잠깐의 서버 오류(5xx·429, YouTube 피드의 간헐적 404)는 한 번 더 시도한다(C-07)
-    public async Task<(byte[] Data, string? Encoding)?> FetchWithEncodingAsync(string url, bool conditional = false, CancellationToken ct = default)
+    public async Task<(byte[] Data, string? Encoding)?> FetchWithEncodingAsync(string url, bool conditional = false, CancellationToken ct = default, long limit = FetchLimit.Feed)
     {
         var youtube = url.Contains("youtube.com/feeds", StringComparison.Ordinal);
         var attempt = 0;
@@ -27,7 +27,7 @@ public sealed class FeedService
         {
             try
             {
-                return await FetchOnceAsync(url, conditional, ct);
+                return await FetchOnceAsync(url, conditional, ct, limit);
             }
             catch (HttpStatusException e) when (e.Code == 429 || e.Code is >= 500 and <= 504 || (e.Code == 404 && youtube))
             {
@@ -38,7 +38,7 @@ public sealed class FeedService
         }
     }
 
-    private async Task<(byte[] Data, string? Encoding)?> FetchOnceAsync(string url, bool conditional, CancellationToken ct)
+    private async Task<(byte[] Data, string? Encoding)?> FetchOnceAsync(string url, bool conditional, CancellationToken ct, long limit)
     {
         SafeHttp.Response r;
         try
@@ -51,7 +51,7 @@ public sealed class FeedService
                     if (v.ETag is not null) req.Headers.TryAddWithoutValidation("If-None-Match", v.ETag);
                     if (v.Modified is not null) req.Headers.TryAddWithoutValidation("If-Modified-Since", v.Modified);
                 }
-            }, ct: ct);
+            }, maxBody: limit, ct: ct);
         }
         catch (HttpRequestException e) when (e.InnerException is BlockedException b) { throw b; }
         catch (HttpRequestException e) when (e.InnerException?.InnerException is BlockedException b) { throw b; }
@@ -68,7 +68,7 @@ public sealed class FeedService
         if (data is null) return null;
         List<FeedParser.Entry> entries;
         if (source.Type == "sitemap" && source.Match is { } m)
-            entries = FeedParser.ParseSitemap(data, new Regex(m));
+            entries = FeedParser.ParseSitemap(data, new Regex(m, RegexOptions.None, TimeSpan.FromMilliseconds(250))); // 시간 제한(정규식 폭주 막기)
         else
             entries = FeedParser.ParseFeed(data);
         // 해석에 성공했을 때만 "바뀐 것 없음" 표시를 확정한다(실패한 피드가 304 로 가려지지 않게)
@@ -94,7 +94,7 @@ public sealed class FeedService
     public async Task<NewsItem> FillTitleAsync(NewsItem item, CancellationToken ct = default)
     {
         byte[]? data;
-        try { data = await FetchAsync(item.Link, ct: ct); } catch { data = null; }
+        try { data = await FetchAsync(item.Link, ct: ct, limit: FetchLimit.Page); } catch { data = null; }
         if (data is null) return item with { Title = Plain.TitleFromSlug(item.Link) };
         var html = System.Text.Encoding.UTF8.GetString(data);
         var title = Meta(html, "<meta[^>]+property=[\"']og:title[\"'][^>]+content=[\"']([^\"']+)") ?? Meta(html, "<title[^>]*>([^<]+)</title>");
@@ -109,7 +109,7 @@ public sealed class FeedService
     public async Task<string?> OgImageAsync(string link, CancellationToken ct = default)
     {
         byte[]? data;
-        try { data = await FetchAsync(link, ct: ct); } catch { return null; }
+        try { data = await FetchAsync(link, ct: ct, limit: FetchLimit.Page); } catch { return null; }
         if (data is null) return null;
         var head = System.Text.Encoding.UTF8.GetString(data, 0, Math.Min(data.Length, 65536));
         foreach (var pattern in new[] {

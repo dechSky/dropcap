@@ -492,8 +492,8 @@ impl ReaderWindow {
             let w = Rc::downgrade(self);
             bg(
                 async move {
-                    let hidden: std::collections::HashSet<String> = core.state().hidden_sources.into_iter().collect();
-                    (core.paywall.kind(&item), core.paywall.alternatives(&item, &hidden), item.key())
+                    let filter = core.source_filter();
+                    (core.paywall.kind(&item), core.paywall.alternatives(&item, &filter), item.key())
                 },
                 move |(kind, alts, key)| {
                     let Some(me) = w.upgrade() else { return };

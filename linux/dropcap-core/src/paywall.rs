@@ -221,9 +221,10 @@ impl PaywallBook {
     }
 
     // 같은 스토리에서 무료로 읽을 수 있는 보도
-    pub fn alternatives(&self, item: &NewsItem, hidden: &HashSet<String>) -> Vec<NewsItem> {
+    // 지금 보이는 출처(꺼진·지운·숨긴 출처 제외, S-13)의 보도만
+    pub fn alternatives(&self, item: &NewsItem, filter: &crate::source_filter::SourceFilter) -> Vec<NewsItem> {
         let Some(c) = self.db.cluster_of(&item.key()) else { return vec![] };
-        let story: Vec<NewsItem> = self.db.items_in_cluster(&c).into_iter().map(|s| s.item).collect();
-        free_alternatives(item, &story, hidden, &crate::sections::META, &self.stats.lock().unwrap(), 3)
+        let story: Vec<NewsItem> = filter.visible(&self.db.items_in_cluster(&c).into_iter().map(|s| s.item).collect::<Vec<_>>());
+        free_alternatives(item, &story, &HashSet::new(), &crate::sections::META, &self.stats.lock().unwrap(), 3)
     }
 }

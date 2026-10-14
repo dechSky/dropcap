@@ -44,7 +44,7 @@ public class MagazineCatchupTests : IDisposable
     {
         db = new Database(System.IO.Path.Combine(tmp.Path, "magazine.sqlite"));
         mag = new Magazine(db);
-        model = new AppModel(new FakeUi(), mag, new AppState(), persist: false);
+        model = new AppModel(new FakeUi(), mag, new AppState(), persist: false) { ShowAllSourcesForTests = true };
         page = new MagazinePage(model, mag, new Scrapbook(db), platform, new Bridge())
         {
             LoadPhotos = ids => photoLoads.AddRange(ids),

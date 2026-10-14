@@ -43,3 +43,9 @@
 - settings: `set` 키 `autoQuietFullscreen`·`autoQuietSharing`·`autoQuietCalendar`, 보기 `general.calendarSupported`·`calendarNote`·`autoQuietNote`, `filters.navKeys`. `keywords` 는 바뀐 때만 저장하고 목록에 다시 적용.
 - magazine: `todayProgress`, `flip`, `toggleRead`, `open`{seq}, `browser`{read}, 알림 `photos`. onboarding: 알림 `photos`.
 - reader: `step`{dir}, `openAlternative`, 보기 `paywall`·`paywalled`·`alternatives`·`freeReason`.
+
+## 따라잡기 2차에서 늘어난 것
+
+- `ItemView.Watch`(지켜볼 낱말 눈 표시, ★ 와 겹치면 null). 아이콘 `eye`.
+- settings: `keywords`{must, mute, watch}, `exportBackup`·`importBackup`·`undoImport`(대화상자는 `IPlatform.SaveJsonFile`·`OpenJsonFile`), 보기 `general.backup`{intro, note, canUndo, message}.
+- magazine: 첫 지면·`go` 에 `search:<낱말>`(그 낱말로 검색 화면).

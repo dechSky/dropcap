@@ -507,7 +507,9 @@ fn render(m: &Rc<RefCell<Menu>>) {
 
     // 탭: 안 읽음 N
     let read: HashSet<String> = st.read.keys().cloned().collect();
-    let unread = st.recent.iter().filter(|i| !read.contains(&i.key())).count();
+    // 꺼진·지운·숨긴 출처 글과 '알리지 않음' 낱말 글은 빼고(지우지 않고 거르기만, S-13)
+    let visible = core.visible_recent();
+    let unread = visible.iter().filter(|i| !read.contains(&i.key())).count();
     for (t, b) in &mm.tabs {
         if *t == Tab::Unread {
             b.set_label(&format!("안 읽음 {unread}"));
@@ -515,7 +517,7 @@ fn render(m: &Rc<RefCell<Menu>>) {
     }
 
     // 목록
-    let list = items(&mm, &st.recent, &st.saved, &read);
+    let list = items(&mm, &visible, &st.saved, &read);
     clear_box(&mm.list);
     drop(mm);
     m.borrow_mut().shown.clear();

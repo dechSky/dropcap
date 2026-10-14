@@ -107,7 +107,7 @@ final class AppModel: ObservableObject {
         state.lastCheck = Date()
         state.seen = Store.pruned(state.seen) // 저장 파일만이 아니라 메모리의 기억도 정리(오래 켜 두면 끝없이 커지고 저장마다 정렬하던 문제)
         // 분야 정책: 즉시 알릴 것 · 묶음으로 고일 것 · 매거진에만 둘 것
-        let quiet = (isQuietTime || isSnoozed) && !manual // 방해 금지 시간·잠시 끄기: 알리지 않고 안 읽은 소식으로만 쌓는다
+        let quiet = isHushed && !manual // 방해 금지 시간·잠시 끄기·회의 중: 알리지 않고 안 읽은 소식으로만 쌓는다
         let drops = decide(candidates, listed: listed, info: info, quiet: quiet)
         Store.save(state)
         await Magazine.shared.publishDue() // 확인을 마친 뒤에 지난 호를 엮어 빠지는 기사가 없게
@@ -193,7 +193,7 @@ final class AppModel: ObservableObject {
 
     // 묶음: 분야마다 정한 시각이 지나면 고인 소식을 한 방울로("경제 7건")
     private func deliverBundles(now: Date = Date()) {
-        guard !state.pending.isEmpty, !isQuietTime, !isSnoozed else { return }
+        guard !state.pending.isEmpty, !isHushed else { return }
         var changed = false
         for sec in Set(state.pending.map(\.section)).sorted(by: { Sections.order($0) < Sections.order($1) }) {
             guard NotifyPolicy.bundleDue(hour: policy(sec).bundleHour, now: now, last: state.lastBundle[sec]) else { continue }
@@ -205,8 +205,32 @@ final class AppModel: ObservableObject {
             case .drop: ToastCenter.shared.showBundle(section: sec, items: items)
             case .system: SystemNotifier.postBundle(section: sec, items: items, sound: state.settings.sound)
             }
+            if policy(sec).mode == .bundle { makeBrief(sec, items: items, now: now) }
         }
         if changed { Store.save(state) }
+    }
+
+    // 분야별 저녁 정리(N-26): '묶음' 분야는 묶음을 보낼 때 기기 안 요약 3줄 + 근거 기사를 매거진 그 분야 지면 위에 둔다.
+    // 알림 문구는 그대로 원제목(D-7) — 요약은 지면 안에서만, 근거 링크와 함께.
+    func makeBrief(_ sec: String, items: [NewsItem], now: Date = Date()) {
+        let evidence = Array(items.prefix(SectionBrief.maxItems))
+        state.briefs[sec] = SectionBrief(section: sec, at: now, items: evidence)
+        guard Summarizer.available, evidence.count >= 2 else { return }
+        Task {
+            guard let lines = await Summarizer.briefing(section: Sections.name(sec), items: evidence),
+                  state.briefs[sec]?.at == now else { return }
+            setBriefLines(sec, lines)
+        }
+    }
+    func setBriefLines(_ sec: String, _ lines: [SectionBrief.Line]) {
+        state.briefs[sec]?.lines = lines
+        Store.save(state)
+    }
+
+    // 오늘 만든 저녁 정리(요약이 있는 것만)
+    func brief(_ sec: String, now: Date = Date()) -> SectionBrief? {
+        guard let b = state.briefs[sec], b.lines != nil, Calendar.current.isDate(b.at, inSameDayAs: now) else { return nil }
+        return b
     }
 
     // 처음 실행: 관심 분야를 고른다(설정에서 다시 고를 수도 있다). 고른 분야의 기본 출처를 켜고 그 분야 최근 소식으로 매거진을 채운다.
@@ -281,6 +305,13 @@ final class AppModel: ObservableObject {
     }
 
     // '알리지 않음' 낱말이 든 소식은 빼고, '꼭 알림' 낱말이 든 소식은 중요 표시
+    // 낱말 설정이 바뀌면 이미 받은 최근 목록에도 바로: ★ 다시 매기고, '알리지 않음' 낱말이 든 기사는 목록에서 뺌
+    func reapplyKeywords() {
+        let reset = state.recent.map { var it = $0; it.important = nil; return it }
+        state.recent = applyKeywords(reset)
+        Store.save(state)
+    }
+
     private func applyKeywords(_ items: [NewsItem]) -> [NewsItem] {
         let mute = Self.words(state.settings.muteKeywords), must = Self.words(state.settings.mustKeywords)
         return items.compactMap { it in
@@ -312,6 +343,11 @@ final class AppModel: ObservableObject {
         guard st.quietEnabled, st.quietStart != st.quietEnd else { return false }
         return Self.inQuiet(hour: Calendar.current.component(.hour, from: Date()), start: st.quietStart, end: st.quietEnd)
     }
+
+    // 회의·발표 중 자동 조용히(N-25): 지금 그 이유(설정에서 켠 것만)
+    var autoQuietReason: FocusReason? { FocusMonitor.shared.reason(state.settings) }
+    // 알리지 않을 때: 방해 금지 시간 · 잠시 끄기 · 회의·발표 중
+    var isHushed: Bool { isQuietTime || isSnoozed || autoQuietReason != nil }
 
     // 자정을 넘는 구간(예: 23시~7시)도 처리
     nonisolated static func inQuiet(hour h: Int, start: Int, end: Int) -> Bool {
@@ -428,7 +464,7 @@ final class AppModel: ObservableObject {
     private func notifyGrownStories() {
         let grown = Magazine.shared.grown
         Magazine.shared.grown = []
-        guard !grown.isEmpty, !isQuietTime, !isSnoozed else { return }
+        guard !grown.isEmpty, !isHushed else { return }
         for (c, it) in grown.prefix(2) {
             ToastCenter.shared.showInfo("팔로우한 스토리에 새 보도 · \(it.sourceName)", sub: c.title)
         }
@@ -476,7 +512,7 @@ final class AppModel: ObservableObject {
         let now = Date()
         guard Self.digestWindow(hour: cal.component(.hour, from: now), digestHour: st.digestHour),
               !(state.lastDigest.map { cal.isDate($0, inSameDayAs: now) } ?? false) else { return }
-        guard !isQuietTime, !isSnoozed else { return } // 조용한 때가 끝나면 그날 안에 다시 시도
+        guard !isHushed else { return } // 조용한 때가 끝나면 그날 안에 다시 시도
         state.lastDigest = now
         Store.save(state)
         let items = digestItems
@@ -615,6 +651,7 @@ final class AppModel: ObservableObject {
         let before = state.settings
         change(&state.settings)
         Store.save(state)
+        if state.settings != before { FocusMonitor.shared.invalidate() }
         if state.settings.style == .system, before.style != .system { SystemNotifier.requestAuthorization() }
         if state.settings.intervalMinutes != before.intervalMinutes { restartLoop() }
     }

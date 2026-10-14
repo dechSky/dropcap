@@ -27,7 +27,23 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
     (() => {
       const doc = document.cloneNode(true);
       doc.querySelectorAll('.sr-only, .visually-hidden, .screen-reader-text, [class*="sr-only"], [class*="visually-hidden"]').forEach((n) => n.remove());
-      const art = new Readability(doc).parse();
+      // 기본 기준(500자)으로 못 찾으면 짧은 글(GeekNews 소개글 등)을 위해 100자 기준으로 한 번 더(parse 가 문서를 고치므로 새 사본으로)
+      const fresh = doc.cloneNode(true);
+      let art = new Readability(doc).parse();
+      if (!art || !art.content) art = new Readability(fresh.cloneNode(true), { charThreshold: 100 }).parse();
+      // 그래도 못 찾으면: 본문으로 보이는 영역(id·class 에 content·article·topic·post·entry·body 가 든 것) 가운데 글이 가장 많은 곳
+      if (!art || !art.content) {
+        let best = null, bestLen = 0;
+        fresh.querySelectorAll('article, main, [id*="content" i], [class*="content" i], [id*="topic" i], [class*="article" i], [class*="post" i], [class*="entry" i], [itemprop="articleBody"]').forEach((el) => {
+          if (el.closest('nav, header, footer, aside')) return;
+          const len = (el.textContent || '').replace(/\\s+/g, ' ').trim().length;
+          if (len > bestLen && len < 40000) { best = el; bestLen = len; }
+        });
+        if (best && bestLen >= 80) {
+          best.querySelectorAll('script, style, nav, form, button, .related-topics, [class*="related" i], [class*="share" i]').forEach((n) => n.remove());
+          art = { title: document.title, content: '<div>' + best.innerHTML + '</div>' };
+        }
+      }
       if (!art || !art.content) return null;
       const box = new DOMParser().parseFromString(art.content, 'text/html').body;
       const blocks = [];
@@ -76,6 +92,10 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
         }
       };
       walk(box);
+      // 문단 태그 없이 맨 글자로 든 본문(GeekNews 등): 줄 단위로 문단을 만든다
+      if (!blocks.some((b) => b.type === 'p' || b.type === 'li')) {
+        (box.innerText || box.textContent || '').split(/\\n+/).map(clean).filter((t) => t.length > 1).forEach((t) => blocks.push({ type: 'p', text: t }));
+      }
       return JSON.stringify({ title: art.title, byline: art.byline, siteName: art.siteName, blocks });
     })();
     """
@@ -86,15 +106,39 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
     func extract(_ url: URL, allowScripts: Bool = true) async -> Article? {
         guard await URLSafety.resolvesPublic(url) else { return nil }
         let t0 = Date()
-        if let got = try? await FeedService.shared.fetchWithEncoding(url.absoluteString),
-           let art = await run(data: got.data, encoding: got.encoding ?? Self.sniffCharset(got.data), base: url) {
-            NSLog("[기사] 빠른 길 %.2f초 %@", Date().timeIntervalSince(t0), url.host ?? "")
-            return art
-        }
+        let host = url.host?.lowercased() ?? ""
+        var refused = false // 사이트가 접근을 거부(401·403·429)
+        var richPage = false // 받은 HTML 에 글이 이미 많다(스크립트로 그리는 빈 껍데기가 아님)
+        do {
+            if let got = try await FeedService.shared.fetchWithEncoding(url.absoluteString) {
+                if let art = await run(data: got.data, encoding: got.encoding ?? Self.sniffCharset(got.data), base: url) {
+                    NSLog("[기사] 빠른 길 %.2f초 %@", Date().timeIntervalSince(t0), host)
+                    return art
+                }
+                richPage = Self.visibleTextLength(got.data) > 600 // 스크립트로 그리는 빈 껍데기는 보이는 글이 거의 없다
+            }
+        } catch FeedError.http(let code) where [401, 403, 429].contains(code) {
+            refused = true
+        } catch {}
         guard allowScripts else { return nil }
-        let art = await run(url: url)
-        NSLog("[기사] 느린 길 %.2f초 %@ %@", Date().timeIntervalSince(t0), url.host ?? "", art == nil ? "실패" : "성공")
+        // 접근을 거부하는 사이트(예: GeekNews 403)는 느린 길도 대개 막힌다: 짧게만 시도하고, 그래도 막히면 이번 실행 동안은 바로 대체 화면
+        if Self.blockedHosts.contains(host) { NSLog("[기사] %@ 은 막힌 사이트라 건너뜀", host); return nil }
+        // 글이 다 들어 있는데도 못 추린 페이지는 스크립트를 돌려도 같으므로 느린 길(최대 15초)을 건너뛴다
+        if richPage { NSLog("[기사] 빠른 길 실패, 글이 있는 페이지라 느린 길 건너뜀 %@", host); return nil }
+        let art = await run(url: url, maxWait: refused ? 6 : 15)
+        if art == nil, refused { Self.blockedHosts.insert(host) }
+        NSLog("[기사] 느린 길 %.2f초 %@ %@", Date().timeIntervalSince(t0), host, art == nil ? "실패" : "성공")
         return art
+    }
+
+    // 스크립트·스타일을 뺀 보이는 글자 수(대략)
+    static func visibleTextLength(_ data: Data) -> Int {
+        var h = String(decoding: data.prefix(800_000), as: UTF8.self)
+        for tag in ["script", "style", "noscript", "svg"] {
+            h = h.replacingOccurrences(of: "<\(tag)[^>]*>[\\s\\S]*?</\(tag)>", with: " ", options: [.regularExpression, .caseInsensitive])
+        }
+        h = h.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+        return h.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression).count
     }
 
     // <meta charset="euc-kr"> 처럼 문서 안에 적힌 인코딩을 찾는다
@@ -143,13 +187,15 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
         return await tryExtract(w)
     }
 
-    private func run(url: URL) async -> Article? {
+    @MainActor static var blockedHosts: Set<String> = []
+
+    private func run(url: URL, maxWait: TimeInterval = 15) async -> Article? {
         let w = await makeWeb(js: true, block: ["image", "media", "font", "popup", "websocket"], id: "ainews-full")
         web = w
         defer { w.stopLoading(); web = nil }
         w.load(URLRequest(url: url, timeoutInterval: 20))
         // 다 뜨기를 기다리지 않고, 0.6초 뒤부터 0.4초마다 본문이 생겼는지 본다(최대 15초)
-        let deadline = Date().addingTimeInterval(15)
+        let deadline = Date().addingTimeInterval(maxWait)
         try? await Task.sleep(for: .milliseconds(600))
         var last = 0
         while Date() < deadline {
@@ -168,10 +214,15 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
     private func tryExtract(_ w: WKWebView) async -> Article? {
         let loaded = (try? await w.evaluateJavaScript("typeof Readability !== 'undefined'", in: nil, contentWorld: .defaultClient)) as? Bool ?? false
         if !loaded { _ = try? await w.evaluateJavaScript(Self.readability + "\n;true", in: nil, contentWorld: .defaultClient) }
+        if ProcessInfo.processInfo.environment["DROPCAP_DEBUG_EXTRACT"] != nil { // 진단용
+            do { let r = try await w.evaluateJavaScript(Self.script, in: nil, contentWorld: .defaultClient); NSLog("[추출 진단] %@", String(describing: r).prefix(600) as CVarArg) }
+            catch { NSLog("[추출 진단] 오류 %@", String(describing: error)) }
+        }
         guard let json = (try? await w.evaluateJavaScript(Self.script, in: nil, contentWorld: .defaultClient)) as? String,
               let art = try? JSONDecoder().decode(Article.self, from: Data(json.utf8)),
-              art.blocks.filter({ $0.text != nil }).count >= 2,
-              art.blocks.compactMap(\.text).joined().count > 280 else { return nil }
+              // 짧은 글(소개글·단신)도 받는다: 글 100자 이상이면 본문으로(예전 '2문단·280자' 기준은 GeekNews 같은 짧은 글을 버렸다)
+              !art.blocks.filter({ $0.text != nil }).isEmpty,
+              art.blocks.compactMap(\.text).joined().count >= 100 else { return nil }
         return art
     }
 

@@ -29,6 +29,7 @@ struct AppState: Codable {
     var notifyLog: [NotifyMark] = []    // 떨어뜨린 물방울 기록(하루 상한 계산)
     var notifiedStories: [String: Double] = [:] // 알린 스토리 → 시각(같은 이야기 한 번만)
     var lastBundle: [String: Date] = [:] // 분야 → 마지막으로 묶음을 보낸 때
+    var briefs: [String: SectionBrief] = [:] // 분야 → 마지막 저녁 정리(묶음 시각에 기기 안 요약)
     var settings = Settings()
 
     struct PendingItem: Codable, Hashable {
@@ -60,6 +61,9 @@ struct AppState: Codable {
         var krThreshold = 3             // 국내 n곳 이상 보도면 중요
         var intlThreshold = 2           // 해외 n곳 이상
         var bigThreshold = 8            // 국내 n곳 이상이면 상한 무시
+        var autoQuietFullscreen = true  // 전체 화면 앱 사용 중에는 조용히(고임)
+        var autoQuietSharing = true     // 화면 공유·기록 중
+        var autoQuietCalendar = false   // 캘린더 일정 중(켤 때 권한을 묻는다)
 
         var limits: PolicyLimits {
             PolicyLimits(totalCap: totalDailyCap, krThreshold: krThreshold, intlThreshold: intlThreshold, bigThreshold: bigThreshold)
@@ -84,6 +88,9 @@ struct AppState: Codable {
             krThreshold = (try? c.decodeIfPresent(Int.self, forKey: .krThreshold)) ?? 3
             intlThreshold = (try? c.decodeIfPresent(Int.self, forKey: .intlThreshold)) ?? 2
             bigThreshold = (try? c.decodeIfPresent(Int.self, forKey: .bigThreshold)) ?? 8
+            autoQuietFullscreen = (try? c.decodeIfPresent(Bool.self, forKey: .autoQuietFullscreen)) ?? true
+            autoQuietSharing = (try? c.decodeIfPresent(Bool.self, forKey: .autoQuietSharing)) ?? true
+            autoQuietCalendar = (try? c.decodeIfPresent(Bool.self, forKey: .autoQuietCalendar)) ?? false
         }
     }
 
@@ -119,6 +126,7 @@ struct AppState: Codable {
         notifyLog = (try? c.decodeIfPresent([NotifyMark].self, forKey: .notifyLog)) ?? []
         notifiedStories = (try? c.decodeIfPresent([String: Double].self, forKey: .notifiedStories)) ?? [:]
         lastBundle = (try? c.decodeIfPresent([String: Date].self, forKey: .lastBundle)) ?? [:]
+        briefs = (try? c.decodeIfPresent([String: SectionBrief].self, forKey: .briefs)) ?? [:]
         settings = (try? c.decodeIfPresent(Settings.self, forKey: .settings)) ?? Settings()
     }
 }

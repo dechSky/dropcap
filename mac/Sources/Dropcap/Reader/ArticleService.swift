@@ -14,6 +14,7 @@ struct PreparedArticle: Codable {
     var summary: [String]?
     var summarizing = false
     var fallback = ""                 // 본문을 못 추렸을 때 보여 줄 요약 번역
+    var paywalled: Bool? = nil        // 맛보기만 나오고 구독을 권함(유료벽 뒤)
 }
 
 @MainActor
@@ -99,6 +100,7 @@ final class ArticleService {
                 order.removeAll { $0 == item.link } // 다시 준비할 때 LRU 목록에 두 번 들어가지 않게(A-23)
                 return PreparedArticle(stage: .failed, title: item.displayTitle, originalTitle: item.title)
             }
+            PaywallBook.shared.record(item, failed: true, blocked: false)
             a.fallback = await Translator.shared.translate(item.summary)
             a.stage = .failed
             emit(item.link, a)
@@ -108,6 +110,8 @@ final class ArticleService {
         let artTitle = ArticleService.stripSiteName(art.title?.nonEmpty ?? item.title, source: item.sourceName, feedTitle: item.title)
         a.originalTitle = artTitle
         a.blocks = art.blocks
+        if Paywall.looksBlocked(art.blocks) { a.paywalled = true }
+        if interactive { PaywallBook.shared.record(item, failed: false, blocked: a.paywalled == true) }
         let texts = art.blocks.compactMap(\.text)
         let foreign = Translator.looksForeign(String(texts.joined(separator: " ").prefix(2000)))
 

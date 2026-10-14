@@ -16,6 +16,9 @@ final class ReaderModel: ObservableObject {
     @Published var summarizing = false
     @Published var engine = ""
     @Published var cover: String?        // 표지 사진(피드 → 매거진 기록 → 기사 머리 대표 사진)
+    @Published var paywalled = false     // 맛보기만 나옴(유료벽 뒤)
+    @Published var alternatives: [NewsItem] = [] // 같은 스토리의 무료 보도(D-9)
+    var paywall: PaywallKind?
     private var token: UUID?
     var sequence: [NewsItem] = []        // 이 기사를 연 목록(J/K 로 다음·이전)
 
@@ -28,6 +31,8 @@ final class ReaderModel: ObservableObject {
 
     func load() async {
         Task { await findCover() }
+        paywall = PaywallBook.shared.kind(item)
+        alternatives = PaywallBook.shared.alternatives(item)
         let svc = ArticleService.shared
         if let c = svc.cached(item.link) { apply(c); if !c.summarizing { return } }
         token = svc.observe(item.link) { [weak self] a in self?.apply(a) }
@@ -44,6 +49,7 @@ final class ReaderModel: ObservableObject {
         keyPoints = a.summary
         summarizing = a.summarizing
         summary = a.fallback
+        paywalled = a.paywalled == true
         if !a.blocks.isEmpty { blocks = a.blocks }
         let next: Phase
         switch a.stage {
@@ -53,6 +59,15 @@ final class ReaderModel: ObservableObject {
         case .failed: next = .failed
         }
         if next != phase { withAnimation(.easeOut(duration: 0.3)) { phase = next } }
+    }
+
+    // 무료 보도를 먼저 권할 때와 그 이유: 유료로 알려진 곳이거나, 열어 보니 막혔을 때
+    var freeReason: String? {
+        guard !alternatives.isEmpty else { return nil }
+        if phase == .failed { return "본문을 열지 못했습니다" }
+        if paywalled { return "구독자만 읽을 수 있는 기사입니다" }
+        if let p = paywall, p.blocks { return p == .hard ? "유료 기사입니다" : "이곳 기사는 자주 막힙니다" }
+        return nil
     }
 
     // 상단바 목록의 기사 정보에는 대표 사진이 비어 있을 수 있다(매거진만 기사 머리에서 찾아 둠).
@@ -148,13 +163,32 @@ struct ReaderView: View {
         return Text(ReaderFind.highlighted(text, findQuery, current: currentNth(id)))
     }
 
+    // 피드 요약(HTML 꼬리표·여분 공백 제거, 제목과 같거나 너무 짧으면 없음)
+    static func feedSummary(_ it: NewsItem) -> String? {
+        let t = it.summary.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces)
+        guard t.count > 30, !it.title.hasPrefix(String(t.prefix(25))) else { return nil }
+        return t
+    }
+
     private var page: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 cover
                 header
+                if let reason = model.freeReason {
+                    FreeAlternativesBox(item: model.item, alternatives: model.alternatives, reason: reason)
+                        .padding(.top, 18)
+                        .transition(.opacity)
+                }
                 switch model.phase {
                 case .loading:
+                    // 본문을 받는 동안에도 빈 화면 대신 피드가 준 요약을 먼저 보여 준다
+                    if let lede = Self.feedSummary(model.item) {
+                        Text(lede).font(.app(16)).lineSpacing(7).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                            .padding(.top, 24)
+                    }
                     Skeleton(label: "기사를 불러오는 중")
                         .padding(.top, 28)
                 case .translating, .done:
@@ -247,6 +281,7 @@ struct ReaderView: View {
             }
         }
         .task { await model.load() }
+        .liveAppearance()
         .onDisappear { speaker.stop() }
         .background {
             Button("") { scrapSelection() }.keyboardShortcut("s", modifiers: [.command, .shift]).opacity(0).allowsHitTesting(false)
@@ -483,16 +518,20 @@ struct ReaderView: View {
 
     private var failed: some View {
         VStack(alignment: .leading, spacing: 14) {
-            if !model.summary.isEmpty {
-                Text(model.summary).font(bf(17)).lineSpacing(8 * lineFactor)
+            if let text = model.summary.isEmpty ? Self.feedSummary(model.item) : model.summary {
+                Text(text).font(bf(17)).lineSpacing(8 * lineFactor).textSelection(.enabled)
             }
-            Text("이 기사는 본문을 추리지 못했습니다(유료 기사·차단 등).")
+            let blocked = ArticleExtractor.blockedHosts.contains(URL(string: model.item.link)?.host?.lowercased() ?? "")
+            Text(blocked ? "이 사이트는 앱에서 본문을 가져가지 못하게 막아 두었습니다. 위는 피드가 준 요약입니다."
+                         : "이 기사는 본문을 추리지 못했습니다(유료 기사·차단 등). 위는 피드가 준 요약입니다.")
                 .font(.app(13)).foregroundStyle(.secondary)
+            let foreign = Translator.looksForeign(model.originalTitle)
             HStack {
-                if let u = model.translatedPageURL {
-                    Button("번역된 웹페이지로 보기") { ExternalLink.open(u.absoluteString) }.buttonStyle(.borderedProminent)
-                }
                 Button("원문 열기") { ExternalLink.open(model.item.link) }
+                    .buttonStyle(.borderedProminent)
+                if foreign, let u = model.translatedPageURL {
+                    Button("번역된 웹페이지로 보기") { ExternalLink.open(u.absoluteString) }
+                }
             }
             .controlSize(.large)
         }

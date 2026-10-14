@@ -25,6 +25,7 @@ struct SourceMeta: Decodable, Hashable {
     var tier: String? = nil
     var defaultOn: Bool? = nil
     var name: String? = nil
+    var paywall: String? = nil  // hard · metered(유료 기사 표시)
 }
 
 enum Sections {

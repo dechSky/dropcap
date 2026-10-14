@@ -198,7 +198,7 @@ struct OnboardingView: View {
                         .padding(14)
                         .background(top.tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     }
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 170, maximum: 240), spacing: 12)], spacing: 12) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 180, maximum: 260), spacing: 14)], spacing: 14) {
                         ForEach(cards) { s in
                             SectionCard(section: s, on: picked.contains(s.id)) {
                                 if picked.contains(s.id) { picked.remove(s.id) } else { picked.insert(s.id) }
@@ -230,8 +230,9 @@ struct OnboardingView: View {
             }
             .padding(.horizontal, 30).padding(.vertical, 14)
         }
-        .frame(width: 640, height: 640)
+        .frame(width: 680, height: 680)
         .background(Color(nsColor: .windowBackgroundColor))
+        .onAppear { SectionPhotos.shared.load() } // 분야마다 오늘의 사진(처음 실행이면 피드를 바로 받아 옴)
     }
 }
 
@@ -239,36 +240,18 @@ private struct SectionCard: View {
     let section: NewsSection
     let on: Bool
     let toggle: () -> Void
-    @State private var hover = false
+    @ObservedObject private var photos = SectionPhotos.shared
 
     var body: some View {
         // 대표 출처 2~3곳(처음 고르면 켜질 곳 먼저)
         let srcs = Sections.sources(in: section.id).sorted { ($0.defaultOn == true ? 0 : 1) < ($1.defaultOn == true ? 0 : 1) }
         let names = srcs.prefix(3).map { $0.name ?? $0.id }
         Button(action: toggle) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Image(systemName: section.symbol)
-                        .font(.app(16, .semibold))
-                        .foregroundStyle(on ? .white : section.tint)
-                        .frame(width: 34, height: 34)
-                        .background(on ? AnyShapeStyle(section.tint.gradient) : AnyShapeStyle(section.tint.opacity(0.14)), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    Spacer()
-                    Image(systemName: on ? "checkmark.circle.fill" : "circle")
-                        .font(.app(17)).foregroundStyle(on ? section.tint : Color.secondary.opacity(0.5))
-                }
-                Text(section.name).font(.app(15, .bold))
-                Text(names.isEmpty ? (section.id == Sections.ai ? "OpenAI · Anthropic · AI타임스 등" : "출처 준비 중") : names.joined(separator: " · "))
-                    .font(.app(11.5)).foregroundStyle(.secondary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(14)
-            .frame(maxWidth: .infinity, minHeight: 118, alignment: .topLeading)
-            .background(on ? section.tint.opacity(0.1) : Color.primary.opacity(hover ? 0.06 : 0.035), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(on ? section.tint.opacity(0.6) : .primary.opacity(0.08), lineWidth: on ? 1.5 : 0.5))
-            .contentShape(Rectangle())
+            SectionGlassCard(section: section, photo: photos.images[section.id], selected: on,
+                             subtitle: names.isEmpty ? (section.id == Sections.ai ? "OpenAI · Anthropic · AI타임스" : nil) : names.joined(separator: " · "))
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .onHover { hover = $0 }
         .accessibilityLabel("\(section.name)\(on ? ", 고름" : "")")
     }
 }
@@ -318,6 +301,7 @@ enum SectionStartup {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { OnboardingController.open() }
             if let dir = env0["DROPCAP_TEST_SHOT_DIR"], env0["DROPCAP_TEST_ONBOARD"] != nil {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) { OnboardingController.snapshot(to: "\(dir)/onboarding.png") }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 15) { OnboardingController.snapshot(to: "\(dir)/onboarding-15s.png") } // 사진이 채워진 뒤
             }
         }
         if let sec = env0["DROPCAP_TEST_BUNDLE"] { // 시험용: 묶음 알림 견본

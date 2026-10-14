@@ -20,6 +20,7 @@ struct SettingsView: View {
             ScrapbookSettingsView().tabItem { Label("스크랩북", systemImage: "scissors") }
         }
         .frame(width: 600, height: 640)
+        .liveAppearance()
         .task {
             appleReady = await Translator.appleReady()
             mustText = model.state.settings.mustKeywords.joined(separator: ", ")
@@ -44,6 +45,20 @@ struct SettingsView: View {
                 }
                 Button("알림 미리 보기") { model.preview() }
             }
+            Section("회의·발표 중에는 조용히") {
+                Toggle("전체 화면 앱을 쓰는 중", isOn: Binding(get: { model.state.settings.autoQuietFullscreen }, set: { v in model.update { $0.autoQuietFullscreen = v } }))
+                Toggle("화면을 공유·기록하는 중", isOn: Binding(get: { model.state.settings.autoQuietSharing }, set: { v in model.update { $0.autoQuietSharing = v } }))
+                Toggle("캘린더 일정 중", isOn: Binding(get: { model.state.settings.autoQuietCalendar }, set: { v in
+                    guard v else { model.update { $0.autoQuietCalendar = false }; return }
+                    Task {
+                        // 켤 때만 캘린더 권한을 묻는다. 거절하면 꺼진 채로 둔다
+                        let ok = FocusMonitor.hasCalendarAccess ? true : await FocusMonitor.shared.requestCalendar()
+                        model.update { $0.autoQuietCalendar = ok }
+                    }
+                }))
+                Text("이때 온 소식은 물방울 없이 '안 읽음'에 쌓이고, 알릴 만한 소식은 그 분야 묶음으로 모입니다. 화면 공유는 Zoom 공유·화면 기록·화면 공유 앱 연결을 알아봅니다. 일정은 지금 진행 중인지만 보고 내용은 저장하지 않습니다.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section("번역") {
                 LabeledContent("번역 방식") {
                     Text(appleReady ? "기기 내 번역(Apple) — 무료·비공개" : "Google 번역")
@@ -62,8 +77,8 @@ struct SettingsView: View {
             Section("글꼴") {
                 Toggle("Pretendard 글꼴 쓰기 (한글이 더 또렷함)", isOn: Binding(
                     get: { Typography.usePretendard },
-                    set: { UserDefaults.standard.set($0, forKey: "usePretendard"); model.objectWillChange.send() }))
-                Text("끄면 시스템 글꼴을 씁니다. 열려 있는 창은 다시 열면 바뀝니다.").font(.caption).foregroundStyle(.secondary)
+                    set: { UserDefaults.standard.set($0, forKey: "usePretendard"); model.objectWillChange.send(); Appearance.shared.changed() }))
+                Text("끄면 시스템 글꼴을 씁니다. 열려 있는 창에도 바로 적용됩니다.").font(.caption).foregroundStyle(.secondary)
             }
             Section("요약") {
                 LabeledContent("3줄 요약") {
@@ -261,10 +276,12 @@ extension SettingsView {
             Section("낱말로 거르기") {
                 TextField("꼭 알림 (★ 중요 표시)", text: $mustText, prompt: Text("예: GPT-6, Claude, Gemini, 오픈소스"))
                     .onSubmit(saveKeywords)
+                    .onChange(of: mustText) { scheduleSave() }
                 TextField("알리지 않음", text: $muteText, prompt: Text("예: 주식, 채용, 이벤트"))
                     .onSubmit(saveKeywords)
+                    .onChange(of: muteText) { scheduleSave() }
                 HStack {
-                    Text("쉼표로 나눠 적고 Return. 제목·요약에 그 낱말이 들어가면 적용됩니다.").font(.caption).foregroundStyle(.secondary)
+                    Text("쉼표로 나눠 적으면 바로 저장·적용됩니다. 제목·요약에 그 낱말이 들어가면 걸립니다.").font(.caption).foregroundStyle(.secondary)
                     Spacer()
                     Button("저장", action: saveKeywords)
                 }
@@ -302,6 +319,7 @@ extension SettingsView {
             }
         }
         .formStyle(.grouped)
+        .onDisappear { saveKeywords() } // 탭을 옮기거나 창을 닫을 때도 저장
     }
 
     // 다른 앱이 먼저 쓰고 있어 등록하지 못한 전역 단축키는 그렇다고 알린다
@@ -314,9 +332,17 @@ extension SettingsView {
         }
     }
 
+    // 입력이 멈추고 0.6초 뒤 저장(글자마다 저장·목록 다시 계산하지 않게)
+    func scheduleSave() {
+        KeywordSaveTimer.shared.schedule { saveKeywords() }
+    }
+
     func saveKeywords() {
         let split = { (s: String) in s.split(whereSeparator: { $0 == "," || $0 == "\n" }).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }
-        model.update { $0.mustKeywords = split(mustText); $0.muteKeywords = split(muteText) }
+        let must = split(mustText), mute = split(muteText)
+        guard must != model.state.settings.mustKeywords || mute != model.state.settings.muteKeywords else { return }
+        model.update { $0.mustKeywords = must; $0.muteKeywords = mute }
+        model.reapplyKeywords() // 이미 받은 목록에도 바로 적용
     }
 }
 
@@ -340,5 +366,18 @@ private struct PrepareTranslationButton: View {
                 done()
             }
         }
+    }
+}
+
+
+@MainActor
+final class KeywordSaveTimer {
+    static let shared = KeywordSaveTimer()
+    private var work: DispatchWorkItem?
+    func schedule(_ f: @escaping @MainActor () -> Void) {
+        work?.cancel()
+        let w = DispatchWorkItem { MainActor.assumeIsolated { f() } }
+        work = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: w)
     }
 }

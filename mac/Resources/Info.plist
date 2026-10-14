@@ -38,6 +38,7 @@
       <key>NSRequiredContext</key><dict/>
     </dict>
   </array>
+  <key>NSCalendarsFullAccessUsageDescription</key><string>회의 일정 중에는 새 소식 알림을 띄우지 않고 모아 두려고 지금 일정이 있는지만 확인합니다. 일정 내용은 저장하거나 보내지 않습니다.</string>
   <key>NSHumanReadableCopyright</key><string>© 2026 neulloopa</string>
 </dict>
 </plist>

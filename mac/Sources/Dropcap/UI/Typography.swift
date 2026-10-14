@@ -17,6 +17,23 @@ enum Typography {
     }
 }
 
+// 화면 설정(글꼴 등)이 바뀌면 열린 창들을 바로 다시 그린다(창 뿌리에 .liveAppearance())
+@MainActor
+final class Appearance: ObservableObject {
+    static let shared = Appearance()
+    @Published private(set) var epoch = 0
+    func changed() { epoch += 1 }
+}
+
+struct LiveAppearance: ViewModifier {
+    @ObservedObject private var appearance = Appearance.shared
+    func body(content: Content) -> some View { content.id(appearance.epoch) }
+}
+
+extension View {
+    func liveAppearance() -> some View { modifier(LiveAppearance()) }
+}
+
 extension Font {
     // 본문·화면 글자
     static func app(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {

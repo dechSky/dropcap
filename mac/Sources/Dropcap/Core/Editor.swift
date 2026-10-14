@@ -100,6 +100,12 @@ actor Editor {
         return tier + coverage + important + interest + fresh + picture
     }
 
+    // 표지 기사: 사진이 좋은(또는 아직 재지 않은) 것 중 앞, 없으면 사진 없는 것 중 앞(좋지 않은 사진을 표지에 크게 띄우지 않게)
+    static func pickCover(_ ranked: [NewsItem], scores: [String: Double]) -> String? {
+        let photo = { (it: NewsItem) in it.image != nil && !ImageKey.isJunk(it.image) }
+        return (ranked.first { photo($0) && PhotoQuality.good(scores[$0.image!]) } ?? ranked.first { !photo($0) })?.key
+    }
+
     // MARK: 호 엮기
     func makeIssue(kind: Issue.Kind, from: Date, to: Date, id: String, ctx: EditContext) -> Issue {
         // 기사와 구독 채널 글을 따로(논문이 많아도 기사가 잘리지 않게). 숨긴 출처는 스토리 대표를 고르기 전에 뺀다
@@ -121,8 +127,9 @@ actor Editor {
         let ranked = (Array(best.values) + loose).sorted { $0.1 > $1.1 }
         let limit = kind == .weekly ? 60 : 90
         let picked = ranked.filter { $0.0.item.itemKind == .article }.prefix(limit)
-        // 표지: 사진이 있는 기사 중 점수 1등(없으면 그냥 1등)
-        let cover = picked.first { $0.0.item.image != nil } ?? picked.first
+        // 표지: 사진이 있는 기사 중 점수 1등(없으면 그냥 1등). 화면 캡처·글자 그림·로고로 잰 사진은 건너뛴다(M-24)
+        let photoScores = db.imageScores(picked.prefix(30).compactMap(\.0.item.image))
+        let cover = Self.pickCover(picked.map(\.0.item), scores: photoScores).flatMap { k in picked.first { $0.0.item.key == k } } ?? picked.first
         let articles = picked.filter { $0.0.item.itemKind == .article && $0.0.item.key != cover?.0.item.key }.map(\.0)
         let sections = Magazine.sectionPages(articles, stored: stored, chosen: ctx.chosen, limits: ctx.limits, perSection: kind == .weekly ? 8 : 12)
         // 구독 채널 지면: 종류별, 채널 하나당 4개까지(논문처럼 많은 곳이 지면을 덮지 않게)

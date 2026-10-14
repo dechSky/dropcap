@@ -135,6 +135,7 @@ struct MenuView: View {
         }
         .frame(width: 370)
         .fixedSize()
+        .liveAppearance()
         .onAppear {
             model.markRead()
             // 열자마자 검색칸이 아니라 목록이 키를 받게(↑↓·J/K 로 바로 고르기)
@@ -207,7 +208,10 @@ struct MenuView: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text("Dropcap").font(.app(16, .heavy)).tracking(-0.3)
-                    if model.isQuietTime {
+                    if let why = model.autoQuietReason {
+                        Label(why.label, systemImage: "person.2.wave.2").labelStyle(.iconOnly)
+                            .font(.app(11)).foregroundStyle(.indigo).help("\(why.label)이라 알림을 띄우지 않고 모아 둡니다")
+                    } else if model.isQuietTime {
                         Label("방해 금지", systemImage: "moon.fill").labelStyle(.iconOnly)
                             .font(.app(11)).foregroundStyle(.indigo).help("방해 금지 시간이라 알림을 띄우지 않습니다")
                     }
@@ -313,6 +317,7 @@ private struct Row: View {
                         if item.important == true { Image(systemName: "star.fill").foregroundStyle(.orange) }
                         Image(systemName: item.topicSymbol).foregroundStyle(item.topicColor)
                         Text(item.sourceName)
+                        PaywallMark(item: item)
                         if let r = item.related, !r.isEmpty { Text("외 \(r.count)곳") }
                         Text("·")
                         Text(RelativeTime.string(item.date))

@@ -58,6 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             // 시험용: DROPCAP_TEST_URL=<기사 주소> 면 읽기 창을, DROPCAP_TEST_TOAST=1 이면 알림 미리 보기를 바로 띄운다
             let env = ProcessInfo.processInfo.environment
             ReaderSaveTestHooks.run(env)
+            ExtrasTestHooks.run(env) // 유료 표시·오늘 호·저녁 정리·사진 점수 시험(UI/ExtrasTestHooks.swift)
             if let u = env["DROPCAP_TEST_URL"] {
                 ReaderController.open(NewsItem(id: u, title: u, titleKo: nil, link: u, date: Date(), summary: "", sourceId: "openai", sourceName: "시험", tier: "lab"))
                 if let dir = env["DROPCAP_TEST_SHOT_DIR"] {
@@ -181,6 +182,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     v.cacheDisplay(in: v.bounds, to: rep)
                     try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "\(dir)/imgtr.png"))
                 }
+            }
+            if let dir = env["DROPCAP_TEST_ICONLAB"] { SectionIconLab.render(to: dir) } // 시험용: 분야 아이콘 시안
+            if let dir = env["DROPCAP_TEST_CARDLAB"] { // 시험용: 분야 카드 세 방식(피드를 받은 뒤 그림)
+                Task { try? await Task.sleep(for: .seconds(Double(env["DROPCAP_TEST_CARDLAB_WAIT"] ?? "90") ?? 90)); await SectionCardLab.render(to: dir) }
             }
             if env["DROPCAP_TEST_TOAST"] != nil {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1) { AppModel.shared.preview() }

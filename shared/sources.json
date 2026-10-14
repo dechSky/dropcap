@@ -162,7 +162,8 @@
       "color": "#3A3A3C",
       "section": "ai",
       "lang": "en",
-      "region": "intl"
+      "region": "intl",
+      "paywall": "metered"
     },
     {
       "id": "aitimes",
@@ -266,7 +267,8 @@
       "color": "#121212",
       "section": "top",
       "lang": "en",
-      "region": "intl"
+      "region": "intl",
+      "paywall": "metered"
     },
     {
       "id": "npr-news",
@@ -331,7 +333,8 @@
       "color": "#121212",
       "section": "politics",
       "lang": "en",
-      "region": "intl"
+      "region": "intl",
+      "paywall": "metered"
     },
     {
       "id": "khan-politics",
@@ -604,7 +607,8 @@
       "color": "#0274B6",
       "section": "economy",
       "lang": "en",
-      "region": "intl"
+      "region": "intl",
+      "paywall": "hard"
     },
     {
       "id": "marketwatch",
@@ -617,7 +621,8 @@
       "color": "#3BA43A",
       "section": "economy",
       "lang": "en",
-      "region": "intl"
+      "region": "intl",
+      "paywall": "metered"
     },
     {
       "id": "nyt-business",
@@ -630,7 +635,8 @@
       "color": "#121212",
       "section": "economy",
       "lang": "en",
-      "region": "intl"
+      "region": "intl",
+      "paywall": "metered"
     },
     {
       "id": "guardian-business",
@@ -851,7 +857,8 @@
       "color": "#121212",
       "section": "world",
       "lang": "en",
-      "region": "intl"
+      "region": "intl",
+      "paywall": "metered"
     },
     {
       "id": "aljazeera",
@@ -1046,7 +1053,8 @@
       "color": "#111111",
       "section": "tech",
       "lang": "en",
-      "region": "intl"
+      "region": "intl",
+      "paywall": "metered"
     },
     {
       "id": "hn-front",
@@ -1191,7 +1199,8 @@
       "color": "#E2001A",
       "section": "science",
       "lang": "en",
-      "region": "intl"
+      "region": "intl",
+      "paywall": "metered"
     },
     {
       "id": "nasa",
@@ -1295,7 +1304,8 @@
       "color": "#E3120B",
       "section": "life",
       "lang": "en",
-      "region": "intl"
+      "region": "intl",
+      "paywall": "metered"
     },
     {
       "id": "nyt-health",
@@ -1308,7 +1318,8 @@
       "color": "#121212",
       "section": "life",
       "lang": "en",
-      "region": "intl"
+      "region": "intl",
+      "paywall": "metered"
     },
     {
       "id": "yna-culture",
@@ -1438,7 +1449,8 @@
       "color": "#121212",
       "section": "culture",
       "lang": "en",
-      "region": "intl"
+      "region": "intl",
+      "paywall": "metered"
     },
     {
       "id": "yna-sports",

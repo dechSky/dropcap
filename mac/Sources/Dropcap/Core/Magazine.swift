@@ -129,7 +129,27 @@ final class Magazine: ObservableObject {
             }
             enriching = false
             if changed { imageRevision += 1 }
+            await scoreImages()
         }
+    }
+
+    // 최근 기사 사진의 점수를 미리 잰다(표지·분야 대표 사진 고르기). 한 번에 16장, 이미 잰 것은 건너뜀
+    private var scoring = false
+    func scoreImages() async {
+        guard !scoring else { return }
+        scoring = true
+        defer { scoring = false }
+        let recent = await editor.recentItems(since: Date().addingTimeInterval(-36 * 3600), limit: 400)
+            .map(\.item).filter { $0.itemKind == .article && $0.image != nil && !ImageKey.isJunk($0.image) }
+        let known = db.imageScores(recent.map { $0.image! })
+        var changed = false
+        for it in recent.filter({ known[$0.image!] == nil }).prefix(16) {
+            guard let img = await ImageLoader.shared.image(it.image!), let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) else { continue }
+            let s = await Task.detached(priority: .utility) { PhotoQuality.score(cg) }.value
+            db.saveImageScore(it.image!, s)
+            if !PhotoQuality.good(s.total) { changed = true; NSLog("[사진 점수] 대표 사진에서 뺌 %.2f(글자 %.2f·색 %.2f·단색 %.2f) %@", s.total, s.textRatio, s.colorVariety, s.flatness, it.sourceName) }
+        }
+        if changed { imageRevision += 1 }
     }
 
     // 사진 없는 기사 중 아직 찾아보지 않은 것 12개. 이미 찾아본 것을 빼지 않으면 사진이 없는 최신 12건만

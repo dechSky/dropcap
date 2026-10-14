@@ -26,6 +26,7 @@ struct Source: Codable, Identifiable, Hashable {
     var section: String? = nil       // 분야 id(shared/categories.json). 없으면 AI(예전 출처·직접 추가)
     var lang: String? = nil          // 글의 언어(ko·en …). 없으면 en
     var region: String? = nil        // kr(국내) · intl(해외). 없으면 tier 로 정함
+    var paywall: String? = nil       // hard(구독해야만) · metered(한 달 몇 건 무료). 없으면 무료로 봄
 
     var itemKind: ItemKind { ItemKind(rawValue: kind ?? "article") ?? .article }
     var sectionID: String { section ?? "ai" }

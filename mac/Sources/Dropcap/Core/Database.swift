@@ -55,6 +55,10 @@ final class Database: @unchecked Sendable {
         CREATE TABLE IF NOT EXISTS scraps(
           id TEXT PRIMARY KEY, collection TEXT NOT NULL, created REAL NOT NULL, json TEXT NOT NULL);
         CREATE INDEX IF NOT EXISTS scraps_collection ON scraps(collection, created);
+        CREATE TABLE IF NOT EXISTS extract_stats(
+          source TEXT PRIMARY KEY, tries INTEGER NOT NULL, fails INTEGER NOT NULL, blocked INTEGER NOT NULL, updated REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS image_scores(
+          url TEXT PRIMARY KEY, score REAL NOT NULL, text REAL NOT NULL, colors REAL NOT NULL, flat REAL NOT NULL, updated REAL NOT NULL);
         """)
         && exec("PRAGMA user_version=\(Self.schemaVersion);")
     }
@@ -385,6 +389,56 @@ final class Database: @unchecked Sendable {
         var found = false
         queue.sync { run("SELECT 1 FROM issues WHERE id=?", [.text(id)]) { _ in found = true } }
         return found
+    }
+
+    // MARK: 본문 추리기 기록(출처별 실패율 → 유료 기사 표시)
+    struct ExtractStat: Equatable, Sendable {
+        var tries = 0, fails = 0, blocked = 0
+        var failRate: Double { tries == 0 ? 0 : Double(fails + blocked) / Double(tries) }
+    }
+
+    // 사용자가 연 기사 하나의 결과를 더한다. 50번이 넘으면 반으로 줄여 최근 결과가 더 크게 보이게.
+    func recordExtract(source: String, failed: Bool, blocked: Bool) {
+        queue.sync {
+            run("""
+            INSERT INTO extract_stats(source,tries,fails,blocked,updated) VALUES(?,1,?,?,?)
+            ON CONFLICT(source) DO UPDATE SET tries=tries+1, fails=fails+excluded.fails, blocked=blocked+excluded.blocked, updated=excluded.updated
+            """, [.text(source), .int(failed ? 1 : 0), .int(blocked ? 1 : 0), .real(Date().timeIntervalSince1970)])
+            run("UPDATE extract_stats SET tries=tries/2, fails=fails/2, blocked=blocked/2 WHERE source=? AND tries>50", [.text(source)])
+        }
+    }
+
+    func extractStats() -> [String: ExtractStat] {
+        var out: [String: ExtractStat] = [:]
+        queue.sync {
+            run("SELECT source,tries,fails,blocked FROM extract_stats", []) { st in
+                guard let s = Self.text(st, 0) else { return }
+                out[s] = ExtractStat(tries: Int(sqlite3_column_int64(st, 1)), fails: Int(sqlite3_column_int64(st, 2)), blocked: Int(sqlite3_column_int64(st, 3)))
+            }
+        }
+        return out
+    }
+
+    // MARK: 사진 점수(분야 대표 사진 고르기)
+    func saveImageScore(_ url: String, _ s: PhotoQuality.Score) {
+        queue.sync {
+            run("INSERT OR REPLACE INTO image_scores(url,score,text,colors,flat,updated) VALUES(?,?,?,?,?,?)",
+                [.text(url), .real(s.total), .real(s.textRatio), .real(s.colorVariety), .real(s.flatness), .real(Date().timeIntervalSince1970)])
+            run("DELETE FROM image_scores WHERE updated < ?", [.real(Date().addingTimeInterval(-30 * 24 * 3600).timeIntervalSince1970)])
+        }
+    }
+
+    func imageScores(_ urls: [String]) -> [String: Double] {
+        var out: [String: Double] = [:]
+        for chunk in stride(from: 0, to: urls.count, by: 400).map({ Array(urls[$0..<min($0 + 400, urls.count)]) }) {
+            queue.sync {
+                run("SELECT url, score FROM image_scores WHERE url IN (\(Array(repeating: "?", count: chunk.count).joined(separator: ",")))",
+                    chunk.map { .text($0) }) { st in
+                    if let u = Self.text(st, 0) { out[u] = sqlite3_column_double(st, 1) }
+                }
+            }
+        }
+        return out
     }
 
     static let encoder: JSONEncoder = { let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601; return e }()

@@ -62,6 +62,7 @@ struct MagazineView: View {
             .clipped()
         }
         .frame(minWidth: 860, minHeight: 620)
+        .liveAppearance()
         .onReceive(NotificationCenter.default.publisher(for: .magazineGo)) { n in if let p = n.object as? Page { go(p) } }
         .background {
             Group {
@@ -199,7 +200,9 @@ struct IssueView: View {
     @AppStorage("magSort") private var sortRaw = MagSort.recommended.rawValue
 
     private var isFixed: Bool { if case .fixed = source { return true }; return false }
-    private var newCount: Int { isFixed ? 0 : max(0, mag.revision - seenRevision) }
+    // 오늘 호를 다 읽었으면 새 소식을 더 밀어 넣지 않는다(M-23)
+    @State private var todayDone = TodayIssue.isMarkedDone()
+    private var newCount: Int { isFixed || (source == .today && todayDone) ? 0 : max(0, mag.revision - seenRevision) }
 
     @State private var buildGen = 0
 
@@ -240,14 +243,22 @@ struct IssueView: View {
                                 .padding(.trailing, 36).padding(.bottom, 34)
                                 .help("지면 안의 기사 순서")
                             }
+                        if source == .today, focus == nil {
+                            TodayProgressView(keys: TodayIssue.keys(cover: d.cover?.item.key, sections: d.sections, chosen: AppModel.shared.chosenSections)) {
+                                todayDone = true
+                            }
+                            .padding(.horizontal, 36).padding(.top, -8).padding(.bottom, 18)
+                        }
                         let chips = d.sections.compactMap { $0.section.section }
                         if chips.count > 1 || focus != nil {
                             SectionChipBar(section: $focus, sub: $sub, sections: chips,
                                            counts: Dictionary(d.sections.compactMap { s in s.section.section.map { ($0, s.items.count) } }, uniquingKeysWith: +))
                                 .padding(.horizontal, 36).padding(.bottom, 18)
                         }
-                        if focus != nil {
-                            EmptyView()
+                        if let f = focus {
+                            if source == .today, let b = AppModel.shared.brief(f) {
+                                EveningBriefBox(brief: b).padding(.horizontal, 36)
+                            }
                         } else if let c = d.cover {
                             CoverStory(stored: c, issue: d.issue, onStory: onStory)
                                 .padding(.horizontal, 28)
@@ -419,6 +430,7 @@ private struct CoverStory: View {
                         .foregroundStyle(hasPhoto ? Color.black : Color(nsColor: .textBackgroundColor))
                     Label(item.topicLabel, systemImage: item.topicSymbol).font(.app(12, .semibold))
                     Text("\(item.sourceName) · \(RelativeTime.string(item.date))").font(.app(12))
+                    PaywallMark(item: item)
                 }
                 .foregroundStyle(ink.opacity(0.9))
                 Text(item.displayTitle)
@@ -478,15 +490,24 @@ private struct SectionBlock: View {
     var clusters: [String: String] = [:]
     var regions: [String: [NewsItem]] = [:]
 
+    @ObservedObject private var photos = SectionPhotos.shared
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 8) {
-                Image(systemName: section.symbol).foregroundStyle(section.color)
-                Text(section.label).font(.display(20, .bold))
-                Text("\(items.count)").font(.app(13, .semibold)).foregroundStyle(.secondary)
-                Rectangle().fill(.primary.opacity(0.12)).frame(height: 1).padding(.leading, 6)
+            if let ns = Sections.byID(section.section), section.kind == nil {
+                // 분야 지면: 분야 고르기와 같은 유리 띠(오늘의 사진 · 기사 수 · 첫 기사 제목)
+                SectionGlassCard(section: ns, photo: photos.images[ns.id], subtitle: "\(items.count)건 · " + (items.first?.displayTitle ?? ""), height: 92, showsCheck: false)
+                    .padding(.horizontal, 28)
+                    .onAppear { photos.load() }
+            } else {
+                HStack(spacing: 8) {
+                    Image(systemName: section.symbol).foregroundStyle(section.color)
+                    Text(section.label).font(.display(20, .bold))
+                    Text("\(items.count)").font(.app(13, .semibold)).foregroundStyle(.secondary)
+                    Rectangle().fill(.primary.opacity(0.12)).frame(height: 1).padding(.leading, 6)
+                }
+                .padding(.horizontal, 36)
             }
-            .padding(.horizontal, 36)
             BalancedGrid(count: items.count) { cols in
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 200, maximum: 360), spacing: 18), count: cols), alignment: .leading, spacing: 22) {
                     ForEach(Array(items.enumerated()), id: \.element.key) { i, it in
@@ -545,6 +566,7 @@ struct StoryCard: View {
                     HStack(spacing: 6) {
                         if item.important == true { Image(systemName: "star.fill").foregroundStyle(.orange).font(.app(10)) }
                         Text(item.sourceName).font(.app(11.5, .semibold))
+                        PaywallMark(item: item)
                         if let r = item.related, !r.isEmpty { Text("외 \(r.count)곳").font(.app(11)).foregroundStyle(.secondary) }
                         Spacer(minLength: 0)
                         Text(RelativeTime.string(item.date)).font(.app(11)).foregroundStyle(.tertiary)
@@ -836,6 +858,7 @@ private struct TimelineRow: View {
                     Monogram(letter: item.initial, color: item.accent, size: 18)
                     Text(item.sourceName).font(.app(12.5, .semibold))
                     Text(Resources.tierLabel(item.tier)).font(.app(11)).foregroundStyle(.secondary)
+                    PaywallMark(item: item)
                     Text("· " + (item.date?.formatted(.dateTime.locale(Locale(identifier: "ko_KR")).hour().minute()) ?? ""))
                         .font(.app(11.5)).foregroundStyle(.secondary)
                     if first { Text("첫 보도").font(.app(10.5, .bold)).foregroundStyle(item.accent) }

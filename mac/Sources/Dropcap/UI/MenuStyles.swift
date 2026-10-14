@@ -50,7 +50,7 @@ enum MenuStyles {
                             .fixedSize(horizontal: false, vertical: true)
                         HStack(spacing: 5) {
                             Text(item.sourceName).fontWeight(.semibold)
-                            Text(item.category.label).foregroundStyle(item.category.color)
+                            Text(item.topicLabel).foregroundStyle(item.topicColor)
                             Text(RelativeTime.string(item.date)).foregroundStyle(.tertiary)
                             if saved { Image(systemName: "bookmark.fill").foregroundStyle(item.accent) }
                         }
@@ -83,9 +83,9 @@ enum MenuStyles {
                         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     VStack(alignment: .leading, spacing: 5) {
                         HStack(spacing: 6) {
-                            Text(item.category.label).font(.app(10.5, .bold))
+                            Text(item.topicLabel).font(.app(10.5, .bold))
                                 .padding(.horizontal, 7).padding(.vertical, 2)
-                                .background(item.category.color.opacity(0.85), in: Capsule())
+                                .background(item.topicColor.opacity(0.85), in: Capsule())
                             Text("\(item.sourceName) · \(RelativeTime.string(item.date))").font(.app(11, .medium)).opacity(0.85)
                         }
                         Text(item.displayTitle).font(.app(15.5, .bold)).lineLimit(2).multilineTextAlignment(.leading)
@@ -128,7 +128,7 @@ enum MenuStyles {
                             .lineLimit(3).multilineTextAlignment(.leading)
                             .fixedSize(horizontal: false, vertical: true)
                         HStack(spacing: 5) {
-                            Image(systemName: item.category.symbol).foregroundStyle(item.category.color)
+                            Image(systemName: item.topicSymbol).foregroundStyle(item.topicColor)
                             Text(item.sourceName)
                         }
                         .font(.app(10.5)).foregroundStyle(.secondary)

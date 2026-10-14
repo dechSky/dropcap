@@ -14,8 +14,10 @@ struct SettingsView: View {
     var body: some View {
         TabView {
             general.tabItem { Label("일반", systemImage: "gearshape") }
+            sectionsTab.tabItem { Label("분야", systemImage: "square.grid.2x2") }
             sources.tabItem { Label("구독", systemImage: "antenna.radiowaves.left.and.right") }
             filters.tabItem { Label("거르기", systemImage: "line.3.horizontal.decrease.circle") }
+            ScrapbookSettingsView().tabItem { Label("스크랩북", systemImage: "scissors") }
         }
         .frame(width: 600, height: 640)
         .task {
@@ -69,6 +71,7 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            IntegrationsSettingsSection()
             Section("시작") {
                 Toggle("로그인할 때 자동 실행", isOn: Binding(get: { model.launchAtLogin }, set: { model.launchAtLogin = $0 }))
             }
@@ -80,7 +83,7 @@ struct SettingsView: View {
         Form {
             Section {
                 HStack {
-                    TextField("주소 또는 r/LocalLLaMA · cs.AI · youtube.com/@채널 · github.com/소유자/저장소", text: $newURL)
+                    TextField("언론사·블로그 주소 또는 youtube.com/@채널 · r/이름 · github.com/소유자/저장소", text: $newURL)
                         .onSubmit(addChannel)
                     Button(adding ? "찾는 중…" : "구독", action: addChannel).disabled(adding || newURL.isEmpty)
                 }
@@ -88,6 +91,7 @@ struct SettingsView: View {
                 Text("웹사이트·뉴스레터(Substack·Medium)·YouTube 채널·GitHub 릴리스·Reddit·arXiv·팟캐스트 주소를 넣으면 알맞은 피드를 찾아 구독합니다.")
                     .font(.caption).foregroundStyle(.secondary)
             } header: { Text("채널 추가") }
+            OPMLSection()
 
             Section("구독 중인 채널 \(model.state.customSources.count)") {
                 if model.state.customSources.isEmpty {
@@ -131,6 +135,7 @@ struct SettingsView: View {
                     if let err = model.state.errors[s.id] {
                         Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange).help("확인 실패: \(err)")
                     }
+                    if model.state.enabled[s.id] == true { SourceHealthBadge(source: s) }
                 }
                 if let h = s.home ?? (removable ? s.url : nil) {
                     Text(h).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
@@ -175,6 +180,82 @@ struct SettingsView: View {
 }
 
 extension SettingsView {
+    // 분야: 고른 분야마다 알림 모드·묶음 시각·하루 상한(docs/research/COMPETITIVE.md (다)-3)
+    var sectionsTab: some View {
+        Form {
+            Section {
+                HStack {
+                    Text(model.chosenSections.isEmpty ? "아직 관심 분야를 고르지 않았습니다" :
+                         "고른 분야 \(model.chosenSections.filter { $0 != Sections.top }.count)개")
+                    Spacer()
+                    Button("관심 분야 다시 고르기…") { OnboardingController.open() }
+                }
+                Text("즉시: 여러 곳이 함께 다룬 소식·공식 발표·꼭 알림 낱말·팔로우한 스토리만 바로 물방울로. 묶음: 정한 시각에 \"경제 7건\"처럼 한 방울. 매거진만: 알리지 않음.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach(Sections.all.filter { model.chosenSections.contains($0.id) }) { s in
+                Section {
+                    sectionRow(s)
+                }
+            }
+            Section("알림 양") {
+                Stepper("하루 전체 물방울 \(model.state.settings.totalDailyCap)번까지",
+                        value: Binding(get: { model.state.settings.totalDailyCap }, set: { v in model.update { $0.totalDailyCap = v } }), in: 1...30)
+                Stepper("국내 \(model.state.settings.krThreshold)곳 이상 보도면 중요",
+                        value: Binding(get: { model.state.settings.krThreshold }, set: { v in model.update { $0.krThreshold = v } }), in: 1...10)
+                Stepper("해외 \(model.state.settings.intlThreshold)곳 이상 보도면 중요",
+                        value: Binding(get: { model.state.settings.intlThreshold }, set: { v in model.update { $0.intlThreshold = v } }), in: 1...10)
+                Stepper("국내 \(model.state.settings.bigThreshold)곳 이상이면 상한을 넘어도 알림",
+                        value: Binding(get: { model.state.settings.bigThreshold }, set: { v in model.update { $0.bigThreshold = v } }), in: 2...20)
+                Text("상한을 넘은 소식은 고였다가 그 분야 묶음 시각에 한 방울로 나갑니다. 같은 이야기는 한 번만 알립니다.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if !model.state.hiddenSources.isEmpty {
+                Section("숨긴 출처") {
+                    ForEach(model.state.hiddenSources, id: \.self) { id in
+                        HStack {
+                            Text(Sections.meta[id]?.name ?? model.allSources.first { $0.id == id }?.name ?? id)
+                            Spacer()
+                            Button("다시 보이기") { model.unhideSource(id) }.buttonStyle(.borderless)
+                        }
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    @ViewBuilder private func sectionRow(_ s: NewsSection) -> some View {
+        let p = model.policy(s.id)
+        let count = model.sourceCount(s.id)
+        HStack(spacing: 10) {
+            Image(systemName: s.symbol).foregroundStyle(.white).font(.system(size: 12, weight: .semibold))
+                .frame(width: 26, height: 26).background(s.tint.gradient, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(s.name).font(.headline)
+                Text(s.isFlow ? "어느 분야든 크게 다룬 소식" : count.all > 0 ? "출처 \(count.on)/\(count.all)곳 켜짐" : "구독 탭에서 출처를 켜고 끕니다")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Picker("", selection: Binding(get: { p.mode }, set: { v in model.setPolicy(s.id) { $0.mode = v } })) {
+                ForEach(NotifyMode.allCases) { Text($0.label).tag($0) }
+            }
+            .pickerStyle(.segmented).labelsHidden().frame(width: 200)
+            .help(p.mode.help)
+        }
+        if p.mode != .magazine {
+            HStack {
+                Picker("묶음 시각", selection: Binding(get: { p.bundleHour }, set: { v in model.setPolicy(s.id) { $0.bundleHour = v } })) {
+                    ForEach(6..<24, id: \.self) { Text(String(format: "%02d:00", $0)).tag($0) }
+                }
+                .help(p.mode == .instant ? "하루 상한을 넘어 고인 소식을 보내는 시각" : "모아 둔 소식을 한 방울로 보내는 시각")
+                if p.mode == .instant {
+                    Stepper("하루 \(p.dailyCap)번까지", value: Binding(get: { p.dailyCap }, set: { v in model.setPolicy(s.id) { $0.dailyCap = v } }), in: 1...10)
+                }
+            }
+        }
+    }
+
     var filters: some View {
         Form {
             Section("낱말로 거르기") {
@@ -209,8 +290,11 @@ extension SettingsView {
                 Button("매거진 열기") { MagazineController.open() }
             }
             Section("단축키") {
-                LabeledContent("가장 최근 안 읽은 소식 열기") { Text("⌥⌘N").monospaced().foregroundStyle(.secondary) }
-                LabeledContent("매거진 열기") { Text("⌥⌘M").monospaced().foregroundStyle(.secondary) }
+                LabeledContent("가장 최근 안 읽은 소식 열기") { hotKeyLabel("⌥⌘N", HotKey.Key.n) }
+                LabeledContent("매거진 열기") { hotKeyLabel("⌥⌘M", HotKey.Key.m) }
+                ForEach(NavKey.help, id: \.0) { key, what in
+                    LabeledContent(what) { Text(key).monospaced().foregroundStyle(.secondary) }
+                }
             }
             Section("같은 소식 묶기") {
                 Text("여러 곳이 같은 소식을 다루면 한 번만 알리고 \"외 N곳\"으로 표시합니다. 공식 발표를 먼저 고릅니다.")
@@ -218,6 +302,16 @@ extension SettingsView {
             }
         }
         .formStyle(.grouped)
+    }
+
+    // 다른 앱이 먼저 쓰고 있어 등록하지 못한 전역 단축키는 그렇다고 알린다
+    private func hotKeyLabel(_ text: String, _ key: HotKey.Key) -> some View {
+        HStack(spacing: 6) {
+            if HotKey.unavailable.contains(key.rawValue) {
+                Label("다른 앱이 쓰는 중", systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(.orange)
+            }
+            Text(text).monospaced().foregroundStyle(.secondary)
+        }
     }
 
     func saveKeywords() {

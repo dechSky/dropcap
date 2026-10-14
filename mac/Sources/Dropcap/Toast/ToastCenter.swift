@@ -4,7 +4,7 @@ import SwiftUI
 // 상단바 바로 아래 오른쪽에 떠 있는 투명한 패널 하나에 물방울 알림을 쌓는다.
 // 카드가 없는 곳은 클릭이 뒤쪽 앱으로 그대로 지나간다.
 struct Toast: Identifiable, Equatable {
-    enum Kind: Equatable { case news(NewsItem), info(String, String), more(Int), digest(Int) }
+    enum Kind: Equatable { case news(NewsItem), info(String, String), more(Int), digest(Int), bundle(String, [NewsItem]) }
     let id = UUID()
     let kind: Kind
     var playSound = false
@@ -55,6 +55,14 @@ final class ToastCenter: ObservableObject {
         push(t)
     }
 
+    // 묶음: 고였던 분야 소식을 한 방울로("경제 7건")
+    func showBundle(section: String, items: [NewsItem]) {
+        guard !items.isEmpty else { return }
+        var t = Toast(kind: .bundle(section, items))
+        t.playSound = AppModel.shared.state.settings.sound
+        push(t)
+    }
+
     func showWelcome() {
         showInfo("Dropcap 실행 중", sub: "새 소식이 오면 이렇게 상단바에서 떨어집니다")
     }
@@ -89,6 +97,7 @@ final class ToastCenter: ObservableObject {
         switch t.kind {
         case .news(let item): AppModel.shared.open(item)
         case .digest: MagazineController.open()
+        case .bundle(let sec, _): MagazineController.open(page: .section(sec))
         default: break
         }
     }
@@ -102,7 +111,7 @@ final class ToastCenter: ObservableObject {
             p.contentView = host
             panel = p
         }
-        guard let panel else { return }
+        guard let panel, Self.cursorScreen() != nil else { return } // 화면이 하나도 없으면(덮개 닫힘 등) 띄우지 않음(A-27)
         if !panel.isVisible || panelScreen != Self.cursorScreen() {
             place(panel) // 새 알림은 언제나 마우스가 있는 화면에
             panel.alphaValue = 1
@@ -134,13 +143,13 @@ final class ToastCenter: ObservableObject {
     }
 
     // 기본은 화면 위쪽 정가운데(노치가 있으면 노치에서 떨어짐). 설정에서 오른쪽 위로 바꿀 수 있다
-    static func cursorScreen() -> NSScreen {
+    static func cursorScreen() -> NSScreen? {
         let mouse = NSEvent.mouseLocation
-        return NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main ?? NSScreen.screens[0]
+        return NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main ?? NSScreen.screens.first
     }
 
     private func place(_ panel: NSPanel) {
-        let screen = Self.cursorScreen()
+        guard let screen = Self.cursorScreen() else { return }
         panelScreen = screen
         let vf = screen.visibleFrame // 상단바 아래부터
         let hasNotch = screen.safeAreaInsets.top > 0
@@ -165,8 +174,7 @@ final class ToastCenter: ObservableObject {
     // 알림이 떠 있는 동안 마우스가 다른 화면으로 가서 잠시 머물면, 카드가 살짝 사라졌다가 그 화면에 다시 나타난다
     private func followCursorScreen(_ panel: NSPanel) {
         guard !moving, !toasts.isEmpty else { return }
-        let target = Self.cursorScreen()
-        guard target != panelScreen else { otherScreenSince = nil; return }
+        guard let target = Self.cursorScreen(), target != panelScreen else { otherScreenSince = nil; return }
         if otherScreenSince == nil { otherScreenSince = Date(); return }
         guard Date().timeIntervalSince(otherScreenSince!) > 0.25 else { return }
         otherScreenSince = nil

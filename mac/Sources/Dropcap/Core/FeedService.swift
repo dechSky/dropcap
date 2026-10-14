@@ -57,14 +57,29 @@ actor FeedService {
         return (Gzip.inflateIfNeeded(data), resp.textEncodingName)
     }
 
+    private var firstSeen: [String: Date] = [:] // 날짜 없는 글을 처음 본 시각(FeedDates.repair)
+
     func items(for source: Source, conditional: Bool = true) async throws -> [NewsItem]? {
-        guard let data = try await fetch(source.url, conditional: conditional) else { return nil }
-        let entries: [FeedParser.Entry]
-        if source.type == "sitemap", let m = source.match, let re = try? NSRegularExpression(pattern: m) {
-            entries = try FeedParser.parseSitemap(data, match: re)
-        } else {
-            entries = try FeedParser.parseFeed(data)
+        let now = Date()
+        var entries: [FeedParser.Entry]
+        do {
+            guard let data = try await fetch(source.url, conditional: conditional) else {
+                await SourceHealthBook.shared.recordUnchanged(source.id, at: now)
+                return nil
+            }
+            if source.type == "sitemap", let m = source.match, let re = try? NSRegularExpression(pattern: m) {
+                entries = try FeedParser.parseSitemap(data, match: re)
+            } else {
+                entries = try FeedParser.parseFeed(data)
+            }
+        } catch {
+            await SourceHealthBook.shared.recordFailure(source.id, error: error.localizedDescription, at: now)
+            throw error
         }
+        let dated = entries.contains { $0.date != nil } // 날짜 없는 피드는 맨 위 글이 바뀌었는지로 새 글을 판단
+        FeedDates.repair(&entries, sourceID: source.id, now: now, firstSeen: &firstSeen)
+        await SourceHealthBook.shared.recordSuccess(source.id, newest: dated ? entries.compactMap(\.date).max() : nil, topID: entries.first?.id,
+                                                    count: entries.count, at: now)
         // 해석에 성공했을 때만 "바뀐 것 없음" 표시를 확정한다(실패한 피드가 304 로 가려지지 않게)
         if let v = pending.removeValue(forKey: source.url) { validators[source.url] = v }
         // http(s) 링크만: file:// · smb:// 같은 주소는 열지 않는다
@@ -224,5 +239,107 @@ extension FeedService {
             }
         }
         return nil
+    }
+}
+
+// 출처 건강: 마지막 성공 시각·마지막 새 글 시각·연속 실패 수. 설정의 출처 줄에 '조용함·멈춤·오류'로 보인다.
+// 상태 파일과 따로 source-health.json 에 둔다(없거나 깨지면 빈 기록으로 시작 — 다음 확인부터 다시 쌓임).
+struct SourceHealth: Codable, Equatable {
+    var lastSuccess: Date?
+    var lastNew: Date?        // 피드에서 가장 새 글의 시각(날짜 없는 피드는 맨 위 글이 바뀐 시각)
+    var failures = 0          // 연속 실패 수(성공하면 0)
+    var lastError: String?
+    var topID: String?        // 맨 위 글 id(날짜 없는 피드용)
+    var count: Int?           // 마지막으로 받은 글 수
+
+    enum Status: Equatable {
+        case unknown              // 아직 확인 전
+        case ok
+        case quiet(days: Int)     // n일째 새 글 없음(드물게 쓰는 곳일 수 있음)
+        case stalled(days: Int)   // 오래 새 글이 없음 — 주소가 바뀌었거나 피드를 닫았을 수 있음
+        case empty                // 받았는데 글이 하나도 없음
+        case failing(count: Int, message: String)
+    }
+
+    static let quietDays = 3
+    static let stalledDays = 30
+    static let failingAfter = 3
+
+    func status(now: Date = Date()) -> Status {
+        if failures >= Self.failingAfter { return .failing(count: failures, message: lastError ?? "") }
+        guard lastSuccess != nil else { return failures > 0 ? .failing(count: failures, message: lastError ?? "") : .unknown }
+        if count == 0 { return .empty }
+        guard let lastNew else { return .ok }
+        let days = Int(now.timeIntervalSince(lastNew) / 86400)
+        if days >= Self.stalledDays { return .stalled(days: days) }
+        if days >= Self.quietDays { return .quiet(days: days) }
+        return .ok
+    }
+
+    mutating func success(newest: Date?, topID: String?, count: Int, at now: Date) {
+        lastSuccess = now
+        failures = 0
+        lastError = nil
+        self.count = count
+        if let newest, newest > (lastNew ?? .distantPast) { lastNew = newest }
+        if newest == nil, let topID, topID != self.topID { lastNew = now } // 날짜 없는 피드: 맨 위 글이 바뀌면 새 글
+        if let topID { self.topID = topID }
+    }
+
+    mutating func failure(_ message: String) {
+        failures += 1
+        lastError = message
+    }
+}
+
+@MainActor
+final class SourceHealthBook: ObservableObject {
+    static let shared = SourceHealthBook()
+    @Published private(set) var records: [String: SourceHealth] = [:]
+    private let file: URL
+    private var saveTask: Task<Void, Never>?
+
+    init(file: URL = Store.dir.appendingPathComponent("source-health.json")) {
+        self.file = file
+        let dec = JSONDecoder()
+        dec.dateDecodingStrategy = .iso8601
+        if let data = try? Data(contentsOf: file), let r = try? dec.decode([String: SourceHealth].self, from: data) { records = r }
+    }
+
+    func status(_ id: String, now: Date = Date()) -> SourceHealth.Status { records[id]?.status(now: now) ?? .unknown }
+
+    func recordSuccess(_ id: String, newest: Date?, topID: String?, count: Int, at now: Date) {
+        records[id, default: SourceHealth()].success(newest: newest, topID: topID, count: count, at: now)
+        scheduleSave()
+    }
+
+    // 304(바뀐 것 없음)도 성공이다. 새 글 시각은 그대로.
+    func recordUnchanged(_ id: String, at now: Date) {
+        records[id, default: SourceHealth()].lastSuccess = now
+        records[id]?.failures = 0
+        records[id]?.lastError = nil
+        scheduleSave()
+    }
+
+    func recordFailure(_ id: String, error: String, at now: Date) {
+        records[id, default: SourceHealth()].failure(error)
+        scheduleSave()
+    }
+
+    // 한 번 확인에 출처 수십 곳이 기록하므로 모아서 쓴다
+    private func scheduleSave() {
+        saveTask?.cancel()
+        saveTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            self?.saveNow()
+        }
+    }
+
+    func saveNow() {
+        let enc = JSONEncoder()
+        enc.dateEncodingStrategy = .iso8601
+        guard let data = try? enc.encode(records) else { return }
+        try? data.write(to: file, options: .atomic)
     }
 }

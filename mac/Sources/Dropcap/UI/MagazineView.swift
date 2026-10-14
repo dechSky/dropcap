@@ -1,10 +1,11 @@
 import AppKit
 import SwiftUI
 
-// AI 매거진: 오늘 호 · 이번 주 · 스토리 · 저장 · 검색 · 지난 호
+// 매거진: 오늘 호 · 이번 주 · 스토리 · 저장 · 검색 · 지난 호
 struct MagazineView: View {
     enum Page: Hashable {
         case today, week, stories, saved, search, scrapbook
+        case section(String)   // 오늘 호의 한 분야
         case issue(Issue)
         case story(String)
     }
@@ -14,7 +15,8 @@ struct MagazineView: View {
     @ObservedObject private var book = Scrapbook.shared
     @State private var page: Page = MagazineController.pendingPage ?? (ProcessInfo.processInfo.environment["DROPCAP_TEST_MAG_PAGE"] == "scrapbook" ? .scrapbook
         : ProcessInfo.processInfo.environment["DROPCAP_TEST_MAG_PAGE"] == "stories" ? .stories
-        : ProcessInfo.processInfo.environment["DROPCAP_TEST_STORY"].map { .story($0) } ?? .today)
+        : ProcessInfo.processInfo.environment["DROPCAP_TEST_STORY"].map { .story($0) }
+        ?? ProcessInfo.processInfo.environment["DROPCAP_TEST_MAG_SECTION"].map { .section($0) } ?? .today)
     @State private var turn = 0   // 넘긴 방향(+1 다음, -1 이전) — 책장 넘김 방향
 
     var body: some View {
@@ -23,6 +25,15 @@ struct MagazineView: View {
                 Section("이번 호") {
                     Label("오늘", systemImage: "newspaper").tag(Page.today)
                     Label("이번 주", systemImage: "calendar").tag(Page.week)
+                }
+                if !app.chosenSections.isEmpty {
+                    Section("분야") {
+                        ForEach(app.chosenSections, id: \.self) { id in
+                            let s = Sections.byID(id)
+                            Label { Text(s?.name ?? id) } icon: { Image(systemName: s?.symbol ?? "circle").foregroundStyle(s?.tint ?? .gray) }
+                                .tag(Page.section(id))
+                        }
+                    }
                 }
                 Section("모아 보기") {
                     Label("스토리", systemImage: "point.3.connected.trianglepath.dotted").tag(Page.stories)
@@ -60,6 +71,8 @@ struct MagazineView: View {
                 Button("") { go(.search) }.keyboardShortcut("f", modifiers: .command)
                 Button("") { go(.scrapbook) }.keyboardShortcut("4", modifiers: .command)
                 Button("") { Task { await AppModel.shared.checkAll(manual: false) } }.keyboardShortcut("r", modifiers: .command)
+                Button("") { flip(-1) }.keyboardShortcut("[", modifiers: .command) // 이전 지면
+                Button("") { flip(1) }.keyboardShortcut("]", modifiers: .command)  // 다음 지면
             }
             .opacity(0).allowsHitTesting(false)
         }
@@ -68,6 +81,7 @@ struct MagazineView: View {
     @ViewBuilder private var detail: some View {
         switch page {
         case .today: IssueView(source: .today, onStory: openStory)
+        case .section(let id): IssueView(source: .today, onStory: openStory, focus: id)
         case .week: IssueView(source: .week, onStory: openStory)
         case .issue(let i): IssueView(source: .fixed(i), onStory: openStory)
         case .stories: StoriesView(onStory: openStory)
@@ -80,6 +94,17 @@ struct MagazineView: View {
 
     private func openStory(_ id: String) { go(.story(id)) }
 
+    // 옆 목록 순서대로 지면 넘기기(⌘[ · ⌘])
+    private var pageOrder: [Page] {
+        [.today, .week] + app.chosenSections.map { .section($0) } + [.stories, .saved, .scrapbook, .search] + mag.archive.map { .issue($0) }
+    }
+    private func flip(_ d: Int) {
+        let list = pageOrder
+        let here: Page = { if case .story = page { return .stories }; return page }()
+        guard let i = list.firstIndex(of: here), list.indices.contains(i + d) else { NSSound.beep(); return }
+        go(list[i + d])
+    }
+
     private func go(_ p: Page) {
         guard p != page else { return }
         turn = order(p) >= order(page) ? 1 : -1
@@ -89,6 +114,7 @@ struct MagazineView: View {
     private func order(_ p: Page) -> Int {
         switch p {
         case .today: return 0
+        case .section: return 1
         case .week: return 1
         case .stories: return 2
         case .story: return 3
@@ -128,23 +154,74 @@ struct IssueView: View {
     let source: Source
     let onStory: (String) -> Void
     @ObservedObject private var mag = Magazine.shared
+    @State private var focus: String?          // 분야 칩으로 고른 한 분야
+    @State private var sub: NewsCategory?      // AI 안의 하위 칩
     @State private var appeared = false
+
+    init(source: Source, onStory: @escaping (String) -> Void, focus: String? = nil) {
+        self.source = source
+        self.onStory = onStory
+        _focus = State(initialValue: focus)
+    }
+
+    // 분야 칩으로 거른 지면
+    private func shown(_ d: Magazine.Resolved) -> [(section: Issue.Section, items: [NewsItem])] {
+        guard let f = focus else { return d.sections }
+        return d.sections.compactMap { sec in
+            guard sec.section.section == f else { return nil }
+            let items = f == Sections.ai && sub != nil ? sec.items.filter { $0.category == sub } : sec.items
+            return items.isEmpty ? nil : (sec.section, items)
+        }
+    }
     @State private var data: Magazine.Resolved?
     @State private var seenRevision = 0
+    @State private var selected: String?       // 키보드로 고른 카드
+    @FocusState private var keyFocus: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    // 지면에 보이는 순서(표지 → 지면마다 정렬된 카드)
+    private func flat(_ d: Magazine.Resolved) -> [NewsItem] {
+        let sort = MagSort(rawValue: sortRaw) ?? .recommended
+        return (focus == nil ? [d.cover?.item].compactMap { $0 } : []) + shown(d).flatMap { sort.apply($0.items) }
+    }
+
+    private func handle(_ press: KeyPress) -> KeyPress.Result {
+        guard let d = data, let k = NavKey.from(press) else { return .ignored }
+        let list = flat(d)
+        switch k {
+        case .next, .prev: selected = NavKey.move(selected, in: list.map(\.key), by: k == .next ? 1 : -1)
+        default:
+            guard let it = list.first(where: { $0.key == selected }) ?? (k == .open ? list.first : nil) else { return .ignored }
+            ItemKeys.perform(k, item: it, sequence: list, fromMagazine: true)
+        }
+        return .handled
+    }
     @AppStorage("magSort") private var sortRaw = MagSort.recommended.rawValue
 
     private var isFixed: Bool { if case .fixed = source { return true }; return false }
     private var newCount: Int { isFixed ? 0 : max(0, mag.revision - seenRevision) }
 
-    private func build() {
-        let issue: Issue
-        switch source {
-        case .today: issue = mag.liveDaily()
-        case .week: issue = mag.liveWeekly()
-        case .fixed(let i): issue = i
+    @State private var buildGen = 0
+
+    // 호를 엮고 꺼내는 일은 화면 줄기 밖(Editor)에서 하고, 다 되면 바꿔 끼운다(늦게 끝난 옛 요청은 버림)
+    private func build(animated: Animation? = nil, then: (() -> Void)? = nil) {
+        buildGen += 1
+        let gen = buildGen, rev = mag.revision
+        Task {
+            let r: Magazine.Resolved
+            switch source {
+            case .today: r = await mag.today()
+            case .week: r = await mag.week()
+            case .fixed(let i): r = await mag.resolve(i)
+            }
+            guard gen == buildGen else { return }
+            withAnimation(animated) { data = r }
+            seenRevision = rev
+            if selected == nil, let n = ProcessInfo.processInfo.environment["DROPCAP_TEST_SELECT"].flatMap(Int.init) { // 시험용: 선택 테두리 보기
+                let list = flat(r); if list.indices.contains(n) { selected = list[n].key }
+            }
+            then?()
         }
-        data = mag.resolve(issue)
-        seenRevision = mag.revision
     }
 
     var body: some View {
@@ -163,7 +240,15 @@ struct IssueView: View {
                                 .padding(.trailing, 36).padding(.bottom, 34)
                                 .help("지면 안의 기사 순서")
                             }
-                        if let c = d.cover {
+                        let chips = d.sections.compactMap { $0.section.section }
+                        if chips.count > 1 || focus != nil {
+                            SectionChipBar(section: $focus, sub: $sub, sections: chips,
+                                           counts: Dictionary(d.sections.compactMap { s in s.section.section.map { ($0, s.items.count) } }, uniquingKeysWith: +))
+                                .padding(.horizontal, 36).padding(.bottom, 18)
+                        }
+                        if focus != nil {
+                            EmptyView()
+                        } else if let c = d.cover {
                             CoverStory(stored: c, issue: d.issue, onStory: onStory)
                                 .padding(.horizontal, 28)
                                 .opacity(appeared ? 1 : 0)
@@ -172,9 +257,9 @@ struct IssueView: View {
                         } else {
                             EmptyIssue(live: !isFixed, preparing: mag.preparing).padding(.horizontal, 36)
                         }
-                        ForEach(Array(d.sections.enumerated()), id: \.element.section.id) { si, sec in
+                        ForEach(Array(shown(d).enumerated()), id: \.element.section.id) { si, sec in
                             SectionBlock(section: sec.section, items: (MagSort(rawValue: sortRaw) ?? .recommended).apply(sec.items),
-                                         issue: d.issue, index: si, onStory: onStory, clusters: d.clusters)
+                                         issue: d.issue, index: si, onStory: onStory, clusters: d.clusters, regions: d.regions)
                                 .padding(.top, 38)
                         }
                         Text("기사 저작권은 각 언론사·기업에 있습니다. 제목·요약·사진은 원문으로 이어 주기 위한 것입니다.")
@@ -183,11 +268,22 @@ struct IssueView: View {
                     }
                 }
             }
+            // 키보드: 카드 고르기·열기·저장·브라우저·읽음(상단바 목록과 같은 키)
+            .environment(\.selectedCard, selected)
+            .environment(\.readerSequence, data.map(flat) ?? [])
+            .focusable()
+            .focusEffectDisabled()
+            .focused($keyFocus)
+            .onKeyPress(phases: .down) { handle($0) }
+            .onChange(of: selected) { _, k in
+                guard let k else { return }
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { proxy.scrollTo(k, anchor: .center) }
+            }
             // 보는 동안 새 소식이 오면 지면을 갈아엎지 않고 위에 알림만 띄운다
             .overlay(alignment: .top) {
                 if newCount > 0 {
                     Button {
-                        withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) { build(); proxy.scrollTo("top") }
+                        build(animated: .spring(response: 0.5, dampingFraction: 0.85)) { withAnimation { proxy.scrollTo("top") } }
                     } label: {
                         Label("새 소식이 들어왔어요 · 새로 보기", systemImage: "arrow.up")
                             .font(.app(12.5, .semibold))
@@ -203,12 +299,12 @@ struct IssueView: View {
             }
             .animation(.spring(response: 0.45, dampingFraction: 0.8), value: newCount > 0)
         }
-        .onAppear { build(); appeared = true }
+        .onAppear { build(); appeared = true; keyFocus = true }
         // 빈 지면이면 알림 없이 바로 채운다(처음 켰을 때)
         .onChange(of: mag.revision) { _, _ in
             // 지면이 비었거나 표지가 아직 없으면 알림 없이 바로 채운다(처음 켰을 때 등)
             if !isFixed, data?.cover == nil || (data?.issue.count ?? 0) == 0 || mag.preparing {
-                withAnimation(.easeOut(duration: 0.4)) { build() }
+                build(animated: .easeOut(duration: 0.4))
             }
         }
         .onChange(of: mag.imageRevision) { _, _ in
@@ -216,8 +312,9 @@ struct IssueView: View {
             let pending = mag.revision != seenRevision
             if !pending { build() }
         }
+        .onChange(of: mag.layoutRevision) { _, _ in build() } // 출처 숨기기·분야 바꾸기는 바로 반영
         .onChange(of: mag.preparing) { _, now in
-            if !now, !isFixed { withAnimation(.easeOut(duration: 0.4)) { build() } } // 첫 호가 다 엮이면 바로 보여 준다
+            if !now, !isFixed { build(animated: .easeOut(duration: 0.4)) } // 첫 호가 다 엮이면 바로 보여 준다
         }
     }
 }
@@ -289,6 +386,8 @@ private struct CoverStory: View {
     let issue: Issue
     let onStory: (String) -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.selectedCard) private var selectedCard
+    @Environment(\.readerSequence) private var sequence
     @State private var drift = false
     @State private var hover = false
     @State private var frame: CGRect = .zero
@@ -318,7 +417,7 @@ private struct CoverStory: View {
                         .padding(.horizontal, 7).padding(.vertical, 3)
                         .background(ink, in: RoundedRectangle(cornerRadius: 4))
                         .foregroundStyle(hasPhoto ? Color.black : Color(nsColor: .textBackgroundColor))
-                    Label(item.category.label, systemImage: item.category.symbol).font(.app(12, .semibold))
+                    Label(item.topicLabel, systemImage: item.topicSymbol).font(.app(12, .semibold))
                     Text("\(item.sourceName) · \(RelativeTime.string(item.date))").font(.app(12))
                 }
                 .foregroundStyle(ink.opacity(0.9))
@@ -331,7 +430,7 @@ private struct CoverStory: View {
                     Text(item.title).font(.app(13)).foregroundStyle(ink.opacity(0.7)).lineLimit(1)
                 }
                 HStack(spacing: 10) {
-                    Button { ReaderController.open(item, from: frame) ; AppModel.shared.markOpened(item) } label: {
+                    Button { ReaderController.open(item, from: frame, sequence: sequence) ; AppModel.shared.markOpened(item) } label: {
                         Label("기사 읽기", systemImage: "book").font(.app(13, .semibold))
                             .padding(.horizontal, 14).padding(.vertical, 8)
                             .background(ink, in: Capsule()).foregroundStyle(hasPhoto ? Color.black : Color(nsColor: .textBackgroundColor))
@@ -358,6 +457,8 @@ private struct CoverStory: View {
         .scaleEffect(hover ? 1.006 : 1)
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hover)
         .onHover { hover = $0 }
+        .selectionRing(selectedCard == item.key, radius: 22)
+        .id(item.key)
         .background(ScreenFrame(frame: $frame))
         .onAppear {
             // 움직임 줄이기를 켠 사람에게는 끝없이 흐르는 켄 번스를 돌리지 않는다
@@ -375,6 +476,7 @@ private struct SectionBlock: View {
     let index: Int
     let onStory: (String) -> Void
     var clusters: [String: String] = [:]
+    var regions: [String: [NewsItem]] = [:]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -388,7 +490,8 @@ private struct SectionBlock: View {
             BalancedGrid(count: items.count) { cols in
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 200, maximum: 360), spacing: 18), count: cols), alignment: .leading, spacing: 22) {
                     ForEach(Array(items.enumerated()), id: \.element.key) { i, it in
-                        StoryCard(item: it, issue: issue, order: i, onStory: onStory, clusterID: clusters[it.key])
+                        StoryCard(item: it, issue: issue, order: i, onStory: onStory, clusterID: clusters[it.key],
+                                  storyItems: clusters[it.key].flatMap { regions[$0] } ?? [])
                     }
                 }
             }
@@ -403,6 +506,9 @@ struct StoryCard: View {
     var order: Int = 0
     var onStory: ((String) -> Void)?
     var clusterID: String?
+    var storyItems: [NewsItem] = []   // 같은 스토리 보도(해외·국내가 섞였을 때만 줄로 보임)
+    @Environment(\.selectedCard) private var selectedCard
+    @Environment(\.readerSequence) private var sequence
     @State private var hover = false
     @State private var tilt: CGSize = .zero
     @State private var shown = false
@@ -411,7 +517,7 @@ struct StoryCard: View {
     var body: some View {
         Button {
             AppModel.shared.markOpened(item)
-            ReaderController.open(item, from: frame)
+            ReaderController.open(item, from: frame, sequence: sequence)
         } label: {
             VStack(alignment: .leading, spacing: 0) {
                 // 마우스를 따라 사진이 살짝 움직이는 시차 효과(사진이 없으면 사진 자리 없이 글만)
@@ -448,6 +554,7 @@ struct StoryCard: View {
                         .lineLimit(3)
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
+                    if !storyItems.isEmpty { RegionSplit(items: storyItems, compact: true) }
                     if AppModel.shared.isRead(item) {
                         Label("읽음", systemImage: "checkmark").font(.app(10.5)).foregroundStyle(.tertiary)
                     }
@@ -463,6 +570,8 @@ struct StoryCard: View {
             .contentShape(RoundedRectangle(cornerRadius: 16))
         }
         .buttonStyle(.plain)
+        .selectionRing(selectedCard == item.key, radius: 16)
+        .id(item.key)
         .onContinuousHover { phase in
             switch phase {
             case .active(let p):
@@ -479,6 +588,7 @@ struct StoryCard: View {
                 Button("여러 시각 보기") { onStory(c) }
             }
             Button("브라우저에서 열기") { ExternalLink.open(item.link) }
+            ReduceMenu(item: item)
         }
         .background(ScreenFrame(frame: $frame))
         // 지면이 차례로 깔리는 느낌: 처음엔 순서대로, 스크롤할 땐 들어오며 또렷해진다
@@ -576,7 +686,7 @@ private struct StoryListCard: View {
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 6) {
-                        if let lead { Label(lead.category.label, systemImage: lead.category.symbol).font(.app(11.5, .semibold)).foregroundStyle(lead.category.color) }
+                        if let lead { Label(lead.topicLabel, systemImage: lead.topicSymbol).font(.app(11.5, .semibold)).foregroundStyle(lead.topicColor) }
                         Text("\(cluster.size)곳 보도").font(.app(11.5, .semibold)).foregroundStyle(.secondary)
                         if fresh > 0 {
                             Text("새 보도 \(fresh)").font(.app(10.5, .bold)).foregroundStyle(.white)
@@ -659,6 +769,8 @@ struct StoryView: View {
                     .background(.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .padding(.bottom, 26)
                 }
+                // 같은 이야기를 해외와 국내가 어떻게 다뤘나(둘 다 있을 때만)
+                RegionSplit(items: items) { it in AppModel.shared.markOpened(it); ReaderController.open(it) }
                 ZStack(alignment: .topLeading) {
                     Rectangle().fill(.primary.opacity(0.15)).frame(width: 2)
                         .frame(maxHeight: .infinity)
@@ -774,6 +886,7 @@ struct SavedView: View {
             VStack(alignment: .leading, spacing: 14) {
                 Text("저장").font(.display(34, .bold)).padding(.top, 28)
                 Text("저장한 기사는 번역까지 이 Mac 에 보관돼 인터넷 없이도 읽을 수 있습니다.").foregroundStyle(.secondary)
+                AddURLBar(compact: false).frame(maxWidth: 560)
                 if app.state.saved.isEmpty {
                     Text("아직 저장한 기사가 없습니다. 카드를 오른쪽 클릭해 '나중에 읽기'로 저장하세요.").foregroundStyle(.secondary).padding(.vertical, 40)
                 }
@@ -805,11 +918,11 @@ struct SearchView: View {
                 HStack {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                     TextField("모든 기록에서 제목·출처·요약 검색", text: $q).textFieldStyle(.plain).font(.app(15))
-                        .onSubmit { results = Magazine.shared.search(q) }
+                        .onSubmit { Task { results = await Magazine.shared.search(q) } }
                         .task(id: q) { // 입력이 멈추면(0.25초) 찾는다
                             guard q.count >= 2 else { if q.isEmpty { results = [] }; return }
                             try? await Task.sleep(for: .milliseconds(250))
-                            if !Task.isCancelled { results = Magazine.shared.search(q) }
+                            if !Task.isCancelled { let r = await Magazine.shared.search(q); if !Task.isCancelled { results = r } }
                         }
                 }
                 .padding(12)
@@ -959,6 +1072,7 @@ struct ScrapbookView: View {
                 .padding(.top, 28)
                 Text("읽기 창에서 문단에 마우스를 올려 ✂︎ 를 누르거나, 도구막대의 스크랩으로 기사를 모아 두세요. 폴더째 Markdown 으로 내보낼 수 있습니다.")
                     .font(.app(13)).foregroundStyle(.secondary)
+                WeeklyQuotes()
 
                 // 폴더 칩
                 ScrollView(.horizontal, showsIndicators: false) {

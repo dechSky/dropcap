@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Dropcap 앱 아이콘(물방울): mac/scripts/make-icon.swift 와 같은 도형·색을 SVG 로 옮긴 것 -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="100" x2="0" y2="924" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="rgb(25.5,33.15,76.5)"/>
+      <stop offset="1" stop-color="rgb(10.2,12.75,33.15)"/>
+    </linearGradient>
+    <linearGradient id="water" x1="392" y1="219" x2="632" y2="779" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="rgb(140,224,255)"/>
+      <stop offset="0.55" stop-color="rgb(41,133,255)"/>
+      <stop offset="1" stop-color="rgb(46,64,242)"/>
+    </linearGradient>
+    <linearGradient id="gloss" x1="0" y1="100" x2="0" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.10"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="tileShadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+    <filter id="glow" x="-40%" y="-30%" width="180%" height="170%">
+      <feDropShadow dx="0" dy="10" stdDeviation="20" flood-color="rgb(51,153,255)" flood-opacity="0.6"/>
+    </filter>
+    <clipPath id="tileClip"><rect x="100" y="100" width="824" height="824" rx="185"/></clipPath>
+    <path id="drop" d="M512 210.25 C573.25 332.75 687 455.25 687 604 A175 175 0 0 1 337 604 C337 455.25 450.75 332.75 512 210.25 Z"/>
+    <clipPath id="dropClip"><use href="#drop"/></clipPath>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#000" filter="url(#tileShadow)"/>
+  <g clip-path="url(#tileClip)">
+    <rect x="100" y="100" width="824" height="824" fill="url(#bg)"/>
+    <ellipse cx="512" cy="694" rx="300" ry="96" fill="none" stroke="rgb(115,191,255)" stroke-opacity="0.10" stroke-width="10"/>
+    <ellipse cx="512" cy="694" rx="225" ry="72" fill="none" stroke="rgb(115,191,255)" stroke-opacity="0.16" stroke-width="10"/>
+    <use href="#drop" fill="#fff" filter="url(#glow)"/>
+    <g clip-path="url(#dropClip)">
+      <rect x="300" y="200" width="420" height="600" fill="url(#water)"/>
+      <ellipse cx="431" cy="525" rx="24" ry="39" fill="#fff" fill-opacity="0.85"/>
+      <circle cx="431" cy="611" r="11" fill="#fff" fill-opacity="0.5"/>
+    </g>
+    <rect x="100" y="100" width="824" height="412" fill="url(#gloss)"/>
+  </g>
+</svg>

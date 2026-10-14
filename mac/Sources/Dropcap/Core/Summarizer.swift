@@ -4,12 +4,16 @@ import FoundationModels
 // 기사 3줄 요약. macOS 26 이상에서 Apple Intelligence 가 켜져 있으면 이 Mac 안에서(무료·비공개) 만든다.
 // 쓸 수 없으면 nil 을 돌려주고, 읽기 창은 요약 칸을 숨긴다.
 enum Summarizer {
+    nonisolated(unsafe) private static var loggedUnavailable = false
     static var available: Bool {
         guard #available(macOS 26.0, *) else { return false }
         switch SystemLanguageModel.default.availability {
         case .available: return true
         case .unavailable(let why):
-            NSLog("[요약] Apple Intelligence 를 쓸 수 없음: %@", String(describing: why))
+            if !loggedUnavailable { // 기사마다·화면을 그릴 때마다 같은 로그가 쌓이지 않게 한 번만(A-34)
+                loggedUnavailable = true
+                NSLog("[요약] Apple Intelligence 를 쓸 수 없음: %@", String(describing: why))
+            }
             return false
         }
     }

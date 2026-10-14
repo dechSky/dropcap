@@ -199,3 +199,75 @@ enum ChannelResolver {
         return String(s[r])
     }
 }
+
+// OPML 가져오기·내보내기. 내보내기는 켜진 출처를 분야별 묶음으로, 가져오기는 묶음과 상관없이 피드 주소만 모은다.
+enum OPML {
+    struct Entry: Equatable {
+        var title: String
+        var url: String
+        var home: String?
+    }
+
+    static func export(_ sources: [Source], sectionName: (String) -> String, date: Date = Date()) -> String {
+        var out = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <opml version="2.0">
+          <head>
+            <title>Dropcap 구독 목록</title>
+            <dateCreated>\(rfc822.string(from: date))</dateCreated>
+          </head>
+          <body>
+
+        """
+        var order: [String] = []
+        var groups: [String: [Source]] = [:]
+        for s in sources {
+            if groups[s.sectionID] == nil { order.append(s.sectionID) }
+            groups[s.sectionID, default: []].append(s)
+        }
+        for sec in order {
+            let name = escape(sectionName(sec))
+            out += "    <outline text=\"\(name)\" title=\"\(name)\">\n"
+            for s in groups[sec] ?? [] {
+                var attrs = "type=\"rss\" text=\"\(escape(s.name))\" title=\"\(escape(s.name))\" xmlUrl=\"\(escape(s.url))\""
+                if let h = s.home { attrs += " htmlUrl=\"\(escape(h))\"" }
+                out += "      <outline \(attrs)/>\n"
+            }
+            out += "    </outline>\n"
+        }
+        out += "  </body>\n</opml>\n"
+        return out
+    }
+
+    // 안쪽 묶음까지 훑어 xmlUrl 이 있는 것만, 같은 주소는 한 번만
+    static func parse(_ data: Data) throws -> [Entry] {
+        let root = try FeedParser.tree(data)
+        guard let body = root.child("opml")?.child("body") else { throw FeedError.badFormat }
+        var out: [Entry] = []
+        var seen = Set<String>()
+        func walk(_ n: XNode) {
+            for c in n.all("outline") {
+                if let u = (c.attrs["xmlUrl"] ?? c.attrs["xmlurl"])?.trimmingCharacters(in: .whitespacesAndNewlines), !u.isEmpty, seen.insert(u).inserted {
+                    let t = (c.attrs["title"] ?? c.attrs["text"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    out.append(Entry(title: t, url: u, home: c.attrs["htmlUrl"]))
+                }
+                walk(c)
+            }
+        }
+        walk(body)
+        return out
+    }
+
+    static func escape(_ s: String) -> String {
+        s.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;").replacingOccurrences(of: "'", with: "&apos;")
+    }
+
+    private static let rfc822: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "UTC")
+        f.dateFormat = "EEE, dd MMM yyyy HH:mm:ss Z"
+        return f
+    }()
+}

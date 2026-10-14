@@ -69,6 +69,7 @@ struct ToastView: View {
     @State private var thumb: String?            // 카드의 사진(피드에 없으면 기사 머리에서 찾아 옴)
     @State private var developed: Double = 0     // 사진 인화 정도 0~1            // 물이 다 차고 잔잔해짐: 다시 그리는 횟수를 줄인다
     @State private var leaving = false
+    @State private var savedNow: Bool?
     private let lifetime: Double = 9
 
     private var dripColor: Color { center.notchMode ? .black : toast.accent.mix(.white, 0.18) }
@@ -85,7 +86,7 @@ struct ToastView: View {
 
     private var isNews: Bool { if case .news = toast.kind { return true }; return false }
     private var isClickable: Bool {
-        switch toast.kind { case .news, .digest: return true; default: return false }
+        switch toast.kind { case .news, .digest, .bundle: return true; default: return false }
     }
 
     var body: some View {
@@ -141,6 +142,7 @@ struct ToastView: View {
                     .shadow(color: .black.opacity(0.08 * shadow), radius: 2, y: 1)
             }
             .onTapGesture { tap() }
+            .contextMenu { if case .news(let item) = toast.kind { ReduceMenu(item: item) } }
     }
 
     @ViewBuilder private var glass: some View {
@@ -168,8 +170,9 @@ struct ToastView: View {
     @ViewBuilder private var quickActions: some View {
         if case .news(let item) = toast.kind {
             HStack(spacing: 4) {
-                QuickButton(symbol: AppModel.shared.isSaved(item) ? "bookmark.fill" : "bookmark", help: "나중에 읽기") {
+                QuickButton(symbol: (savedNow ?? AppModel.shared.isSaved(item)) ? "bookmark.fill" : "bookmark", help: "나중에 읽기") {
                     AppModel.shared.toggleSaved(item)
+                    savedNow = AppModel.shared.isSaved(item) // 카드가 AppModel 을 보지 않으므로 누른 즉시 아이콘을 바꾼다(A-28)
                 }
                 QuickButton(symbol: "safari", help: "브라우저에서 열기") {
                     ExternalLink.open(item.link)
@@ -215,7 +218,7 @@ struct ToastView: View {
                                 .help("꼭 알림 낱말이 들어간 소식")
                         }
                         Text(item.sourceName).font(.app(11.5, .semibold)).lineLimit(1)
-                        CategoryChip(category: item.category)
+                        TopicChip(item: item)
                         if let r = item.related, !r.isEmpty {
                             Text("외 \(r.count)곳").font(.app(10.5, .medium)).foregroundStyle(.secondary)
                                 .help("같은 소식: \(r.joined(separator: ", "))")
@@ -273,8 +276,32 @@ struct ToastView: View {
                     .background(.orange.opacity(0.13), in: Circle())
                     .rise(reveal, 0)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("오늘의 AI 브리핑").font(.app(13.5, .semibold)).rise(reveal, 1)
+                    Text("오늘의 브리핑").font(.app(13.5, .semibold)).rise(reveal, 1)
                     Text("지난 하루 소식 \(n)건 — 매거진에서 보기").font(.app(12)).foregroundStyle(.secondary).rise(reveal, 2)
+                }
+            }
+            .padding(EdgeInsets(top: 12, leading: 13, bottom: 12, trailing: 16))
+        case .bundle(let sec, let items):
+            let s = Sections.byID(sec)
+            HStack(alignment: .top, spacing: 11) {
+                Image(systemName: s?.symbol ?? "tray.full")
+                    .font(.app(15, .semibold))
+                    .foregroundStyle(s?.tint ?? .accentColor)
+                    .frame(width: 30, height: 30)
+                    .background((s?.tint ?? .accentColor).opacity(0.14), in: Circle())
+                    .rise(reveal, 0)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 5) {
+                        Text(Sections.name(sec)).font(.app(13.5, .semibold))
+                        Text("\(items.count)건").font(.app(13.5, .semibold)).foregroundStyle(s?.tint ?? .accentColor)
+                        Spacer(minLength: 4)
+                        Text("모아 보기").font(.app(11)).foregroundStyle(.tertiary)
+                    }
+                    .rise(reveal, 1)
+                    ForEach(Array(items.prefix(2).enumerated()), id: \.offset) { _, it in
+                        Text("· " + it.displayTitle).font(.app(12)).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    .rise(reveal, 2)
                 }
             }
             .padding(EdgeInsets(top: 12, leading: 13, bottom: 12, trailing: 16))
@@ -433,6 +460,18 @@ extension Color {
     }
 }
 
+
+struct TopicChip: View {
+    let item: NewsItem
+    var body: some View {
+        Label(item.topicLabel, systemImage: item.topicSymbol)
+            .font(.app(10.5, .semibold))
+            .foregroundStyle(item.topicColor)
+            .padding(.horizontal, 6).padding(.vertical, 1)
+            .background(item.topicColor.opacity(0.13), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+            .lineLimit(1)
+    }
+}
 
 struct CategoryChip: View {
     let category: NewsCategory

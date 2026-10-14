@@ -1,0 +1,42 @@
+[package]
+name = "dropcap-gtk"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Dropcap — AI 소식 매거진·알림(리눅스 GTK4 판)"
+
+[[bin]]
+name = "dropcap"
+path = "src/main.rs"
+
+[features]
+# 맥에서 개발할 때는 기능 없이(GTK4·libadwaita 만) 빌드·실행된다.
+# 리눅스 배포판은 linux 묶음을 켠다: cargo build --release --features linux
+default = []
+linux = ["webkit", "layer-shell", "tray", "x11", "notify", "speech"]
+webkit = ["dep:webkit6"]                 # 읽기 창 느린 길·Readability.js(WebKitGTK 6)
+layer-shell = ["dep:gtk4-layer-shell"]   # Wayland(KDE·Sway 등) 물방울 위치
+tray = ["dep:ksni"]                       # StatusNotifierItem 트레이
+x11 = ["dep:x11rb"]                       # 작업 영역·클릭 통과·전역 단축키(X11)
+notify = ["dep:notify-rust"]              # 시스템 알림(org.freedesktop.Notifications)
+speech = []                               # speech-dispatcher(spd-say) 소리 내어 읽기
+
+[dependencies]
+dropcap-core = { path = "../dropcap-core" }
+gtk = { package = "gtk4", version = "0.11", features = ["v4_14"] }
+adw = { package = "libadwaita", version = "0.9", features = ["v1_5"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+async-channel = "2"
+chrono = "0.4"
+log = "0.4"
+env_logger = "0.11"
+once_cell = "1"
+serde_json = "1"
+url = "2"
+pangocairo = "0.22"
+pango = { version = "0.22", features = ["v1_56"] }
+webkit6 = { version = "0.6", optional = true }
+gtk4-layer-shell = { version = "0.8", optional = true }
+ksni = { version = "0.3", optional = true, features = ["blocking"] }
+x11rb = { version = "0.14", optional = true, features = ["shape", "xinerama", "randr"] }
+notify-rust = { version = "4", optional = true, default-features = false, features = ["z"] }

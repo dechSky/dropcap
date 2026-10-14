@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "_note": "AI 분야 안의 하위 분류(C-16, 맥 Category.swift 와 같은 분류·낱말·색). 일반 뉴스 분야는 shared/categories.json(G-01).",
+  "fallback": "other",
+  "classifyOrder": ["security", "policy", "business", "research", "model"],
+  "kindCategory": { "paper": "research", "release": "model" },
+  "categories": [
+    { "id": "model", "label": "모델·제품", "icon": "cat.model", "light": "#007AFF", "dark": "#0A84FF",
+      "words": ["model", "gpt", "claude", "gemini", "llama", "release", "launch", "introducing", "announc", "api", "agent", "app", "feature", "update", "open-source", "open source", "weights", "모델", "출시", "공개", "발표", "업데이트", "에이전트", "오픈소스", "기능"] },
+    { "id": "research", "label": "연구", "icon": "cat.research", "light": "#AF52DE", "dark": "#BF5AF2",
+      "words": ["research", "paper", "study", "benchmark", "dataset", "arxiv", "scientists", "researchers", "논문", "연구", "벤치마크", "데이터셋", "학회"] },
+    { "id": "policy", "label": "정책·규제", "icon": "cat.policy", "light": "#5856D6", "dark": "#5E5CE6",
+      "words": ["regulat", "policy", "law", "act ", "congress", "senate", "eu ", "government", "lawsuit", "court", "copyright", "ban ", "규제", "정책", "법안", "정부", "소송", "저작권", "국회", "가이드라인"] },
+    { "id": "business", "label": "투자·기업", "icon": "cat.business", "light": "#34C759", "dark": "#30D158",
+      "words": ["funding", "raises", "valuation", "acquire", "acquisition", "ipo", "invest", "revenue", "partnership", "deal", "layoff", "hires", "투자", "인수", "상장", "매출", "협력", "제휴", "유치", "기업가치", "파트너십"] },
+    { "id": "security", "label": "보안", "icon": "cat.security", "light": "#FF3B30", "dark": "#FF453A",
+      "words": ["security", "vulnerab", "exploit", "jailbreak", "malware", "phishing", "breach", "cyber", "보안", "해킹", "취약점", "유출", "사이버"] },
+    { "id": "other", "label": "기타", "icon": "cat.other", "light": "#8E8E93", "dark": "#8E8E93", "words": [] }
+  ]
+}

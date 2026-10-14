@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 화면 쪽 중 운영체제와 무관한 것: 화면 데이터(JSON)·명령 처리, 알림 카드 그리기(SkiaSharp), 사진 로더, 소리 합성, 웹 화면(web/).
+       윈도우 앱(Dropcap.App)이 쓰고, 맥에서도 빌드·시험한다. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Dropcap.Ui</RootNamespace>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Dropcap.Core\Dropcap.Core.csproj" />
+    <PackageReference Include="SkiaSharp" Version="4.153.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Dropcap.Core.Tests" />
+  </ItemGroup>
+
+  <!-- 웹 화면과 맥과 같은 자원(빌드 때 앱 자원으로 복사: Pretendard OFL·Readability Apache-2.0, 고지는 저장소 THIRD_PARTY_NOTICES.md) -->
+  <ItemGroup>
+    <Content Include="web\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\mac\Resources\Fonts\PretendardVariable.ttf" Link="web\fonts\PretendardVariable.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\mac\Resources\Fonts\Pretendard-LICENSE.txt" Link="web\fonts\Pretendard-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\mac\Resources\Readability.js" Link="web\Readability.js" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

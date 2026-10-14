@@ -96,6 +96,7 @@ final class ArticleService {
         guard let url = URL(string: item.link), let art = await ArticleExtractor().extract(url, allowScripts: interactive) else {
             if !interactive { // 미리 받기 실패는 조용히 넘기고, 열 때 다시 시도
                 memory.removeValue(forKey: item.link)
+                order.removeAll { $0 == item.link } // 다시 준비할 때 LRU 목록에 두 번 들어가지 않게(A-23)
                 return PreparedArticle(stage: .failed, title: item.displayTitle, originalTitle: item.title)
             }
             a.fallback = await Translator.shared.translate(item.summary)

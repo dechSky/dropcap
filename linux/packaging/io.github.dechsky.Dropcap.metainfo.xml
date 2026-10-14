@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.dechsky.Dropcap</id>
+  <name>Dropcap</name>
+  <summary>AI news magazine and drip notifications</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>Dropcap watches trusted AI news sources and drips a notification from the top of the screen when something new is published. Articles open in a clean reader with Korean translation, and are woven into a daily and weekly magazine.</p>
+  </description>
+  <launchable type="desktop-id">io.github.dechsky.Dropcap.desktop</launchable>
+  <url type="homepage">https://github.com/dechSky/dropcap</url>
+  <content_rating type="oars-1.1"/>
+</component>

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ko" data-page="magazine">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https://img.dropcap.example data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'none'; frame-src 'none'">
+<title>Dropcap</title>
+<link rel="stylesheet" href="base.css">
+<link rel="stylesheet" href="magazine.css">
+<script src="bridge.js"></script>
+<script src="ui.js"></script>
+<script src="mock/magazine.js"></script>
+</head>
+<body>
+<aside class="side" id="side">
+  <div class="sh">이번 호</div>
+  <button class="nav" data-go="today"><i data-ic="newspaper"></i><span>오늘</span></button>
+  <button class="nav" data-go="week"><i data-ic="calendar"></i><span>이번 주</span></button>
+  <div id="secs"></div>
+  <div class="sh">모아 보기</div>
+  <button class="nav" data-go="stories"><i data-ic="stories"></i><span>스토리</span></button>
+  <button class="nav" data-go="saved"><i data-ic="bookmark"></i><span id="nSaved">저장</span></button>
+  <button class="nav" data-go="scrapbook"><i data-ic="scissors"></i><span id="nScraps">스크랩북</span></button>
+  <button class="nav" data-go="search"><i data-ic="search"></i><span>검색</span></button>
+  <div id="archive"></div>
+</aside>
+<main class="detail" id="detail"></main>
+<script src="magazine.js"></script>
+</body>
+</html>

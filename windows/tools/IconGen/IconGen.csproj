@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- 앱 아이콘(.ico)을 코드로 그려 파일로 쓴다. 쓰는 법은 Program.cs 첫 줄 -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\Dropcap.Ui\Dropcap.Ui.csproj" />
+  </ItemGroup>
+</Project>

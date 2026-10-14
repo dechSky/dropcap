@@ -1,0 +1,11 @@
+# 윈도우 판 생성물(루트 .gitignore 의 bin/obj 외)
+.vs/
+*.user
+TestResults/
+publish/
+dist/
+AppPackages/
+*.pfx
+
+# 루트의 *.app/(맥 앱 묶음) 규칙이 대소문자 구분 없는 디스크에서 이 폴더까지 숨기지 않게
+!Dropcap.App/

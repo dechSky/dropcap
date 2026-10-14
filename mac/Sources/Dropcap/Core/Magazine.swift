@@ -8,11 +8,17 @@ struct Issue: Codable, Identifiable, Hashable {
         var category: NewsCategory
         var keys: [String]
         var kind: String? = nil   // 영상·논문 등 구독 채널 지면이면 그 종류
+        var section: String? = nil // 일반 뉴스 분야 지면이면 그 분야 id(예전에 엮은 호에는 없음)
 
-        var id: String { kind ?? category.rawValue }
-        var label: String { kind.flatMap { ItemKind(rawValue: $0)?.label } ?? (category == .other ? "그 밖의 소식" : category.label) }
-        var symbol: String { kind.flatMap { ItemKind(rawValue: $0)?.symbol } ?? category.symbol }
+        var id: String { kind ?? section.map { "s-" + $0 } ?? category.rawValue }
+        var label: String {
+            if let k = kind.flatMap({ ItemKind(rawValue: $0) }) { return k.label }
+            if let s = Sections.byID(section) { return s.name }
+            return category == .other ? "그 밖의 소식" : category.label
+        }
+        var symbol: String { kind.flatMap { ItemKind(rawValue: $0)?.symbol } ?? Sections.byID(section)?.symbol ?? category.symbol }
         var color: Color {
+            if kind == nil, let s = Sections.byID(section) { return s.tint }
             switch kind {
             case "video": return .red
             case "paper": return Color(hex: "#B31B1B")
@@ -54,6 +60,7 @@ final class Magazine: ObservableObject {
 
     @Published private(set) var revision = 0   // 새 기사가 들어올 때마다 바뀜(화면 갱신용)
     @Published private(set) var imageRevision = 0 // 사진만 채워졌을 때(조용히 다시 그림)
+    @Published private(set) var layoutRevision = 0 // 숨긴 출처·고른 분야가 바뀜(알림 띠 없이 바로 다시 엮음)
     @Published private(set) var archive: [Issue] = []
     @Published var preparing = false             // 첫 호를 엮는 중
     var grown: [(Database.Cluster, NewsItem)] = [] // 이번에 팔로우한 스토리에 붙은 새 보도(알림 뒤 비움)
@@ -64,82 +71,41 @@ final class Magazine: ObservableObject {
         archive = db.issues()
     }
 
-    // MARK: 받아 넣기
+    // MARK: 받아 넣기 — 무거운 일은 Editor(화면 줄기 밖)가 하고 여기선 결과만 반영한다
+    private let editor = Editor.shared
+
+    // 편집에 쓰는 앱 상태 사본
+    var context: EditContext {
+        let st = AppModel.shared.state
+        return EditContext(hidden: Set(st.hiddenSources), chosen: st.sectionsChosen, limits: st.settings.limits,
+                           interestCategory: st.interestCategory, interestSource: st.interestSource, followed: Set(st.followedStories))
+    }
+
     // 처음 실행: 예전 기록(최근 소식·저장)을 옮겨 온다. 이미 있으면 건너뜀.
-    func migrateIfNeeded(from state: AppState) {
+    func migrateIfNeeded(from state: AppState) async {
         guard db.itemCount == 0 else { return }
         let items = state.recent + state.saved
         guard !items.isEmpty else { return }
-        ingest(items.sorted { ($0.date ?? .distantPast) < ($1.date ?? .distantPast) })
-        backfillIssues()
+        await ingest(items.sorted { ($0.date ?? .distantPast) < ($1.date ?? .distantPast) })
+        await publishDue()
         NSLog("[매거진] 예전 기록 %d건을 옮겼습니다", items.count)
-    }
-
-    // 기사 하나를 스토리에 넣는다: 대표 기사와 같은 소식이면 그 스토리에, 아니면 새 스토리. (스토리 id, 기존 스토리에 붙었는지)
-    private func assign(_ it: NewsItem, tokens: Set<String>, when: Date, clusters: inout [Database.Cluster], representatives: inout [String: NewsItem]) -> (String, Bool) {
-        if let i = clusters.firstIndex(where: { c in representatives[c.id].map { StoryMatch.same(it, $0) } ?? false }) {
-            clusters[i].size += 1
-            clusters[i].last = max(clusters[i].last, when)
-            clusters[i].first = min(clusters[i].first, when)
-            if it.tier == "lab" { clusters[i].title = it.displayTitle } // 공식 발표 제목을 스토리 이름으로
-            db.saveCluster(clusters[i])
-            return (clusters[i].id, true)
-        }
-        let c = Database.Cluster(id: UUID().uuidString, title: it.displayTitle, tokens: tokens, first: when, last: when, size: 1)
-        clusters.append(c)
-        db.saveCluster(c)
-        representatives[c.id] = it
-        return (c.id, false)
     }
 
     // 같은 소식 판정 기준이 바뀌면 최근 2주 스토리를 새 기준으로 다시 묶는다(한 번만)
     static let storyRuleVersion = 2
-    func reclusterIfNeeded() {
+    func reclusterIfNeeded() async {
         let key = "storyRuleVersion"
         guard UserDefaults.standard.integer(forKey: key) < Self.storyRuleVersion else { return }
         UserDefaults.standard.set(Self.storyRuleVersion, forKey: key)
-        let since = Date().addingTimeInterval(-14 * 24 * 3600)
-        let stored: [Database.StoredItem] = db.items(from: since, limit: 5000)
-        var items: [NewsItem] = stored.map { $0.item }.filter { $0.itemKind == .article || $0.itemKind == .video }
-        items.sort { ($0.date ?? .distantPast) < ($1.date ?? .distantPast) }
-        db.resetClusters(since: since)
-        var clusters: [Database.Cluster] = [], reps: [String: NewsItem] = [:]
-        for it in items {
-            let (id, _) = assign(it, tokens: StoryMatch.tokens(it.title), when: it.date ?? Date(), clusters: &clusters, representatives: &reps)
-            db.setCluster(it.key, id)
-        }
-        NSLog("[스토리] 새 기준으로 %d건을 다시 묶음 → 여러 곳 스토리 %d개", items.count, clusters.filter { $0.size >= 2 }.count)
+        let (n, multi) = await editor.recluster()
+        NSLog("[스토리] 새 기준으로 %d건을 다시 묶음 → 여러 곳 스토리 %d개", n, multi)
         revision += 1
     }
 
     // 새로 들어온 기사 전부(같은 소식으로 묶여 알림에서 빠진 것도 포함)
-    func ingest(_ items: [NewsItem]) {
+    func ingest(_ items: [NewsItem]) async {
         guard !items.isEmpty else { return }
-        let since = Date().addingTimeInterval(-7 * 24 * 3600)
-        var clusters = db.recentClusters(since: since)
-        // 스토리마다 대표 기사 하나(뜻 비교용)
-        var representatives: [String: NewsItem] = [:]
-        for c in clusters { if let first = db.items(inCluster: c.id).last?.item { representatives[c.id] = first } }
-        for it in items {
-            let tokens = StoryMatch.tokens(it.title)
-            let when = it.date ?? Date()
-            var cid: String?
-            // 스토리의 대표 기사와만 비교한다(낱말을 계속 보태면 눈덩이처럼 아무 기사나 붙는다)
-            // 이미 있는 기사는 스토리를 다시 정하지 않는다(대표가 자기 자신이면 '같은 출처'로 보여 새 스토리가 생기던 문제)
-            if db.exists(it.key) {
-                db.upsert(it, cluster: nil)
-                continue
-            }
-            // 기사만 스토리로 묶는다(논문·릴리스·커뮤니티 글은 양이 많고 성격이 달라 제외)
-            if it.itemKind != .article && it.itemKind != .video {
-                db.upsert(it, cluster: nil)
-                continue
-            }
-            let (id, joined) = assign(it, tokens: tokens, when: when, clusters: &clusters, representatives: &representatives)
-            cid = id
-            if joined, AppModel.shared.state.followedStories.contains(id) , let c = clusters.first(where: { $0.id == id }) { grown.append((c, it)) }
-            db.upsert(it, cluster: cid)
-        }
+        grown += await editor.ingest(items, followed: context.followed)
         revision += 1
         enrichImages()
     }
@@ -149,8 +115,10 @@ final class Magazine: ObservableObject {
         guard !enriching else { return }
         enriching = true
         if enrichTried.count > 5000 { enrichTried.removeAll() } // 오래 켜 둬도 끝없이 커지지 않게
-        let todo = Self.toEnrich(db.items(from: Date().addingTimeInterval(-3 * 24 * 3600), limit: 300), tried: enrichTried)
+        let tried = enrichTried
         Task {
+            // 최근 기사 300건을 읽어 고르는 일도 화면 줄기 밖에서
+            let todo = Self.toEnrich(await editor.recentItems(since: Date().addingTimeInterval(-3 * 24 * 3600), limit: 300), tried: tried)
             var changed = false
             for s in todo {
                 enrichTried.insert(s.item.key)
@@ -170,113 +138,58 @@ final class Magazine: ObservableObject {
         Array(items.filter { $0.item.image == nil && !$0.item.link.isEmpty && !tried.contains($0.item.key) }.prefix(12))
     }
 
-    // MARK: 점수
-    // 공식 발표·여러 곳 보도·중요 낱말·관심 분야는 위로, 오래될수록 아래로
-    func score(_ s: Database.StoredItem, clusterSize: Int, now: Date = Date()) -> Double {
-        let it = s.item
-        let tier: Double = ["lab": 2.2, "press": 1.2, "kr": 1.0][it.tier] ?? 0.8
-        let coverage = 1.6 * log(1 + Double(max(clusterSize, 1)))
-        let important = it.important == true ? 2.5 : 0
-        let interest = AppModel.shared.interestWeight(category: it.category, source: it.sourceId)
-        let hours = max(0, now.timeIntervalSince(it.date ?? s.firstSeen) / 3600)
-        let fresh = 2.0 * exp(-hours / 18)
-        let picture = it.image == nil ? 0 : 0.4
-        return tier + coverage + important + interest + fresh + picture
-    }
-
-    // MARK: 호 엮기
-    func makeIssue(kind: Issue.Kind, from: Date, to: Date, id: String) -> Issue {
-        // 기사와 구독 채널 글을 따로(논문이 많아도 기사가 잘리지 않게)
-        let stored = db.items(from: from, to: to, limit: 4000, articlesOnly: true) + db.items(from: from, to: to, limit: 800, channelsOnly: true)
-        // 같은 스토리는 대표 하나만 지면에(점수 높은 것)
-        var sizes: [String: Int] = [:]
-        for s in stored { if let c = s.cluster { sizes[c, default: 0] += 1 } }
-        var best: [String: (Database.StoredItem, Double)] = [:]
-        var loose: [(Database.StoredItem, Double)] = []
-        for s in stored {
-            let sc = score(s, clusterSize: s.cluster.flatMap { sizes[$0] } ?? 1, now: to)
-            if let c = s.cluster {
-                if (best[c]?.1 ?? -1) < sc { best[c] = (s, sc) }
-            } else {
-                loose.append((s, sc))
-            }
+    // 분야 지면: 주요 뉴스(국내 n곳·해외 n곳 넘게 보도된 소식) → 고른 분야 → 나머지 분야 → 그 밖의 소식.
+    // 기사는 한 지면에만(고른 분야에 걸린 칩이 있으면 그 분야, 없으면 대표 분야).
+    nonisolated static func sectionPages(_ articles: [Database.StoredItem], stored: [Database.StoredItem], chosen: [String]?,
+                                         limits: PolicyLimits, perSection: Int,
+                                         meta: [String: SourceMeta] = Sections.meta) -> [Issue.Section] {
+        let picks = chosen ?? Sections.all.map(\.id)
+        // 스토리마다 국내·해외 출처 수(이 호의 기간 안에서)
+        var outlets: [String: [String: String]] = [:] // 스토리 → 출처 → 지역
+        for s in stored { if let c = s.cluster { outlets[c, default: [:]][s.item.sourceId] = Sections.region(ofSource: s.item.sourceId, tier: s.item.tier, meta: meta) } }
+        func coverage(_ s: Database.StoredItem) -> Coverage {
+            let m = s.cluster.flatMap { outlets[$0] } ?? [s.item.sourceId: Sections.region(ofSource: s.item.sourceId, tier: s.item.tier, meta: meta)]
+            return Coverage(kr: m.values.filter { $0 == "kr" }.count, intl: m.values.filter { $0 != "kr" }.count)
         }
-        let ranked = (Array(best.values) + loose).sorted { $0.1 > $1.1 }
-        let limit = kind == .weekly ? 40 : 60
-        let picked = ranked.filter { $0.0.item.itemKind == .article }.prefix(limit)
-        // 표지: 사진이 있는 기사 중 점수 1등(없으면 그냥 1등)
-        let cover = picked.first { $0.0.item.image != nil } ?? picked.first
-        var sections: [Issue.Section] = []
-        let articles = picked.filter { $0.0.item.itemKind == .article && $0.0.item.key != cover?.0.item.key }
+        var used = Set<String>()
+        var pages: [Issue.Section] = []
+        if picks.contains(Sections.top) {
+            let keys = articles.filter { NotifyPolicy.crosses(coverage($0), limits) }.map(\.item.key).prefix(8)
+            if !keys.isEmpty { pages.append(.init(category: .other, keys: Array(keys), section: Sections.top)); used.formUnion(keys) }
+        }
+        var bySection: [String: [String]] = [:]
+        for s in articles where !used.contains(s.item.key) {
+            let p = Sections.place(s.item, meta: meta)
+            let home = p.chips.first { picks.contains($0) } ?? p.primary
+            bySection[home, default: []].append(s.item.key)
+        }
         var leftovers: [String] = []
-        for cat in NewsCategory.allCases where cat != .other {
-            let keys = articles.filter { $0.0.item.category == cat }.map(\.0.item.key)
-            // 한 건뿐인 분야는 지면이 휑하므로 '그 밖의 소식'으로 모은다
-            if keys.count >= 2 { sections.append(.init(category: cat, keys: Array(keys.prefix(kind == .weekly ? 8 : 12)))) } else { leftovers += keys }
+        let order = Sections.all.map(\.id).filter { $0 != Sections.top }
+        for id in order.filter({ picks.contains($0) }) + order.filter({ !picks.contains($0) }) {
+            guard let keys = bySection.removeValue(forKey: id) else { continue }
+            // 고르지 않은 분야에서 한 건뿐이면 지면이 휑하므로 '그 밖의 소식'으로
+            if keys.count >= 2 || picks.contains(id) { pages.append(.init(category: .other, keys: Array(keys.prefix(perSection)), section: id)) } else { leftovers += keys }
         }
-        leftovers += articles.filter { $0.0.item.category == .other }.map(\.0.item.key)
-        if !leftovers.isEmpty { sections.append(.init(category: .other, keys: Array(leftovers.prefix(12)))) }
-        // 구독 채널 지면: 종류별, 채널 하나당 4개까지(논문처럼 많은 곳이 지면을 덮지 않게)
-        var channelSections: [Issue.Section] = []
-        for k in [ItemKind.video, .release, .paper, .podcast, .post] {
-            var perSource: [String: Int] = [:]
-            let keys = ranked.filter { $0.0.item.itemKind == k }.compactMap { s -> String? in
-                perSource[s.0.item.sourceId, default: 0] += 1
-                return perSource[s.0.item.sourceId]! <= 4 ? s.0.item.key : nil
-            }
-            if !keys.isEmpty { channelSections.append(.init(category: .other, keys: Array(keys.prefix(12)), kind: k.rawValue)) }
-        }
-        // 지면 순서도 관심 분야가 앞으로
-        sections.sort {
-            AppModel.shared.interestWeight(category: $0.category, source: nil) > AppModel.shared.interestWeight(category: $1.category, source: nil)
-                || ($0.category.sortOrder < $1.category.sortOrder
-                    && AppModel.shared.interestWeight(category: $0.category, source: nil) == AppModel.shared.interestWeight(category: $1.category, source: nil))
-        }
-        let articleCount = stored.filter { $0.item.itemKind == .article }.count
-        return Issue(id: id, kind: kind, date: Date(), from: from, to: to, cover: cover?.0.item.key, sections: sections + channelSections, count: articleCount)
+        leftovers += bySection.values.flatMap { $0 }
+        if !leftovers.isEmpty { pages.append(.init(category: .other, keys: Array(leftovers.prefix(perSection)))) }
+        return pages
     }
 
-    // 지금 진행 중인 오늘 호·이번 주 호(아직 발행 전, 화면에서 바로 계산)
-    func liveDaily() -> Issue {
-        let start = Calendar.current.startOfDay(for: Date())
-        return makeIssue(kind: .daily, from: start.addingTimeInterval(-6 * 3600), to: Date().addingTimeInterval(60), id: "live-daily")
+    // 지금 진행 중인 오늘 호·이번 주 호(아직 발행 전) — 엮기·꺼내기는 화면 줄기 밖에서
+    func today() async -> Resolved { let c = context; return await editor.resolve(await editor.liveDaily(c), hidden: c.hidden) }
+    func week() async -> Resolved { let c = context; return await editor.resolve(await editor.liveWeekly(c), hidden: c.hidden) }
+    func resolve(_ issue: Issue) async -> Resolved { await editor.resolve(issue, hidden: context.hidden) }
+
+    // 지난 호 발행(확인마다·30분마다). 같은 목록이면 화면을 다시 그리지 않게 바뀔 때만 넣는다
+    func publishDue() async {
+        let list = await editor.publishDue(context)
+        if list != archive { archive = list }
     }
 
-    func liveWeekly() -> Issue {
-        makeIssue(kind: .weekly, from: Date().addingTimeInterval(-7 * 24 * 3600), to: Date().addingTimeInterval(60), id: "live-weekly")
-    }
-
-    // 하루가 지나면 그날 호를, 일요일이 지나면 그 주 호를 발행해 지난 호에 남긴다
-    func publishDue() {
-        let cal = Calendar.current
-        let today = cal.startOfDay(for: Date())
-        // 일간 호의 기간은 '오늘 호'와 같게: 전날 18시 ~ 그날 18시. 어제 호는 오늘 정오까지는 새 기사가 오면 다시 엮는다.
-        for back in stride(from: 3, through: 1, by: -1) {
-            guard let day = cal.date(byAdding: .day, value: -back, to: today) else { continue }
-            let id = "daily-" + Self.dayID(day)
-            let refresh = back == 1 && cal.component(.hour, from: Date()) < 12
-            if db.hasIssue(id) && !refresh { continue }
-            let issue = makeIssue(kind: .daily, from: day.addingTimeInterval(-6 * 3600), to: day.addingTimeInterval(18 * 3600), id: id)
-            if issue.count > 0 { db.saveIssue(issue) }
-        }
-        if let weekStart = cal.dateInterval(of: .weekOfYear, for: today)?.start,
-           let lastWeekStart = cal.date(byAdding: .day, value: -7, to: weekStart) {
-            let id = "weekly-" + Self.weekID(lastWeekStart)
-            if !db.hasIssue(id) {
-                let issue = makeIssue(kind: .weekly, from: lastWeekStart, to: weekStart, id: id)
-                if issue.count > 0 { db.saveIssue(issue) }
-            }
-        }
-        db.prune()
-        archive = db.issues()
-    }
-
-    private func backfillIssues() { publishDue() }
-
-    static func dayID(_ d: Date) -> String {
+    nonisolated static func dayID(_ d: Date) -> String {
         let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyy-MM-dd"; return f.string(from: d)
     }
-    static func weekID(_ d: Date) -> String {
+    nonisolated static func weekID(_ d: Date) -> String {
         let c = Calendar(identifier: .iso8601)
         return String(format: "%04d-W%02d", c.component(.yearForWeekOfYear, from: d), c.component(.weekOfYear, from: d))
     }
@@ -288,16 +201,7 @@ final class Magazine: ObservableObject {
         var cover: Database.StoredItem?
         var sections: [(section: Issue.Section, items: [NewsItem])]
         var clusters: [String: String] = [:]   // key → 스토리(카드 메뉴에서 DB 를 다시 읽지 않게)
-    }
-
-    func resolve(_ issue: Issue) -> Resolved {
-        let keys = (issue.cover.map { [$0] } ?? []) + issue.sections.flatMap(\.keys)
-        let map = Dictionary(db.items(keys: keys).map { ($0.item.key, $0) }, uniquingKeysWith: { a, _ in a })
-        var clusters: [String: String] = [:]
-        for (k, v) in map { if let c = v.cluster { clusters[k] = c } }
-        return Resolved(issue: issue, cover: issue.cover.flatMap { map[$0] },
-                        sections: issue.sections.map { s in (s, s.keys.compactMap { map[$0]?.item }) }.filter { !$0.1.isEmpty },
-                        clusters: clusters)
+        var regions: [String: [NewsItem]] = [:] // 스토리 → 보도들(해외·국내가 섞인 스토리만, 카드의 '해외에서는·국내에서는' 줄)
     }
 
     func items(_ keys: [String], in issue: Issue) -> [NewsItem] {
@@ -332,13 +236,28 @@ final class Magazine: ObservableObject {
     }
     func cluster(_ id: String) -> Database.Cluster? { db.cluster(id) }
     func clusterID(of key: String, near issue: Issue) -> String? { db.clusterOf(key) }
+    func clusterID(of key: String) -> String? { db.clusterOf(key) }
+
+    // 알림 판단용: 기사마다 스토리 id·국내/해외 보도 수(한 번에, 화면 줄기 밖에서)
+    func storyInfo(_ items: [NewsItem]) async -> [String: (story: String?, coverage: Coverage)] {
+        await editor.storyInfo(items, hidden: context.hidden)
+    }
+
+    // 스토리 보도를 해외·국내로 나눔(나란히 보기)
+    nonisolated static func splitByRegion(_ items: [NewsItem], meta: [String: SourceMeta] = Sections.meta) -> (intl: [NewsItem], kr: [NewsItem]) {
+        let kr = items.filter { Sections.region(ofSource: $0.sourceId, tier: $0.tier, meta: meta) == "kr" }
+        return (items.filter { Sections.region(ofSource: $0.sourceId, tier: $0.tier, meta: meta) != "kr" }, kr)
+    }
+
+    // 숨긴 출처·고른 분야가 바뀌면 지면을 다시 그리게
+    func refresh() { layoutRevision += 1 }
 
     // 스토리: 최근 2주 동안 두 곳 이상이 다룬 것
     func stories() -> [Database.Cluster] {
         db.recentClusters(since: Date().addingTimeInterval(-14 * 24 * 3600)).filter { $0.size >= 2 }
     }
 
-    func search(_ q: String) -> [NewsItem] { db.search(q) }
+    func search(_ q: String) async -> [NewsItem] { await editor.search(q) }
     func storedImage(_ key: String) -> String? { db.image(key) }
     func coverage(_ items: [NewsItem]) -> [String: Int] { db.coverage(items.map(\.key)) }
 }

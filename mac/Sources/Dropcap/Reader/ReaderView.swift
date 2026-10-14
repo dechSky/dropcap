@@ -17,9 +17,11 @@ final class ReaderModel: ObservableObject {
     @Published var engine = ""
     @Published var cover: String?        // 표지 사진(피드 → 매거진 기록 → 기사 머리 대표 사진)
     private var token: UUID?
+    var sequence: [NewsItem] = []        // 이 기사를 연 목록(J/K 로 다음·이전)
 
-    init(item: NewsItem) {
+    init(item: NewsItem, sequence: [NewsItem] = []) {
         self.item = item
+        self.sequence = sequence
         title = item.displayTitle
         originalTitle = item.title
     }
@@ -75,7 +77,16 @@ struct ReaderView: View {
     @ObservedObject var model: ReaderModel
     @ObservedObject private var app = AppModel.shared
     @Environment(\.openURL) private var openURL
-    @AppStorage("readerFontSize") private var fs: Double = 17
+    @AppStorage(ReaderLook.fontSizeKey) private var fs: Double = 17
+    @AppStorage(ReaderLook.spacingKey) private var spacingRaw = ReaderLook.Spacing.normal.rawValue
+    @AppStorage(ReaderLook.widthKey) private var widthRaw = ReaderLook.Width.normal.rawValue
+    @AppStorage(ReaderLook.themeKey) private var themeRaw = ReaderLook.Theme.auto.rawValue
+    @AppStorage(ReaderLook.fontKey) private var faceRaw = ""
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorSchemeFallback
+    @State private var findOpen = ProcessInfo.processInfo.environment["DROPCAP_TEST_FIND"] != nil // 시험용: 찾기 막대를 연 채로
+    @State private var findQuery = ProcessInfo.processInfo.environment["DROPCAP_TEST_FIND"] ?? ""
+    @State private var findIndex = 0
     @StateObject private var speaker = Speaker()
     @ObservedObject private var scrapbook = Scrapbook.shared
     @State private var scrapFlash = false
@@ -84,7 +95,60 @@ struct ReaderView: View {
     @State private var folderName = ""
     @State private var scrapToast: String?
 
+    private var theme: ReaderLook.Theme { ReaderLook.Theme(rawValue: themeRaw) ?? .auto }
+    private var face: ReaderLook.Face { ReaderLook.Face.resolve(faceRaw) }
+    private var lineFactor: CGFloat { (ReaderLook.Spacing(rawValue: spacingRaw) ?? .normal).factor }
+    private func bf(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font { ReaderLook.font(face, size, weight) }
+
     var body: some View {
+        ScrollViewReader { proxy in
+            page
+                .onChange(of: findIndex) { _, _ in scrollToMatch(proxy) }
+                .onChange(of: findQuery) { _, _ in findIndex = 0; scrollToMatch(proxy) }
+        }
+        .background(WindowAppearance(scheme: theme.scheme))
+    }
+
+    // MARK: 찾기
+    // 지금 화면에 보이는 글 조각(제목=-1, 본문 블록 번호) — 번역/원문 중 보이는 쪽
+    private var visiblePieces: [(Int, String)] {
+        guard model.phase == .translating || model.phase == .done else { return [(-1, shownTitle)] }
+        let hidden = hiddenBlocks(model.blocks)
+        let body = model.blocks.enumerated().compactMap { i, b -> (Int, String)? in
+            guard b.type != .img, !hidden.contains(i) else { return nil }
+            let t = (model.showOriginal ? b.original : nil) ?? b.text ?? ""
+            return t.isEmpty ? nil : (i, t)
+        }
+        return [(-1, shownTitle)] + body
+    }
+    private var shownTitle: String { model.showOriginal ? model.originalTitle : model.title }
+    private var findMatches: [ReaderFind.Match] { findOpen ? ReaderFind.matches(visiblePieces, findQuery) : [] }
+
+    private func currentNth(_ id: Int) -> Int? {
+        let m = findMatches
+        guard findIndex < m.count, m[findIndex].block == id else { return nil }
+        return m[findIndex].nth
+    }
+
+    private func scrollToMatch(_ proxy: ScrollViewProxy) {
+        let m = findMatches
+        guard findIndex < m.count else { return }
+        let target = m[findIndex].block
+        if reduceMotion { proxy.scrollTo(target, anchor: .center) } else { withAnimation(.easeInOut(duration: 0.25)) { proxy.scrollTo(target, anchor: .center) } }
+    }
+
+    private func findStep(_ forward: Bool) {
+        if !findOpen { findOpen = true; return }
+        findIndex = ReaderFind.step(findIndex, count: findMatches.count, forward: forward)
+    }
+
+    // 찾는 중이면 일치한 곳을 칠한 글
+    private func styled(_ text: String, _ id: Int) -> Text {
+        guard findOpen, !findQuery.trimmingCharacters(in: .whitespaces).isEmpty else { return Text(text) }
+        return Text(ReaderFind.highlighted(text, findQuery, current: currentNth(id)))
+    }
+
+    private var page: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 cover
@@ -108,14 +172,26 @@ struct ReaderView: View {
                     failed.padding(.top, 24)
                 }
             }
-            .frame(maxWidth: 660, alignment: .leading)
+            .frame(maxWidth: (ReaderLook.Width(rawValue: widthRaw) ?? .normal).points, alignment: .leading)
             .padding(.horizontal, 36)
             .padding(.top, 20)
             .padding(.bottom, 80)
             .frame(maxWidth: .infinity)
+            .foregroundStyle(theme.text.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.primary))
         }
         .textSelection(.enabled)
-        .background(Color(nsColor: .textBackgroundColor))
+        .background(theme.background)
+        .environment(\.colorScheme, theme.scheme ?? colorSchemeFallback)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: themeRaw)
+        .overlay(alignment: .top) {
+            if findOpen {
+                ReaderFindBar(query: $findQuery, count: findMatches.count, index: min(findIndex, max(0, findMatches.count - 1)),
+                              next: { findStep(true) }, prev: { findStep(false) },
+                              close: { findOpen = false; findQuery = "" })
+                    .padding(.top, 10)
+                    .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
+            }
+        }
         .toolbar {
             ToolbarItemGroup {
                 if model.translated {
@@ -126,13 +202,7 @@ struct ReaderView: View {
                     .pickerStyle(.segmented)
                     .help("번역과 원문 바꿔 보기")
                 }
-                ControlGroup {
-                    Button { fs = max(13, fs - 1) } label: { Label("글자 작게", systemImage: "textformat.size.smaller") }
-                        .keyboardShortcut("-", modifiers: .command)
-                    Button { fs = min(26, fs + 1) } label: { Label("글자 크게", systemImage: "textformat.size.larger") }
-                        .keyboardShortcut("=", modifiers: .command)
-                }
-                .help("글자 크기 (⌘- / ⌘=)")
+                ReaderLookButton()
                 Button {
                     let korean = model.translated ? !model.showOriginal : !Translator.looksForeign(model.title)
                     let paras = model.blocks.filter { $0.type != .pre && $0.type != .img }
@@ -173,13 +243,25 @@ struct ReaderView: View {
                     ExternalLink.open(model.item.link)
                 } label: { Label("브라우저에서 열기", systemImage: "safari") }
                 .help("원문을 브라우저에서 열기")
-                ShareLink(item: URL(string: model.item.link) ?? URL(string: "https://example.com")!)
+                if let u = URL(string: model.item.link), URLSafety.isPublicHTTP(u) { ShareLink(item: u) } // 주소가 이상하면 공유 단추를 숨김(A-37)
             }
         }
         .task { await model.load() }
         .onDisappear { speaker.stop() }
         .background {
             Button("") { scrapSelection() }.keyboardShortcut("s", modifiers: [.command, .shift]).opacity(0).allowsHitTesting(false)
+            // 모양 팝오버가 닫혀 있어도 글자 크기 단축키는 그대로
+            Button("") { fs = ReaderLook.clampSize(fs - 1) }.keyboardShortcut("-", modifiers: .command).opacity(0).allowsHitTesting(false)
+            Button("") { fs = ReaderLook.clampSize(fs + 1) }.keyboardShortcut("=", modifiers: .command).opacity(0).allowsHitTesting(false)
+            Button("") { withAnimation(reduceMotion ? nil : .spring(response: 0.3)) { findOpen = true } }
+                .keyboardShortcut("f", modifiers: .command).opacity(0).allowsHitTesting(false)
+            if !findOpen { // 찾기 막대가 닫혀 있을 때도 ⌘G 로 다시 열기
+                Button("") { findStep(true) }.keyboardShortcut("g", modifiers: .command).opacity(0).allowsHitTesting(false)
+                // 같은 목록의 다음·이전 기사(J/K), Esc 로 닫기 — 찾기 칸에 글을 칠 때는 쓰지 않음
+                Button("") { ReaderController.step(model, by: 1) }.keyboardShortcut("j", modifiers: []).opacity(0).allowsHitTesting(false)
+                Button("") { ReaderController.step(model, by: -1) }.keyboardShortcut("k", modifiers: []).opacity(0).allowsHitTesting(false)
+                Button("") { ReaderController.close(model) }.keyboardShortcut(.cancelAction).opacity(0).allowsHitTesting(false)
+            }
         }
         .overlay(alignment: .bottom) {
             if linkCopied {
@@ -273,7 +355,7 @@ struct ReaderView: View {
                     ForEach(Array(pts.enumerated()), id: \.offset) { _, p in
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Text("•").foregroundStyle(model.item.accent)
-                            Text(p).font(.app(fs - 1)).lineSpacing(4)
+                            Text(p).font(bf(fs - 1)).lineSpacing(4 * lineFactor)
                         }
                     }
                 } else {
@@ -320,8 +402,9 @@ struct ReaderView: View {
                         .help("읽는 시간(한국어 분당 약 500자 기준)")
                 }
             }
-            Text(model.showOriginal ? model.originalTitle : model.title)
-                .font(.app(30, .bold))
+            styled(shownTitle, -1)
+                .font(bf(30, .bold))
+                .id(-1)
                 .tracking(-0.4)
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -340,14 +423,14 @@ struct ReaderView: View {
 
     private func articleBody(_ blocks: [Block]) -> some View {
         // 표지와 같은 사진(주소가 같거나 크기 표기만 다른 것)은 본문에서 처음 한 번 뺀다
-        let dup = coverURL.flatMap { c in blocks.firstIndex { $0.type == .img && ImageKey.same($0.src, c) } }
-        let skip = BodyCleanup.analyze(blocks).skip // 기자 줄·짝 잃은 설명 문구
+        let hidden = hiddenBlocks(blocks)
         return VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(blocks.enumerated()), id: \.offset) { i, b in
                 let text = (model.showOriginal ? b.original : nil) ?? b.text ?? ""
                 let prevIsLi = i > 0 && blocks[i - 1].type == .li
-                if i != dup, !skip.contains(i), !(b.type == .img && ImageKey.isJunk(b.src)) { // 기자 프로필·로고 같은 잡그림은 싣지 않음
-                blockView(b, text: text, prevIsLi: prevIsLi)
+                if !hidden.contains(i) {
+                blockView(b, text: text, prevIsLi: prevIsLi, id: i)
+                    .id(i)
                     .modifier(ScrapHover(item: model.item, text: text,
                                          original: model.showOriginal ? nil : b.original,
                                          enabled: [.p, .li, .quote, .h].contains(b.type) && !text.isEmpty))
@@ -356,27 +439,35 @@ struct ReaderView: View {
         }
     }
 
-    @ViewBuilder private func blockView(_ b: Block, text: String, prevIsLi: Bool) -> some View {
+    // 본문에서 빼는 블록: 표지와 같은 사진(주소가 같거나 크기 표기만 다른 것) 처음 한 번, 기자 줄·짝 잃은 설명 문구, 잡그림
+    private func hiddenBlocks(_ blocks: [Block]) -> Set<Int> {
+        var out = BodyCleanup.analyze(blocks).skip
+        if let c = coverURL, let dup = blocks.firstIndex(where: { $0.type == .img && ImageKey.same($0.src, c) }) { out.insert(dup) }
+        for (i, b) in blocks.enumerated() where b.type == .img && ImageKey.isJunk(b.src) { out.insert(i) } // 기자 프로필·로고 같은 잡그림은 싣지 않음
+        return out
+    }
+
+    @ViewBuilder private func blockView(_ b: Block, text: String, prevIsLi: Bool, id: Int) -> some View {
         switch b.type {
         case .h:
-            Text(text).font(.app(fs + 4, .bold)).tracking(-0.2)
+            styled(text, id).font(bf(fs + 4, .bold)).tracking(-0.2)
                 .padding(.top, 26).padding(.bottom, 8)
         case .p:
-            Text(text).font(.app(fs)).lineSpacing(fs * 0.47).padding(.bottom, fs + 1)
+            styled(text, id).font(bf(fs)).lineSpacing(fs * 0.47 * lineFactor).padding(.bottom, fs + 1)
         case .li:
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Circle().fill(model.item.accent.opacity(0.8)).frame(width: 5, height: 5).offset(y: -3)
-                Text(text).font(.app(fs)).lineSpacing(fs * 0.41)
+                styled(text, id).font(bf(fs)).lineSpacing(fs * 0.41 * lineFactor)
             }
             .padding(.top, prevIsLi ? 0 : 2).padding(.bottom, 8).padding(.leading, 4)
         case .quote:
-            Text(text).font(.app(fs)).italic().lineSpacing(fs * 0.41).foregroundStyle(.secondary)
+            styled(text, id).font(bf(fs)).italic().lineSpacing(fs * 0.41 * lineFactor).foregroundStyle(.secondary)
                 .padding(.leading, 16)
                 .overlay(alignment: .leading) { Capsule().fill(model.item.accent.opacity(0.6)).frame(width: 3) }
                 .padding(.vertical, 6).padding(.bottom, 14)
         case .pre:
             ScrollView(.horizontal) {
-                Text(text).font(.system(size: 13, design: .monospaced)).padding(14)
+                styled(text, id).font(.system(size: 13, design: .monospaced)).padding(14)
             }
             .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .padding(.bottom, 18)
@@ -386,14 +477,14 @@ struct ReaderView: View {
                 ArticleImage(url: src).padding(.vertical, 6).padding(.bottom, 12)
             }
         case .cap:
-            Text(text).font(.app(13)).foregroundStyle(.secondary).padding(.top, -8).padding(.bottom, 18)
+            styled(text, id).font(bf(13)).foregroundStyle(.secondary).padding(.top, -8).padding(.bottom, 18)
         }
     }
 
     private var failed: some View {
         VStack(alignment: .leading, spacing: 14) {
             if !model.summary.isEmpty {
-                Text(model.summary).font(.app(17)).lineSpacing(8)
+                Text(model.summary).font(bf(17)).lineSpacing(8 * lineFactor)
             }
             Text("이 기사는 본문을 추리지 못했습니다(유료 기사·차단 등).")
                 .font(.app(13)).foregroundStyle(.secondary)
@@ -449,13 +540,32 @@ enum ReaderController {
     private static var windows: [NSWindow] = []
 
     // from: 누른 카드의 화면 위치. 주면 읽기 창이 그 자리에서 커져 나온다.
-    static func open(_ item: NewsItem, from: CGRect = .zero) {
+    private static var hosts: [ObjectIdentifier: NSHostingController<ReaderView>] = [:] // 창 → 화면(J/K 로 내용만 바꿔 끼우려고)
+
+    // 같은 창에서 목록의 다음·이전 기사로(영상·팟캐스트는 건너뜀)
+    static func step(_ model: ReaderModel, by d: Int) {
+        let list = model.sequence.filter { !$0.itemKind.opensExternally }
+        guard let i = list.firstIndex(where: { $0.key == model.item.key }) else { NSSound.beep(); return }
+        let j = i + d
+        guard list.indices.contains(j), let host = hosts.values.first(where: { $0.rootView.model === model }),
+              let w = host.view.window else { NSSound.beep(); return }
+        let next = list[j]
+        AppModel.shared.markOpened(next)
+        host.rootView = ReaderView(model: ReaderModel(item: next, sequence: model.sequence))
+        w.title = next.sourceName
+    }
+
+    static func close(_ model: ReaderModel) {
+        hosts.values.first { $0.rootView.model === model }?.view.window?.performClose(nil)
+    }
+
+    static func open(_ item: NewsItem, from: CGRect = .zero, sequence: [NewsItem] = []) {
         // 영상·팟캐스트는 원래 앱(브라우저·YouTube·팟캐스트)으로
         if item.itemKind.opensExternally {
             ExternalLink.open(item.link)
             return
         }
-        let model = ReaderModel(item: item)
+        let model = ReaderModel(item: item, sequence: sequence)
         let host = NSHostingController(rootView: ReaderView(model: model))
         host.sceneBridgingOptions = [.toolbars]
         let w = NSWindow(contentViewController: host)
@@ -471,11 +581,13 @@ enum ReaderController {
             w.setFrameTopLeftPoint(NSPoint(x: last.frame.minX + 24, y: last.frame.maxY - 24)) // 겹치지 않게 살짝 비켜서
         }
         windows.append(w)
+        hosts[ObjectIdentifier(w)] = host
         // 창을 닫으면 관찰도 끊어 창·화면·기사가 메모리에서 풀리게 한다
         var token: NSObjectProtocol?
         token = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: w, queue: .main) { [weak w] _ in
             MainActor.assumeIsolated {
                 windows.removeAll { $0 === w || $0 == nil }
+                if let w { hosts.removeValue(forKey: ObjectIdentifier(w)) }
                 if let token { NotificationCenter.default.removeObserver(token) }
                 w?.contentViewController = nil
             }

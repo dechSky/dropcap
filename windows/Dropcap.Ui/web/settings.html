@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="ko" data-page="settings">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https://img.dropcap.example data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'none'; frame-src 'none'">
+<title>Dropcap 설정</title>
+<link rel="stylesheet" href="base.css">
+<link rel="stylesheet" href="settings.css">
+<script src="bridge.js"></script>
+<script src="ui.js"></script>
+<script src="mock/settings.js"></script>
+</head>
+<body>
+<nav class="tabs" id="tabs">
+  <button data-tab="general" class="on"><span data-sic="gear"></span><span>일반</span></button>
+  <button data-tab="sections"><span data-sic="grid"></span><span>분야</span></button>
+  <button data-tab="sources"><span data-sic="antenna"></span><span>구독</span></button>
+  <button data-tab="filters"><span data-sic="filter.circle"></span><span>거르기</span></button>
+</nav>
+<main id="pane">
+  <!-- 일반(P-01~P-05) -->
+  <section class="tab" data-tab="general">
+    <h3>알림</h3>
+    <div class="group">
+      <label class="row"><span class="lb">알림 모양</span><select data-set="style"></select></label>
+      <label class="row"><span class="lb">알림 위치</span><select data-set="position"></select></label>
+      <label class="row"><span class="lb">알림 소리</span><input type="checkbox" class="switch" data-set="sound"></label>
+      <label class="row"><span class="lb">확인 간격</span><select data-set="interval"></select></label>
+      <div class="row"><button class="btn" id="preview">알림 미리 보기</button></div>
+    </div>
+    <h3>번역</h3>
+    <div class="group">
+      <div class="row"><span class="lb">번역 방식</span><span class="val" id="engine"></span></div>
+      <div class="row note" id="engineNote"></div>
+    </div>
+    <h3>글꼴</h3>
+    <div class="group">
+      <label class="row"><span class="lb">Pretendard 글꼴 쓰기 (한글이 더 또렷함)</span><input type="checkbox" class="switch" data-set="pretendard"></label>
+      <div class="row note">끄면 시스템 글꼴을 씁니다. 열려 있는 창은 다시 열면 바뀝니다.</div>
+    </div>
+    <h3>요약</h3>
+    <div class="group">
+      <div class="row"><span class="lb">3줄 요약</span><span class="val" id="summary"></span></div>
+    </div>
+    <h3>시작</h3>
+    <div class="group">
+      <label class="row"><span class="lb">로그인할 때 자동 실행</span><input type="checkbox" class="switch" data-set="launchAtLogin"></label>
+    </div>
+  </section>
+
+  <!-- 분야(G-13): 고른 분야마다 알림 모드·묶음 시각·하루 상한, 알림 양, 숨긴 출처 -->
+  <section class="tab" data-tab="sections" hidden>
+    <div class="group first">
+      <div class="row"><span class="lb" id="secSummary"></span><button class="btn" id="reonboard">관심 분야 다시 고르기…</button></div>
+      <div class="row note">즉시: 여러 곳이 함께 다룬 소식·공식 발표·꼭 알림 낱말·팔로우한 스토리만 바로 물방울로. 묶음: 정한 시각에 "경제 7건"처럼 한 방울. 매거진만: 알리지 않음.</div>
+    </div>
+    <div id="secRows"></div>
+    <h3>알림 양</h3>
+    <div class="group">
+      <div id="limits"></div>
+      <div class="row note">상한을 넘은 소식은 고였다가 그 분야 묶음 시각에 한 방울로 나갑니다. 같은 이야기는 한 번만 알립니다.</div>
+    </div>
+    <div id="hiddenBox"></div>
+  </section>
+
+  <!-- 구독(P-06·K 절) -->
+  <section class="tab" data-tab="sources" hidden>
+    <h3>채널 추가</h3>
+    <div class="group">
+      <form class="row add" id="addForm">
+        <input id="newURL" placeholder="언론사·블로그 주소 또는 youtube.com/@채널 · r/이름 · github.com/소유자/저장소" autocomplete="off" spellcheck="false">
+        <button class="btn" id="addBtn" type="submit">구독</button>
+      </form>
+      <div class="row err" id="addError" hidden></div>
+      <div class="row note">웹사이트·뉴스레터(Substack·Medium)·YouTube 채널·GitHub 릴리스·Reddit·arXiv·팟캐스트 주소를 넣으면 알맞은 피드를 찾아 구독합니다.</div>
+    </div>
+    <div id="sourceLists"></div>
+  </section>
+
+  <!-- 거르기(P-07) -->
+  <section class="tab" data-tab="filters" hidden>
+    <h3>낱말로 거르기</h3>
+    <div class="group">
+      <label class="row"><span class="lb">꼭 알림 (★ 중요 표시)</span><input class="field kw" id="must" placeholder="예: GPT-6, Claude, Gemini, 오픈소스" autocomplete="off" spellcheck="false"></label>
+      <label class="row"><span class="lb">알리지 않음</span><input class="field kw" id="mute" placeholder="예: 주식, 채용, 이벤트" autocomplete="off" spellcheck="false"></label>
+      <div class="row"><span class="note grow">쉼표로 나눠 적고 Enter. 제목·요약에 그 낱말이 들어가면 적용됩니다.</span><button class="btn" id="saveKw">저장</button></div>
+    </div>
+    <h3>방해 금지 시간</h3>
+    <div class="group">
+      <label class="row"><span class="lb">이 시간에는 알리지 않기</span><input type="checkbox" class="switch" data-set="quietEnabled"></label>
+      <label class="row"><span class="lb">시작</span><select data-set="quietStart"></select></label>
+      <label class="row"><span class="lb">끝</span><select data-set="quietEnd"></select></label>
+      <div class="row note">이 시간에 온 소식은 알림 없이 '안 읽음'에 쌓입니다.</div>
+    </div>
+    <h3>아침 브리핑</h3>
+    <div class="group">
+      <label class="row"><span class="lb">매일 지난 하루 소식을 분야별로 정리해 알리기</span><input type="checkbox" class="switch" data-set="digestEnabled"></label>
+      <label class="row"><span class="lb">시각</span><select data-set="digestHour"></select></label>
+      <div class="row"><button class="btn" id="openMag">매거진 열기</button></div>
+    </div>
+    <h3>단축키</h3>
+    <div class="group" id="hotkeys"></div>
+    <h3>같은 소식 묶기</h3>
+    <div class="group">
+      <div class="row note">여러 곳이 같은 소식을 다루면 한 번만 알리고 "외 N곳"으로 표시합니다. 공식 발표를 먼저 고릅니다.</div>
+    </div>
+  </section>
+</main>
+<script src="settings.js"></script>
+</body>
+</html>

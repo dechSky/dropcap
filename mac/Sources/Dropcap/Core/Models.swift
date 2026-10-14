@@ -23,8 +23,15 @@ struct Source: Codable, Identifiable, Hashable {
     var notifyDefault: Bool? = nil   // 알림 기본값(양 많은 채널은 false)
     var group: String? = nil         // 추천 목록의 묶음 이름
     var home: String? = nil          // 사람이 보는 주소(설정 화면 표시용)
+    var section: String? = nil       // 분야 id(shared/categories.json). 없으면 AI(예전 출처·직접 추가)
+    var lang: String? = nil          // 글의 언어(ko·en …). 없으면 en
+    var region: String? = nil        // kr(국내) · intl(해외). 없으면 tier 로 정함
 
     var itemKind: ItemKind { ItemKind(rawValue: kind ?? "article") ?? .article }
+    var sectionID: String { section ?? "ai" }
+    var language: String { lang ?? "en" }
+    var regionCode: String { region ?? (tier == "kr" ? "kr" : "intl") }
+    var isDomestic: Bool { regionCode == "kr" }
 }
 
 // 글의 종류: 기사 외의 구독 채널(영상·논문·릴리스·커뮤니티·팟캐스트)

@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 운영체제와 무관한 핵심: 피드·안전·번역·묶기·상태·매거진 DB. 맥에서도 빌드·시험한다. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Dropcap.Core</RootNamespace>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
+    <!-- 알려진 취약점이 고쳐진 SQLite 네이티브 묶음으로 올림 -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.13" />
+  </ItemGroup>
+
+  <!-- 기본 출처(C-01): 저장소의 shared/sources.json 을 앱과 함께 배포 -->
+  <ItemGroup>
+    <Content Include="..\..\shared\sources.json" Link="sources.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- 일반 뉴스 분야(G-01): shared/categories.json(없으면 Sections.cs 의 같은 내용 기본값) · AI 하위 분류(C-16): ai-topics.json -->
+    <Content Include="..\..\shared\categories.json" Link="categories.json" CopyToOutputDirectory="PreserveNewest" Condition="Exists('..\..\shared\categories.json')" />
+    <Content Include="ai-topics.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Dropcap.Core.Tests" />
+  </ItemGroup>
+
+</Project>

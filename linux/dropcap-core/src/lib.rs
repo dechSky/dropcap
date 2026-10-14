@@ -1,0 +1,25 @@
+//! Dropcap 리눅스 판의 화면 없는 핵심: 수집·안전·번역·저장·매거진. 맥 앱(mac/Sources/Dropcap/Core)과 같은 동작.
+pub mod category;
+pub mod channels;
+pub mod database;
+pub mod feed_parser;
+pub mod feed_service;
+pub mod iso;
+pub mod magazine;
+pub mod models;
+pub mod net;
+pub mod scrapbook;
+pub mod store;
+pub mod story_match;
+pub mod summarizer;
+pub mod translator;
+pub mod url_safety;
+pub mod app_model;
+pub mod article;
+pub mod images;
+pub mod system;
+pub mod texts;
+pub mod guard_proxy;
+pub mod notify_policy;
+pub mod sections;
+pub mod source_health;

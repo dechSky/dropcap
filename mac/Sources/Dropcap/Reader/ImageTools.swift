@@ -281,8 +281,16 @@ enum ImageTranslateWindow {
         w.setContentSize(NSSize(width: max(560, s.width * k + 40), height: min(860, s.height * k + 260)))
         w.isReleasedWhenClosed = false
         w.center()
-        windows.removeAll { !$0.isVisible }
         windows.append(w)
+        // 닫으면 바로 놓아 사진째 메모리에 남지 않게(A-35)
+        var token: NSObjectProtocol?
+        token = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: w, queue: .main) { [weak w] _ in
+            MainActor.assumeIsolated {
+                windows.removeAll { $0 === w }
+                if let token { NotificationCenter.default.removeObserver(token) }
+                w?.contentViewController = nil
+            }
+        }
         w.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }

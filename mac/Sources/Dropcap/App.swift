@@ -35,6 +35,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     private var lockFD: Int32 = -1
 
+    func applicationWillTerminate(_ notification: Notification) { Store.flush() } // 묶어 둔 저장을 끝내기 전에 바로 쓴다
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 이미 실행 중이면 끈다: 둘이 동시에 돌면 같은 소식을 두 번 알린다
         lockFD = open(Store.dir.appendingPathComponent("native.lock").path, O_CREAT | O_RDWR, 0o644)
@@ -45,13 +47,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         NSApp.setActivationPolicy(.accessory) // Dock 에 나타나지 않음
         Self.migrateDefaults()
         Typography.register()
+        MainActor.assumeIsolated { SaveLink.install() } // 서비스 메뉴 'Dropcap 에 저장'
         if SystemNotifier.available { UNUserNotificationCenter.current().delegate = self }
         // 이름이 바뀌기 전 앱(AI News Alert)이 떠 있으면 같은 소식을 두 번 알리므로 끈다
         for old in NSRunningApplication.runningApplications(withBundleIdentifier: "io.github.neulloopa.ainewsalert") { old.terminate() }
         MainActor.assumeIsolated {
             AppModel.shared.start()
+            SectionStartup.run() // 첫 실행 분야 고르기 + 시험 훅
+            Integrations.start() // 위젯·Spotlight(Integrations/)
             // 시험용: DROPCAP_TEST_URL=<기사 주소> 면 읽기 창을, DROPCAP_TEST_TOAST=1 이면 알림 미리 보기를 바로 띄운다
             let env = ProcessInfo.processInfo.environment
+            ReaderSaveTestHooks.run(env)
             if let u = env["DROPCAP_TEST_URL"] {
                 ReaderController.open(NewsItem(id: u, title: u, titleKo: nil, link: u, date: Date(), summary: "", sourceId: "openai", sourceName: "시험", tier: "lab"))
                 if let dir = env["DROPCAP_TEST_SHOT_DIR"] {
@@ -69,10 +75,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 Task { for id in subs.split(separator: ",") { if let s = ChannelCatalog.all.first(where: { $0.id == id }) { _ = await AppModel.shared.subscribe(s) } } }
             }
             if env["DROPCAP_TEST_SCRAP"] != nil { // 시험용: 견본 스크랩
-                DispatchQueue.main.asyncAfter(deadline: .now() + 25) {
-                    let items = Magazine.shared.liveDaily().sections.flatMap(\.keys).prefix(3)
-                    let resolved = Magazine.shared.resolve(Magazine.shared.liveDaily()).sections.flatMap(\.items)
-                    for it in resolved.prefix(3) where items.contains(it.key) {
+                Task { try? await Task.sleep(for: .seconds(25))
+                    let resolved = await Magazine.shared.today().sections.flatMap(\.items)
+                    for it in resolved.prefix(3) {
                         Scrapbook.shared.add(it, quote: it.displayTitle + " — 핵심 문단 예시입니다.", original: it.title, memo: "보고서에 인용", to: "GPT 조사")
                         Scrapbook.shared.add(it, to: "GPT 조사")
                     }
@@ -194,7 +199,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let key = response.notification.request.content.userInfo["key"] as? String
         await MainActor.run {
-            if let key, let item = AppModel.shared.state.recent.first(where: { $0.key == key }) {
+            if let sec = response.notification.request.content.userInfo["section"] as? String { // 묶음 알림
+                MagazineController.open(page: .section(sec))
+            } else if let key, let item = AppModel.shared.state.recent.first(where: { $0.key == key }) {
                 AppModel.shared.open(item)
             }
         }

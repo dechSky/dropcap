@@ -39,10 +39,11 @@ final class Scrapbook: ObservableObject {
         db.saveScrap(Scrap(item: item, quote: quote, quoteOriginal: original, memo: memo, collection: c))
         UserDefaults.standard.set(c, forKey: "lastScrapCollection")
         reload()
+        ScrapExport.shared.syncSoon()
     }
 
-    func update(_ s: Scrap) { db.saveScrap(s); reload() }
-    func remove(_ s: Scrap) { db.deleteScrap(s.id); reload() }
+    func update(_ s: Scrap) { db.saveScrap(s); reload(); ScrapExport.shared.syncSoon() }
+    func remove(_ s: Scrap) { db.deleteScrap(s.id); reload(); ScrapExport.shared.syncSoon() }
 
     @discardableResult
     func createCollection(_ name: String) -> Bool {
@@ -62,6 +63,7 @@ final class Scrapbook: ObservableObject {
         let extra = (UserDefaults.standard.stringArray(forKey: "scrapCollections") ?? []).map { $0 == from ? n : $0 }
         UserDefaults.standard.set(extra, forKey: "scrapCollections")
         reload()
+        ScrapExport.shared.syncSoon(renamed: (from, n))
         return true
     }
 
@@ -90,7 +92,7 @@ final class Scrapbook: ObservableObject {
         }
         for key in order {
             guard let g = groups[key], let it = g.first?.item else { continue }
-            out += "## [\(it.displayTitle)](\(it.link))\n\n"
+            out += "## [\(escapeLinkText(it.displayTitle))](\(escapeLinkURL(it.link)))\n\n"
             var meta = "\(it.sourceName)"
             if let d = it.date { meta += " · \(f.string(from: d))" }
             if it.titleKo != nil, it.titleKo != it.title { meta += " · 원제: \(it.title)" }
@@ -101,10 +103,27 @@ final class Scrapbook: ObservableObject {
                     if let o = s.quoteOriginal, o != q { out += ">\n> _\(o)_\n" }
                     out += "\n"
                 }
-                if !s.memo.isEmpty { out += "- 메모: \(s.memo)\n\n" }
+                if !s.memo.isEmpty { out += "- 메모: \(s.memo.replacingOccurrences(of: "\n", with: "\n  "))\n\n" } // 여러 줄 메모도 목록 한 칸 안에
             }
         }
         return out
+    }
+
+    // 링크 글자: [ ] \ 앞에 \ (제목의 ] 로 링크가 끊기지 않게)
+    nonisolated static func escapeLinkText(_ s: String) -> String {
+        var out = ""
+        for ch in s.replacingOccurrences(of: "\n", with: " ") {
+            if ch == "[" || ch == "]" || ch == "\\" { out.append("\\") }
+            out.append(ch)
+        }
+        return out
+    }
+
+    // 링크 주소: <…> 로 감싸 ( ) 가 든 주소도 끝까지 하나로. 안에 못 들어가는 < > 공백 줄바꿈은 퍼센트 표기로.
+    nonisolated static func escapeLinkURL(_ s: String) -> String {
+        let enc = s.replacingOccurrences(of: "<", with: "%3C").replacingOccurrences(of: ">", with: "%3E")
+            .replacingOccurrences(of: " ", with: "%20").replacingOccurrences(of: "\n", with: "").replacingOccurrences(of: "\r", with: "")
+        return "<\(enc)>"
     }
 
     func copyMarkdown(collection: String) {

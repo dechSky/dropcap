@@ -73,3 +73,11 @@
   - 로그 `[DB] 열기 실패, 새로 만듭니다: file is not a database` → `magazine.broken.sqlite` 로 치우고 새 DB 에 `[매거진] 첫 호를 40건으로 채웠습니다`.
 - `DROPCAP_TEST_TOAST` 스냅숏(1.3~3.4초): 물방울 → 카드, 글자 떠오름 정상. 알림이 사라진 뒤(25초) CPU 0.0%.
 - `swift test`: 51개(23묶음) 모두 통과. 이 가운데 새 시험 13개(`AuditTests.swift`).
+
+## 5. 후속 처리(wt/perf-keys)
+
+- **R-1·A-09 고침**: 매거진 엮기·스토리 배정·지난 호 발행·검색·알림용 스토리/보도 수를 `Core/Editor.swift`(actor)로, 알림 목록의 같은 소식 비교는 뒤 작업으로. 스토리 대표는 SQL 한 번(`Database.representatives`). 전후 수치는 `mac/PERF-KEYS.md`.
+- **R-3 고침**: `StateSaver` — 0.5초 묶기, 뒤 스레드 쓰기, 끝낼 때·잠들기 전 즉시. A-03(손상 시 .bak 보존) 유지·시험.
+- **R-4 고침**: `Core/StoryGrouper.swift` 한 곳(알림 목록 묶기·매거진 스토리 배정). 기준은 그대로(시험 `StoryGrouperTests`).
+- **A-20·A-21·A-23·A-26·A-27·A-28·A-29·A-33·A-34·A-35 고침**. A-37 은 읽기 창 작업(C)에서 이미 고침.
+- **A-36 일부**: 상단바 목록의 같은 그리기 코드 두 벌을 하나로 합침. 그릴 때마다 다시 거르는 계산은 그대로.

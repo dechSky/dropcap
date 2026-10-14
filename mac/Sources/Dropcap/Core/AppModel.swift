@@ -25,14 +25,16 @@ final class AppModel: ObservableObject {
     // MARK: 시작
     func start() {
         let ws = NSWorkspace.shared.notificationCenter
+        ws.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { _ in Store.flush() } // 잠들기 전 바로 저장
         ws.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { _ in
             Task { @MainActor in
                 try? await Task.sleep(for: .seconds(10))
                 await AppModel.shared.checkAll()
             }
         }
-        Magazine.shared.migrateIfNeeded(from: state)
-        Task { try? await Task.sleep(for: .seconds(2)); Magazine.shared.reclusterIfNeeded() }
+        let snapshot = state
+        Task { await Magazine.shared.migrateIfNeeded(from: snapshot) }
+        Task { try? await Task.sleep(for: .seconds(2)); await Magazine.shared.reclusterIfNeeded() }
         if !state.magazineBackfilled { Task { await backfillMagazine() } }
         restartLoop()
         // 1분마다: 아침 브리핑 시각인지, 잠시 끄기가 끝났는지
@@ -92,23 +94,183 @@ final class AppModel: ObservableObject {
             for i in found.indices where titles[i] != found[i].title { found[i].titleKo = titles[i] }
         }
         found = applyKeywords(found) // 번역 뒤에: 한국어 낱말도 영어 기사에 걸리게
+        found = found.filter { !state.hiddenSources.contains($0.sourceId) } // 숨긴 출처는 스토리 대표로도 다시 나오지 않게 처음부터 뺀다
         await addEnglishTitles(&found)
-        Magazine.shared.ingest(found) // 매거진에는 묶이기 전 전부(여러 시각 비교용)
+        await Magazine.shared.ingest(found) // 매거진에는 묶이기 전 전부(여러 시각 비교용)
         notifyGrownStories()
         // 알림을 끈 채널(논문·커뮤니티 등 양 많은 곳)은 매거진에만 싣고, 목록·알림에는 넣지 않는다
-        found = found.filter { notifies($0.sourceId) }
-        found = groupSameStory(found)
-        state.recent = Array((found + state.recent).prefix(recentLimit))
-        state.unread += found.count
+        let candidates = found.filter { notifies($0.sourceId) }
+        let listed = await groupSameStory(candidates)
+        let info = await Magazine.shared.storyInfo(candidates) // 스토리·보도 수를 한 번에(화면 줄기 밖)
+        state.recent = Array((listed + state.recent).prefix(recentLimit))
+        state.unread += listed.count
         state.lastCheck = Date()
         state.seen = Store.pruned(state.seen) // 저장 파일만이 아니라 메모리의 기억도 정리(오래 켜 두면 끝없이 커지고 저장마다 정렬하던 문제)
+        // 분야 정책: 즉시 알릴 것 · 묶음으로 고일 것 · 매거진에만 둘 것
+        let quiet = (isQuietTime || isSnoozed) && !manual // 방해 금지 시간·잠시 끄기: 알리지 않고 안 읽은 소식으로만 쌓는다
+        let drops = decide(candidates, listed: listed, info: info, quiet: quiet)
         Store.save(state)
-        Magazine.shared.publishDue() // 확인을 마친 뒤에 지난 호를 엮어 빠지는 기사가 없게
-        if (isQuietTime || isSnoozed), !manual {
-            return // 방해 금지 시간·잠시 끄기: 알리지 않고 안 읽은 소식으로만 쌓는다
+        await Magazine.shared.publishDue() // 확인을 마친 뒤에 지난 호를 엮어 빠지는 기사가 없게
+        if quiet { return }
+        if manual, drops.isEmpty, !listed.isEmpty {
+            ToastCenter.shared.showInfo("새 소식 \(listed.count)건", sub: "알릴 만큼 큰 소식은 없어 목록·매거진에만 실었어요")
+            return
         }
         // 중요 표시가 붙은 소식을 먼저
-        deliver(found.sorted { ($0.important == true ? 0 : 1) < ($1.important == true ? 0 : 1) }, manual: manual)
+        deliver(drops.sorted { ($0.important == true ? 0 : 1) < ($1.important == true ? 0 : 1) }, manual: manual)
+    }
+
+    // MARK: 분야별 알림
+    var needsOnboarding: Bool { state.sectionsChosen == nil }
+    var chosenSections: [String] { state.sectionsChosen ?? [] }
+    func policy(_ section: String) -> SectionPolicy { state.sectionPolicy[section] ?? SectionPolicy() }
+    func setPolicy(_ section: String, _ change: (inout SectionPolicy) -> Void) {
+        var p = policy(section)
+        change(&p)
+        state.sectionPolicy[section] = p
+        Store.save(state)
+    }
+
+    // 알림을 정할 때 쓰는 분야: 고른 분야에 걸린 칩이 있으면 그것, 없으면 대표 분야
+    func notifySection(_ it: NewsItem) -> String {
+        let chosen = chosenSections
+        return it.sectionChips.first { chosen.contains($0) } ?? it.section
+    }
+
+    private func sentToday(_ section: String?, now: Date = Date()) -> Int {
+        let cal = Calendar.current
+        return state.notifyLog.filter { cal.isDate($0.at, inSameDayAs: now) && (section == nil || $0.section == section) }.count
+    }
+
+    // 이번에 들어온 소식마다(같은 이야기는 하나로) 알림·고임·매거진만을 정한다. 떨어뜨릴 소식을 돌려준다.
+    private func decide(_ items: [NewsItem], listed: [NewsItem], info: [String: (story: String?, coverage: Coverage)], quiet: Bool) -> [NewsItem] {
+        let now = Date()
+        let cal = Calendar.current
+        state.notifyLog.removeAll { !cal.isDate($0.at, inSameDayAs: now) }
+        state.notifiedStories = state.notifiedStories.filter { now.timeIntervalSince1970 - $0.value < 36 * 3600 }
+        state.pending.removeAll { now.timeIntervalSince($0.at) > 36 * 3600 }
+        guard !items.isEmpty, state.sectionsChosen != nil else { return [] }
+        let chosen = Set(chosenSections), limits = state.settings.limits
+        let rank = ["lab": 0, "press": 1, "kr": 2]
+        // 같은 이야기끼리 모아 대표 하나(공식 발표 > 언론 > 국내, 그다음 최신)
+        var order: [String] = [], groups: [String: [NewsItem]] = [:]
+        for it in items {
+            let story = info[it.key]?.story ?? "item:" + it.key
+            if groups[story] == nil { order.append(story) }
+            groups[story, default: []].append(it)
+        }
+        var drops: [NewsItem] = []
+        for story in order {
+            guard state.notifiedStories[story] == nil, let g = groups[story],
+                  let rep = g.min(by: { (rank[$0.tier] ?? 3, $1.date ?? .distantPast) < (rank[$1.tier] ?? 3, $0.date ?? .distantPast) }) else { continue }
+            let sec = notifySection(rep)
+            let cov = info[rep.key]?.coverage ?? Coverage(kr: rep.tier == "kr" ? 1 : 0, intl: rep.tier == "kr" ? 0 : 1)
+            let input = NotifyPolicy.Input(chosen: chosen.contains(sec), policy: policy(sec), coverage: cov,
+                                           lab: g.contains { $0.tier == "lab" }, important: g.contains { $0.important == true },
+                                           followed: state.followedStories.contains(story),
+                                           sentInSection: sentToday(sec, now: now), sentTotal: sentToday(nil, now: now))
+            let top = chosen.contains(Sections.top)
+                ? NotifyPolicy.Input(chosen: true, policy: policy(Sections.top), coverage: cov,
+                                     sentInSection: sentToday(Sections.top, now: now), sentTotal: sentToday(nil, now: now)) : nil
+            let (decision, viaTop) = NotifyPolicy.decideWithTop(input, top: top, limits: limits)
+            switch decision {
+            case .drop where !quiet:
+                var shown = listed.first { $0.key == rep.key } ?? rep
+                if shown.related == nil, g.count > 1 { shown.related = g.filter { $0.key != rep.key }.map(\.sourceName) }
+                drops.append(shown)
+                state.notifyLog.append(.init(section: viaTop ? Sections.top : sec, at: now))
+                state.notifiedStories[story] = now.timeIntervalSince1970
+                state.pending.removeAll { $0.story == story }
+            case .pool, .drop: // 방해 금지 중에 떨어질 소식도 고였다가 다음 묶음으로
+                if !state.pending.contains(where: { $0.story == story }) {
+                    state.pending.append(.init(item: rep, section: sec, story: story, at: now))
+                }
+            case .quiet: break
+            }
+        }
+        return drops
+    }
+
+    // 묶음: 분야마다 정한 시각이 지나면 고인 소식을 한 방울로("경제 7건")
+    private func deliverBundles(now: Date = Date()) {
+        guard !state.pending.isEmpty, !isQuietTime, !isSnoozed else { return }
+        var changed = false
+        for sec in Set(state.pending.map(\.section)).sorted(by: { Sections.order($0) < Sections.order($1) }) {
+            guard NotifyPolicy.bundleDue(hour: policy(sec).bundleHour, now: now, last: state.lastBundle[sec]) else { continue }
+            let items = state.pending.filter { $0.section == sec }.map(\.item)
+            state.pending.removeAll { $0.section == sec }
+            state.lastBundle[sec] = now
+            changed = true
+            switch state.settings.style {
+            case .drop: ToastCenter.shared.showBundle(section: sec, items: items)
+            case .system: SystemNotifier.postBundle(section: sec, items: items, sound: state.settings.sound)
+            }
+        }
+        if changed { Store.save(state) }
+    }
+
+    // 처음 실행: 관심 분야를 고른다(설정에서 다시 고를 수도 있다). 고른 분야의 기본 출처를 켜고 그 분야 최근 소식으로 매거진을 채운다.
+    func chooseSections(_ ids: [String]) {
+        let before = Set(state.sectionsChosen ?? [])
+        let first = state.sectionsChosen == nil
+        let ordered = ids.sorted { Sections.order($0) < Sections.order($1) }
+        state.sectionsChosen = ordered
+        let defaults = NotifyPolicy.defaults(for: ordered)
+        for id in ordered where state.sectionPolicy[id] == nil { state.sectionPolicy[id] = defaults[id] }
+        var turnedOn: [String] = []
+        for (id, m) in Sections.meta {
+            guard let sec = m.section else { continue }
+            let now = ordered.contains(sec)
+            if now, first || !before.contains(sec), m.defaultOn == true {
+                if state.enabled[id] != true { turnedOn.append(id) }
+                state.enabled[id] = true
+            } else if !now, first || before.contains(sec) {
+                state.enabled[id] = false
+            }
+        }
+        state.pending.removeAll { !ordered.contains($0.section) }
+        Store.save(state)
+        objectWillChange.send()
+        if !turnedOn.isEmpty { Task { await backfillMagazine(only: Set(turnedOn)) } }
+    }
+
+    // 출처 수(켜짐/전체)
+    func sourceCount(_ section: String) -> (on: Int, all: Int) {
+        let ids = Sections.meta.values.filter { $0.section == section }.map(\.id)
+        return (ids.filter { state.enabled[$0] == true }.count, ids.count)
+    }
+
+    // MARK: 카드에서 바로 줄이기
+    func hideSource(_ id: String) {
+        guard !state.hiddenSources.contains(id) else { return }
+        state.hiddenSources.append(id)
+        state.recent.removeAll { $0.sourceId == id }
+        state.pending.removeAll { $0.item.sourceId == id }
+        Store.save(state)
+        Magazine.shared.refresh()
+    }
+    func unhideSource(_ id: String) {
+        state.hiddenSources.removeAll { $0 == id }
+        Store.save(state)
+        Magazine.shared.refresh()
+    }
+    func lessOf(_ section: String) {
+        setPolicy(section) { if $0.mode == .instant { $0.mode = .bundle } else { $0.mode = .magazine } }
+    }
+    func muteWord(_ word: String) {
+        let w = word.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !w.isEmpty else { return }
+        update { if !$0.muteKeywords.contains(w) { $0.muteKeywords.append(w) } }
+        state.pending.removeAll { "\($0.item.title) \($0.item.titleKo ?? "")".lowercased().contains(w.lowercased()) }
+    }
+    // 낱말 고르기 메뉴에 보일 제목 낱말
+    static func titleWords(_ it: NewsItem) -> [String] {
+        let text = [it.titleKo, it.title].compactMap { $0 }.joined(separator: " ")
+        let parts = text.components(separatedBy: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-")).inverted)
+        var out: [String] = []
+        let stop: Set<String> = ["the", "and", "for", "with", "from", "that", "this", "into", "over", "after", "about", "new", "says", "its", "how", "why", "what"]
+        for p in parts where p.count >= 2 && !out.contains(p) && !stop.contains(p.lowercased()) && !p.allSatisfy(\.isNumber) { out.append(p) }
+        return Array(out.prefix(12))
     }
 
     // MARK: 거르기·묶기
@@ -132,28 +294,17 @@ final class AppModel: ObservableObject {
 
     // 여러 곳이 같은 소식을 다루면 하나만 알리고 "다른 N곳도 보도"로 묶는다.
     // 공식 발표 > 언론 > 국내 순으로 대표를 고른다.
-    private func groupSameStory(_ items: [NewsItem]) -> [NewsItem] {
-        let rank = ["lab": 0, "press": 1, "kr": 2]
-        let sorted = items.sorted { (rank[$0.tier] ?? 3, $1.date ?? .distantPast) < (rank[$1.tier] ?? 3, $0.date ?? .distantPast) }
-        var kept: [NewsItem] = []
-        for it in sorted {
-            let words = StoryMatch.tokens(it.title)
-            if let i = kept.firstIndex(where: { StoryMatch.same(it, $0) }) {
-                kept[i].related = (kept[i].related ?? []) + [it.sourceName]
-                continue
-            }
-            // 하루 반 안에 이미 알린 소식과 같으면 알리지 않고 그 소식에 출처만 더한다
-            let cutoff = Date().addingTimeInterval(-36 * 3600)
-            _ = words
-            if let j = state.recent.firstIndex(where: { ($0.date ?? .distantPast) > cutoff && StoryMatch.same(it, $0) }) {
-                if !(state.recent[j].related ?? []).contains(it.sourceName), state.recent[j].sourceName != it.sourceName {
-                    state.recent[j].related = (state.recent[j].related ?? []) + [it.sourceName]
-                }
-                continue
-            }
-            kept.append(it)
+    func groupForProbe(_ items: [NewsItem]) async -> [NewsItem] { await groupSameStory(items) } // 성능 측정용
+
+    // 같은 소식 묶기(R-4: StoryGrouper 한 곳). 문장 임베딩 비교는 화면 줄기 밖에서 하고, 최근 목록에 붙일 출처만 돌아와 반영
+    private func groupSameStory(_ items: [NewsItem]) async -> [NewsItem] {
+        guard !items.isEmpty else { return [] }
+        let recent = state.recent
+        let (kept, adds) = await Task.detached(priority: .userInitiated) { StoryGrouper.groupForList(items, recent: recent) }.value
+        for (j, names) in adds where j < state.recent.count && state.recent[j].key == recent[j].key {
+            for n in names where !(state.recent[j].related ?? []).contains(n) { state.recent[j].related = (state.recent[j].related ?? []) + [n] }
         }
-        return kept.sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+        return kept
     }
 
     var isQuietTime: Bool {
@@ -207,21 +358,21 @@ final class AppModel: ObservableObject {
     }
 
     // MARK: 동작
-    func open(_ item: NewsItem) {
+    func open(_ item: NewsItem, sequence: [NewsItem] = []) {
         guard item.id != Self.previewID else { return }
         markRead()
         setRead(item, true)
         noteInterest(item)
-        ReaderController.open(item)
+        ReaderController.open(item, sequence: sequence)
     }
 
     // 처음 한 번: 켜진 출처에서 최근 3일 기사를 받아 매거진 첫 호를 채운다(알림 없음)
-    private func backfillMagazine() async {
+    private func backfillMagazine(only: Set<String>? = nil) async {
         Magazine.shared.preparing = true
         defer { Magazine.shared.preparing = false }
         let cutoff = Date().addingTimeInterval(-3 * 24 * 3600)
         var all: [NewsItem] = []
-        for src in allSources where state.enabled[src.id] == true {
+        for src in allSources where state.enabled[src.id] == true && (only?.contains(src.id) ?? true) {
             guard var items = try? await FeedService.shared.items(for: src, conditional: false) else { continue }
             items = items.filter { ($0.date ?? .distantPast) > cutoff }
             if src.type == "sitemap" {
@@ -236,8 +387,8 @@ final class AppModel: ObservableObject {
         let titles = await Translator.shared.translateMany(all.map(\.title))
         for i in all.indices where titles[i] != all[i].title { all[i].titleKo = titles[i] }
         await addEnglishTitles(&all)
-        Magazine.shared.ingest(applyKeywords(all).sorted { ($0.date ?? .distantPast) < ($1.date ?? .distantPast) })
-        Magazine.shared.publishDue()
+        await Magazine.shared.ingest(applyKeywords(all).sorted { ($0.date ?? .distantPast) < ($1.date ?? .distantPast) })
+        await Magazine.shared.publishDue()
         state.magazineBackfilled = true
         Store.save(state)
         NSLog("[매거진] 첫 호를 %d건으로 채웠습니다", all.count)
@@ -292,7 +443,9 @@ final class AppModel: ObservableObject {
 
     // 0 ~ 1.5 사이. 많이 본 분야·출처일수록 크다
     func interestWeight(category: NewsCategory, source: String?) -> Double {
-        let cats = state.interestCategory, srcs = state.interestSource
+        Self.interestWeight(category: category, source: source, cats: state.interestCategory, srcs: state.interestSource)
+    }
+    nonisolated static func interestWeight(category: NewsCategory, source: String?, cats: [String: Double], srcs: [String: Double]) -> Double {
         let cmax = max(cats.values.max() ?? 0, 1), smax = max(srcs.values.max() ?? 0, 1)
         let c = log(1 + (cats[category.rawValue] ?? 0)) / log(1 + cmax)
         let s = source.map { log(1 + (srcs[$0] ?? 0)) / log(1 + smax) } ?? 0
@@ -315,12 +468,13 @@ final class AppModel: ObservableObject {
 
     private func minuteTick() {
         if let s = state.snoozeUntil, s <= Date() { state.snoozeUntil = nil; Store.save(state) }
-        if Calendar.current.component(.minute, from: Date()) % 30 == 0 { Magazine.shared.publishDue() } // 지난 호 발행
+        if Calendar.current.component(.minute, from: Date()) % 30 == 0 { Task { await Magazine.shared.publishDue() } } // 지난 호 발행
+        deliverBundles()
         let st = state.settings
         guard st.digestEnabled else { return }
         let cal = Calendar.current
         let now = Date()
-        guard cal.component(.hour, from: now) >= st.digestHour,
+        guard Self.digestWindow(hour: cal.component(.hour, from: now), digestHour: st.digestHour),
               !(state.lastDigest.map { cal.isDate($0, inSameDayAs: now) } ?? false) else { return }
         guard !isQuietTime, !isSnoozed else { return } // 조용한 때가 끝나면 그날 안에 다시 시도
         state.lastDigest = now
@@ -329,6 +483,9 @@ final class AppModel: ObservableObject {
         guard !items.isEmpty else { return }
         ToastCenter.shared.showDigest(count: items.count)
     }
+
+    // 아침 브리핑을 보낼 수 있는 때: 정한 시각부터 정오 전까지(정오 이후 시각을 골랐으면 그 한 시간). 밤에 처음 켜도 '아침 브리핑'이 뜨지 않게(A-20)
+    nonisolated static func digestWindow(hour h: Int, digestHour: Int) -> Bool { h >= digestHour && h < max(12, digestHour + 1) }
 
     // 지난 24시간 소식
     var digestItems: [NewsItem] {
@@ -426,7 +583,7 @@ final class AppModel: ObservableObject {
             if !recent.isEmpty {
                 let titles = await Translator.shared.translateMany(recent.map(\.title))
                 for i in recent.indices where titles[i] != recent[i].title { recent[i].titleKo = titles[i] }
-                Magazine.shared.ingest(recent.reversed())
+                await Magazine.shared.ingest(recent.reversed())
             }
         } catch {
             return "읽지 못했습니다: \(error.localizedDescription)"
@@ -503,6 +660,16 @@ enum SystemNotifier {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
+    static func postBundle(section: String, items: [NewsItem], sound: Bool) {
+        guard available, !items.isEmpty else { return }
+        let c = UNMutableNotificationContent()
+        c.title = "\(Sections.name(section)) \(items.count)건"
+        c.body = items.prefix(3).map(\.displayTitle).joined(separator: "\n")
+        c.userInfo = ["section": section]
+        if sound { c.sound = .default }
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "bundle-\(section)-\(Int(Date().timeIntervalSince1970))", content: c, trigger: nil))
+    }
+
     static func post(_ items: [NewsItem], sound: Bool) {
         guard available else { return }
         let center = UNUserNotificationCenter.current()
@@ -535,16 +702,7 @@ enum StoryMatch {
 
     // 같은 소식인가: 낱말이 많이 겹치거나, 영어 제목의 '뜻'이 가깝거나(기기 내 문장 임베딩),
     // 뜻이 꽤 가깝고 고유명사(Meta·Trump 등)를 함께 쓰면 같다고 본다. 한국어 기사는 영어 제목(titleEn)으로 비교.
-    static func same(_ a: NewsItem, _ b: NewsItem) -> Bool {
-        guard a.sourceId != b.sourceId else { return false } // 한 곳이 같은 소식을 두 번 내는 일은 드물다
-        if similar(tokens(a.title), tokens(b.title)) { return true }
-        if similar(tokens(a.titleKo ?? a.title), tokens(b.titleKo ?? b.title)) { return true }
-        let ea = a.titleEn ?? (Translator.looksForeign(a.title) ? a.title : nil)
-        let eb = b.titleEn ?? (Translator.looksForeign(b.title) ? b.title : nil)
-        guard let ea, let eb, let d = meaningDistance(ea, eb) else { return false }
-        if d < 0.88 { return true } // 뜻만으로 같다고 볼 때는 엄격하게
-        return d < 1.07 && !entities(ea).isDisjoint(with: entities(eb))
-    }
+    static func same(_ a: NewsItem, _ b: NewsItem) -> Bool { StoryGrouper.same(StoryKey(a), StoryKey(b)) }
 
     // 문장 임베딩은 동시에 부르면 안전하지 않아 자물쇠로 한 번에 하나씩
     nonisolated(unsafe) private static let embedding = NLEmbedding.sentenceEmbedding(for: .english)

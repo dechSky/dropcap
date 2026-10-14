@@ -1,0 +1,15 @@
+{ "version": 2,
+  "tiers": { "lab": "공식 발표", "press": "해외 언론", "kr": "국내 언론" },
+  "aiPattern": "\\b(AI|LLM|GPT|인공지능|생성형)\\b|인공지능|생성형",
+  "sources": [
+    { "id": "openai", "name": "OpenAI", "tier": "lab", "type": "feed", "url": "https://openai.com/news/rss.xml", "aiOnly": false, "defaultOn": true, "color": "#10A37F", "section": "ai", "lang": "en", "region": "intl" },
+    { "id": "aitimes", "name": "AI타임스", "tier": "kr", "type": "feed", "url": "https://www.aitimes.com/rss/allArticle.xml", "aiOnly": false, "defaultOn": true, "color": "#E4002B", "section": "ai", "lang": "ko", "region": "kr" },
+    { "id": "yna-latest", "name": "연합뉴스 최신", "tier": "kr", "type": "feed", "url": "https://www.yna.co.kr/rss/news.xml", "aiOnly": false, "defaultOn": true, "color": "#0055A4", "section": "top", "lang": "ko", "region": "kr" },
+    { "id": "yna-market", "name": "연합 마켓+", "tier": "kr", "type": "feed", "url": "https://www.yna.co.kr/rss/market.xml", "aiOnly": false, "defaultOn": true, "color": "#0055A4", "section": "economy", "lang": "ko", "region": "kr" },
+    { "id": "hk-finance", "name": "한국경제 증권", "tier": "kr", "type": "feed", "url": "https://www.hankyung.com/feed/finance", "aiOnly": false, "defaultOn": true, "color": "#1A3D7C", "section": "economy", "lang": "ko", "region": "kr" },
+    { "id": "sedaily", "name": "서울경제", "tier": "kr", "type": "feed", "url": "https://www.sedaily.com/rss/economy", "aiOnly": false, "defaultOn": false, "color": "#2E5AAC", "section": "economy", "lang": "ko", "region": "kr" },
+    { "id": "cnbc", "name": "CNBC", "tier": "press", "type": "feed", "url": "https://www.cnbc.com/id/100003114/device/rss/rss.html", "aiOnly": false, "defaultOn": true, "color": "#005594", "section": "economy", "lang": "en", "region": "intl" },
+    { "id": "yna-politics", "name": "연합 정치", "tier": "kr", "type": "feed", "url": "https://www.yna.co.kr/rss/politics.xml", "aiOnly": false, "defaultOn": true, "color": "#0055A4", "section": "politics", "lang": "ko", "region": "kr" },
+    { "id": "bbc-world", "name": "BBC World", "tier": "press", "type": "feed", "url": "https://feeds.bbci.co.uk/news/world/rss.xml", "aiOnly": false, "defaultOn": true, "color": "#BB1919", "section": "world", "lang": "en", "region": "intl" },
+    { "id": "yna-sports", "name": "연합 스포츠", "tier": "kr", "type": "feed", "url": "https://www.yna.co.kr/rss/sports.xml", "aiOnly": false, "defaultOn": true, "color": "#0055A4", "section": "sports", "lang": "ko", "region": "kr" }
+  ] }

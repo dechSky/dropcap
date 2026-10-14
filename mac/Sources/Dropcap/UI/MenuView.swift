@@ -6,9 +6,13 @@ struct MenuView: View {
     @Environment(\.openSettings) private var openSettings
     @State private var tab: Tab = .all
     @State private var query = ""
-    @State private var category: NewsCategory?
+    @State private var category: NewsCategory?   // AI 안의 하위 칩
+    @State private var section: String?           // 분야 칩
     @AppStorage("listSort") private var sortRaw = "newest"
     @AppStorage("listStyle2") private var listStyle = "hero" // 기본: 첫 소식 크게(사용자 선택) · compact · cards · timeline 은 시안 비교용으로 남김
+    @State private var selected: String?            // 키보드로 고른 줄(key)
+    @FocusState private var listFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var snapshot = false // 시험용: 스크롤 없이 그려 화면 없이 찍을 수 있게
 
     enum Tab: String, CaseIterable { case all = "전체", unread = "안 읽음", saved = "저장" }
@@ -20,6 +24,11 @@ struct MenuView: View {
         case .all: list = model.state.recent
         case .unread: list = model.state.recent.filter { !model.isRead($0) }
         case .saved: list = model.state.saved
+        }
+        if let s = section {
+            // 주요 뉴스: 여러 곳이 함께 다룬 소식·공식 발표·꼭 알림 낱말
+            list = s == Sections.top ? list.filter { ($0.related?.count ?? 0) >= 1 || $0.tier == "lab" || $0.important == true }
+                                     : list.filter { $0.inSection(s) }
         }
         if let c = category { list = list.filter { $0.category == c } }
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
@@ -64,24 +73,10 @@ struct MenuView: View {
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary).font(.app(11))
                 TextField("제목·출처 검색", text: $query).textFieldStyle(.plain).font(.app(12))
+                    .onKeyPress(.downArrow) { listFocused = true; selected = selected ?? items.first?.key; return .handled } // 검색하다 ↓ 로 목록으로
                 if !query.isEmpty {
                     Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }.buttonStyle(.plain)
                 }
-                Menu {
-                    Picker("분야", selection: $category) {
-                        Label("전체 분야", systemImage: "square.grid.2x2").tag(NewsCategory?.none)
-                        ForEach(NewsCategory.allCases) { c in Label(c.label, systemImage: c.symbol).tag(NewsCategory?.some(c)) }
-                    }
-                    .pickerStyle(.inline)
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: category?.symbol ?? "line.3.horizontal.decrease")
-                        if let c = category { Text(c.label).lineLimit(1) }
-                    }
-                    .font(.app(11, category == nil ? .regular : .semibold))
-                    .foregroundStyle(category?.color ?? .secondary)
-                }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("분야 거르기")
                 Menu {
                     Picker("정렬", selection: $sortRaw) {
                         Label("최신순", systemImage: "clock").tag("newest")
@@ -102,7 +97,11 @@ struct MenuView: View {
             }
             .padding(.horizontal, 9).padding(.vertical, 5)
             .background(.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .padding(.horizontal, 14).padding(.bottom, 10)
+            .padding(.horizontal, 14).padding(.bottom, 8)
+            // 분야 칩(고른 분야). AI 를 누르면 그 안의 하위 칩이 한 줄 더
+            SectionChipBar(section: $section, sub: $category, sections: model.chosenSections, compact: true)
+                .padding(.horizontal, 14).padding(.bottom, 8)
+            if tab == .saved { AddURLBar().padding(.horizontal, 14).padding(.bottom, 10) } // 피드에 없는 기사도 주소로 저장
             Divider().opacity(0.5)
             // 목록 칸 높이를 고정한다: 상단바 창은 내용이 줄어도 창 크기를 줄이지 않아 아래에 빈 칸이 남는다
             Group {
@@ -110,71 +109,27 @@ struct MenuView: View {
                     empty.frame(maxHeight: .infinity)
                 } else {
                     if snapshot {
-                        VStack(spacing: 2) {
-                            let list = items
-                            ForEach(Array(list.enumerated()), id: \.element.key) { i, it in
-                                // 출처별일 때는 출처가 바뀌는 곳에 이름표
-                                if sortRaw == "source", i == 0 || list[i - 1].sourceName != it.sourceName {
-                                    HStack(spacing: 6) {
-                                        Text(it.sourceName).font(.app(11, .bold))
-                                        Text("\(list.filter { $0.sourceName == it.sourceName }.count)").font(.app(10.5)).foregroundStyle(.tertiary)
-                                        Spacer()
-                                    }
-                                    .foregroundStyle(.secondary)
-                                    .padding(.horizontal, 8).padding(.top, i == 0 ? 2 : 10).padding(.bottom, 2)
-                                }
-                                if listStyle != "compact", sortRaw != "source", let label = MenuStyles.timeSection(it, prev: i > 0 ? list[i - 1] : nil), !(listStyle == "hero" && i == 0) {
-                                    MenuStyles.SectionLabel(text: label, first: i == 0 || (listStyle == "hero" && i == 1))
-                                }
-                                Group {
-                                    switch listStyle {
-                                    case "cards": MenuStyles.CardRow(item: it, read: model.isRead(it), saved: model.isSaved(it)) { model.open(it) }
-                                    case "hero" where i == 0: MenuStyles.HeroCard(item: it, read: model.isRead(it)) { model.open(it) }
-                                    case "hero": MenuStyles.CardRow(item: it, read: model.isRead(it), saved: model.isSaved(it), compact: true) { model.open(it) }
-                                    case "timeline": MenuStyles.TimelineRow(item: it, read: model.isRead(it), last: i == list.count - 1) { model.open(it) }
-                                    default: Row(item: it, read: model.isRead(it), saved: model.isSaved(it)) { model.open(it) }
-                                    }
-                                }
-                                .contextMenu { menu(for: it) }
-                            }
-                        }
-                        .padding(6).frame(height: Self.listHeight, alignment: .top).clipped()
+                        VStack(spacing: 2) { rows(items) }
+                            .padding(6).frame(height: Self.listHeight, alignment: .top).clipped()
                     } else {
-                    ScrollView {
-                        LazyVStack(spacing: 2) {
-                            let list = items
-                            ForEach(Array(list.enumerated()), id: \.element.key) { i, it in
-                                // 출처별일 때는 출처가 바뀌는 곳에 이름표
-                                if sortRaw == "source", i == 0 || list[i - 1].sourceName != it.sourceName {
-                                    HStack(spacing: 6) {
-                                        Text(it.sourceName).font(.app(11, .bold))
-                                        Text("\(list.filter { $0.sourceName == it.sourceName }.count)").font(.app(10.5)).foregroundStyle(.tertiary)
-                                        Spacer()
-                                    }
-                                    .foregroundStyle(.secondary)
-                                    .padding(.horizontal, 8).padding(.top, i == 0 ? 2 : 10).padding(.bottom, 2)
-                                }
-                                if listStyle != "compact", sortRaw != "source", let label = MenuStyles.timeSection(it, prev: i > 0 ? list[i - 1] : nil), !(listStyle == "hero" && i == 0) {
-                                    MenuStyles.SectionLabel(text: label, first: i == 0 || (listStyle == "hero" && i == 1))
-                                }
-                                Group {
-                                    switch listStyle {
-                                    case "cards": MenuStyles.CardRow(item: it, read: model.isRead(it), saved: model.isSaved(it)) { model.open(it) }
-                                    case "hero" where i == 0: MenuStyles.HeroCard(item: it, read: model.isRead(it)) { model.open(it) }
-                                    case "hero": MenuStyles.CardRow(item: it, read: model.isRead(it), saved: model.isSaved(it), compact: true) { model.open(it) }
-                                    case "timeline": MenuStyles.TimelineRow(item: it, read: model.isRead(it), last: i == list.count - 1) { model.open(it) }
-                                    default: Row(item: it, read: model.isRead(it), saved: model.isSaved(it)) { model.open(it) }
-                                    }
-                                }
-                                .contextMenu { menu(for: it) }
+                        ScrollViewReader { proxy in
+                            ScrollView {
+                                LazyVStack(spacing: 2) { rows(items) }
+                                    .padding(6)
+                            }
+                            .onChange(of: selected) { _, k in
+                                guard let k else { return }
+                                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.15)) { proxy.scrollTo(k, anchor: .center) }
                             }
                         }
-                        .padding(6)
-                    }
                     }
                 }
             }
             .frame(height: Self.listHeight)
+            .focusable()
+            .focusEffectDisabled()
+            .focused($listFocused)
+            .onKeyPress(phases: .down) { handle($0) }
             Divider().opacity(0.5)
             footer
         }
@@ -182,9 +137,57 @@ struct MenuView: View {
         .fixedSize()
         .onAppear {
             model.markRead()
-            // 열자마자 검색칸에 입력 커서가 들어가지 않게
-            DispatchQueue.main.async { NSApp.keyWindow?.makeFirstResponder(nil) }
+            // 열자마자 검색칸이 아니라 목록이 키를 받게(↑↓·J/K 로 바로 고르기)
+            DispatchQueue.main.async {
+                listFocused = true
+                if let n = ProcessInfo.processInfo.environment["DROPCAP_TEST_SELECT"].flatMap(Int.init), items.indices.contains(n) { selected = items[n].key } // 시험용: 선택 테두리 보기
+            }
         }
+    }
+
+    // 목록 줄들(스크롤 목록·시험 스냅샷 공통)
+    @ViewBuilder private func rows(_ list: [NewsItem]) -> some View {
+        ForEach(Array(list.enumerated()), id: \.element.key) { i, it in
+            // 출처별일 때는 출처가 바뀌는 곳에 이름표
+            if sortRaw == "source", i == 0 || list[i - 1].sourceName != it.sourceName {
+                HStack(spacing: 6) {
+                    Text(it.sourceName).font(.app(11, .bold))
+                    Text("\(list.filter { $0.sourceName == it.sourceName }.count)").font(.app(10.5)).foregroundStyle(.tertiary)
+                    Spacer()
+                }
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8).padding(.top, i == 0 ? 2 : 10).padding(.bottom, 2)
+            }
+            if listStyle != "compact", sortRaw != "source", let label = MenuStyles.timeSection(it, prev: i > 0 ? list[i - 1] : nil), !(listStyle == "hero" && i == 0) {
+                MenuStyles.SectionLabel(text: label, first: i == 0 || (listStyle == "hero" && i == 1))
+            }
+            Group {
+                switch listStyle {
+                case "cards": MenuStyles.CardRow(item: it, read: model.isRead(it), saved: model.isSaved(it)) { model.open(it, sequence: list) }
+                case "hero" where i == 0: MenuStyles.HeroCard(item: it, read: model.isRead(it)) { model.open(it, sequence: list) }
+                case "hero": MenuStyles.CardRow(item: it, read: model.isRead(it), saved: model.isSaved(it), compact: true) { model.open(it, sequence: list) }
+                case "timeline": MenuStyles.TimelineRow(item: it, read: model.isRead(it), last: i == list.count - 1) { model.open(it, sequence: list) }
+                default: Row(item: it, read: model.isRead(it), saved: model.isSaved(it)) { model.open(it, sequence: list) }
+                }
+            }
+            .selectionRing(selected == it.key, radius: listStyle == "hero" && i == 0 ? 14 : 10)
+            .id(it.key)
+            .contextMenu { menu(for: it) }
+        }
+    }
+
+    // 키보드: ↑↓/J·K 고르기, ⏎ 열기, S 저장, O 브라우저, M 읽음 바꾸기
+    private func handle(_ press: KeyPress) -> KeyPress.Result {
+        guard let k = NavKey.from(press) else { return .ignored }
+        let list = items
+        switch k {
+        case .next, .prev:
+            selected = NavKey.move(selected, in: list.map(\.key), by: k == .next ? 1 : -1)
+        default:
+            guard let it = list.first(where: { $0.key == selected }) ?? (k == .open ? list.first : nil) else { return .ignored }
+            ItemKeys.perform(k, item: it, sequence: list)
+        }
+        return .handled
     }
 
     @ViewBuilder private func menu(for it: NewsItem) -> some View {
@@ -196,6 +199,7 @@ struct MenuView: View {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(it.link, forType: .string)
         }
+        ReduceMenu(item: it)
     }
 
     private var header: some View {
@@ -246,7 +250,7 @@ struct MenuView: View {
     private var empty: some View {
         VStack(spacing: 8) {
             Image(systemName: tab == .saved ? "bookmark" : "newspaper").font(.app(26, .light)).foregroundStyle(.tertiary)
-            Text(!query.isEmpty || category != nil ? "맞는 소식이 없습니다" : tab == .saved ? "저장한 소식이 없습니다" : tab == .unread ? "모두 읽었습니다" : "아직 새 소식이 없습니다")
+            Text(!query.isEmpty || category != nil || section != nil ? "맞는 소식이 없습니다" : tab == .saved ? "저장한 소식이 없습니다" : tab == .unread ? "모두 읽었습니다" : "아직 새 소식이 없습니다")
                 .font(.app(13, .medium))
             Text(tab == .saved ? "소식을 오른쪽 클릭해 '나중에 읽기'로 저장할 수 있어요" : "새 글이 올라오면 물방울이 떨어지듯 알려 드려요")
                 .font(.app(11.5)).foregroundStyle(.secondary).multilineTextAlignment(.center)
@@ -307,7 +311,7 @@ private struct Row: View {
                         .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 4) {
                         if item.important == true { Image(systemName: "star.fill").foregroundStyle(.orange) }
-                        Image(systemName: item.category.symbol).foregroundStyle(item.category.color)
+                        Image(systemName: item.topicSymbol).foregroundStyle(item.topicColor)
                         Text(item.sourceName)
                         if let r = item.related, !r.isEmpty { Text("외 \(r.count)곳") }
                         Text("·")
@@ -351,7 +355,7 @@ struct RowThumb: View {
                     .transition(.opacity)
             } else if placeholder {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .fill(LinearGradient(colors: [item.accent.opacity(0.35), item.category.color.opacity(0.18)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .fill(LinearGradient(colors: [item.accent.opacity(0.35), item.topicColor.opacity(0.18)], startPoint: .topLeading, endPoint: .bottomTrailing))
                     .overlay(Text(item.initial).font(.app(height * 0.38, .heavy)).foregroundStyle(.white.opacity(0.85)))
                     .frame(width: width, height: height)
             } else {

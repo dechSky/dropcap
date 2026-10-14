@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "_comment": "분야 정의(맥 Core/Category.swift 와 같은 낱말·순서·색). shared/categories.json 이 생기면 그쪽을 읽는다. rules 는 위에서부터 먼저 걸리는 분야, order 는 화면에 놓는 순서.",
+  "fallback": "other",
+  "kindCategory": { "paper": "research", "release": "model" },
+  "order": ["model", "research", "policy", "business", "security", "other"],
+  "categories": [
+    { "id": "security", "label": "보안", "icon": "security-high-symbolic", "color": "#FF3B30", "colorDark": "#FF453A",
+      "words": ["security", "vulnerab", "exploit", "jailbreak", "malware", "phishing", "breach", "cyber", "보안", "해킹", "취약점", "유출", "사이버"] },
+    { "id": "policy", "label": "정책·규제", "icon": "document-properties-symbolic", "color": "#5856D6", "colorDark": "#5E5CE6",
+      "words": ["regulat", "policy", "law", "act ", "congress", "senate", "eu ", "government", "lawsuit", "court", "copyright", "ban ", "규제", "정책", "법안", "정부", "소송", "저작권", "국회", "가이드라인"] },
+    { "id": "business", "label": "투자·기업", "icon": "power-profile-performance-symbolic", "color": "#34C759", "colorDark": "#30D158",
+      "words": ["funding", "raises", "valuation", "acquire", "acquisition", "ipo", "invest", "revenue", "partnership", "deal", "layoff", "hires", "투자", "인수", "상장", "매출", "협력", "제휴", "유치", "기업가치", "파트너십"] },
+    { "id": "research", "label": "연구", "icon": "applications-science-symbolic", "color": "#AF52DE", "colorDark": "#BF5AF2",
+      "words": ["research", "paper", "study", "benchmark", "dataset", "arxiv", "scientists", "researchers", "논문", "연구", "벤치마크", "데이터셋", "학회"] },
+    { "id": "model", "label": "모델·제품", "icon": "view-grid-symbolic", "color": "#007AFF", "colorDark": "#0A84FF",
+      "words": ["model", "gpt", "claude", "gemini", "llama", "release", "launch", "introducing", "announc", "api", "agent", "app", "feature", "update", "open-source", "open source", "weights", "모델", "출시", "공개", "발표", "업데이트", "에이전트", "오픈소스", "기능"] },
+    { "id": "other", "label": "기타", "icon": "view-app-grid-symbolic", "color": "#8E8E93", "colorDark": "#8E8E93", "words": [] }
+  ]
+}

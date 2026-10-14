@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ko" data-page="menu">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https://img.dropcap.example data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'none'; frame-src 'none'">
+<title>Dropcap</title>
+<link rel="stylesheet" href="base.css">
+<link rel="stylesheet" href="menu.css">
+<script src="bridge.js"></script>
+<script src="ui.js"></script>
+<script src="mock/menu.js"></script>
+</head>
+<body>
+<header class="head">
+  <div class="titles">
+    <div class="row1"><b>Dropcap</b><span id="quiet" class="quiet" hidden title="방해 금지 시간이라 알림을 띄우지 않습니다"><i data-ic="moon"></i></span></div>
+    <div id="status" class="status"></div>
+  </div>
+  <button id="snooze" class="hb"><i data-ic="bell"></i></button>
+  <button id="check" class="hb" title="지금 확인"><i data-ic="refresh"></i></button>
+</header>
+<nav class="seg" id="tabs">
+  <button data-tab="all" class="on">전체</button>
+  <button data-tab="unread">안 읽음</button>
+  <button data-tab="saved">저장</button>
+</nav>
+<div class="searchbar">
+  <i data-ic="search" class="dim"></i>
+  <input id="q" placeholder="제목·출처 검색" autocomplete="off" spellcheck="false">
+  <button id="clear" hidden class="dim3"><i data-ic="xmark.circle"></i></button>
+  <button id="sort" class="dim" title="정렬"><i data-ic="sort"></i><span></span></button>
+</div>
+<!-- 분야 칩 줄(G-09): '전체' + 고른 분야, AI 를 고르면 그 안의 하위 칩 한 줄 더 -->
+<div id="chipbar" class="chipbar">
+  <div id="chips" class="chips"></div>
+  <div id="topics" class="chips sub" hidden></div>
+</div>
+<div class="divider"></div>
+<main id="list"></main>
+<div class="divider"></div>
+<footer class="foot">
+  <button id="mag" class="mag"><i data-ic="book"></i><span>매거진 열기</span><small id="hk">Ctrl+Alt+M</small></button>
+  <span class="grow"></span>
+  <button id="settings" class="fb" title="설정"><i data-ic="gear"></i></button>
+  <button id="more" class="fb" title="더 보기"><i data-ic="ellipsis"></i></button>
+</footer>
+<script src="menu.js"></script>
+</body>
+</html>

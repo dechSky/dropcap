@@ -1,0 +1,306 @@
+using System.Globalization;
+using System.Text.Json.Nodes;
+using Dropcap.Core;
+
+namespace Dropcap.Ui;
+
+// 읽기 창(R 절). 창은 기사마다 하나씩 여러 개 — 주소는 reader.html?key=<기사 키>.
+// 맥 ReaderView 와 같은 내용·문구. 본문 추리기·번역·요약은 ArticleService 가 하고, 여기서는 보기 데이터를 만들어 보낸다.
+public sealed class ReaderPage : IPage
+{
+    public string Name => "reader";
+
+    public const int MinFont = 13, MaxFont = 26, DefaultFont = 17; // R-06
+
+    private readonly AppModel model;
+    private readonly ArticleService articles;
+    private readonly Scrapbook book;
+    private readonly IPlatform platform;
+    private readonly Bridge bridge;
+    private readonly object gate = new();
+    private readonly Dictionary<string, Entry> open = new();   // 기사 키 → 열린 창의 기사·진행 상황
+    private string? speakingKey;                                // 지금 소리 내어 읽는 창
+
+    private sealed class Entry(NewsItem item)
+    {
+        public NewsItem Item { get; } = item;
+        public PreparedArticle? Article { get; set; }
+        public Guid? Token { get; set; }
+    }
+
+    public ReaderPage(AppModel model, ArticleService articles, Scrapbook book, IPlatform platform, Bridge bridge)
+    {
+        this.model = model;
+        this.articles = articles;
+        this.book = book;
+        this.platform = platform;
+        this.bridge = bridge;
+        // 저장·스크랩 표시가 바뀌면 열린 창에 알림(창은 marks 로 다시 물음)
+        book.Changed += () => bridge.Emit(Name, "changed");
+    }
+
+    public static int FontSize => Math.Clamp((int)Math.Round(Prefs.Get("readerFontSize", (double)DefaultFont)), MinFont, MaxFont);
+
+    // MARK: 창 열기·닫기(앱이 부름)
+
+    // 창을 열기 전에: 기사를 기억하고 진행 상황을 받아 창에 보낸다. 이미 준비된 기사는 바로 뜬다(R-15).
+    public void Opening(NewsItem item)
+    {
+        Entry e;
+        lock (gate)
+        {
+            if (open.ContainsKey(item.Key)) return; // 같은 기사 창을 다시 열면 그대로
+            open[item.Key] = e = new Entry(item) { Article = articles.Cached(item.Link) };
+            e.Token = articles.Observe(item.Link, a => { lock (gate) e.Article = a; Send(e); });
+        }
+        _ = Run(e);
+    }
+
+    private async Task Run(Entry e)
+    {
+        PreparedArticle a;
+        try { a = await articles.PrepareAsync(e.Item); }
+        catch (Exception)
+        {
+            // 예외로 끝나도 실패 화면은 보여 준다(요약 번역 없이 원문 열기만)
+            a = new PreparedArticle { Stage = Stage.Failed, Title = e.Item.DisplayTitle, OriginalTitle = e.Item.Title };
+        }
+        lock (gate) { if (!open.ContainsKey(e.Item.Key)) return; e.Article = a; }
+        Send(e);
+    }
+
+    // 창을 닫으면: 관찰을 끊고, 이 창이 읽던 소리는 멈춘다(R-09)
+    public void Closed(string key)
+    {
+        Entry? e;
+        lock (gate)
+        {
+            if (!open.Remove(key, out e)) return;
+            if (e.Token is { } t) articles.StopObserving(e.Item.Link, t);
+        }
+        if (speakingKey == key) { platform.StopSpeaking(); speakingKey = null; }
+    }
+
+    private void Send(Entry e)
+    {
+        PreparedArticle? a;
+        lock (gate) a = e.Article;
+        bridge.Emit(Name, "article", View(e.Item, a, model, book));
+    }
+
+    // MARK: 보기 데이터
+
+    // 맥 ReaderModel.Phase: 불러오는 중 → 번역 중(원문이 먼저 보임) → 끝 / 실패
+    public static string Phase(PreparedArticle? a) => a?.Stage switch
+    {
+        null or Stage.Extracting => "loading",
+        Stage.Original or Stage.Translating => "translating",
+        Stage.Done => "done",
+        _ => "failed",
+    };
+
+    // R-07: 읽는 시간. 한국어 분당 약 500자(빈칸 빼고), 외국어 분당 약 230낱말. 최소 1분, 글이 없으면 null.
+    public static int? ReadingMinutes(IReadOnlyList<string> texts)
+    {
+        if (texts.Count == 0) return null;
+        var joined = string.Join(" ", texts);
+        var minutes = Translator.LooksForeign(joined)
+            ? joined.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length / 230.0
+            : joined.Count(c => !char.IsWhiteSpace(c)) / 500.0;
+        return Math.Max(1, (int)Math.Round(minutes, MidpointRounding.AwayFromZero));
+    }
+
+    // R-12: 구글 번역 프록시 주소(맥 translatedPageURL 과 같은 모양). 호스트의 - 는 --, . 는 - 로.
+    public static string? TranslatedPageUrl(string link)
+    {
+        if (!Uri.TryCreate(link, UriKind.Absolute, out var u) || (u.Scheme != "http" && u.Scheme != "https") || u.Host.Length == 0) return null;
+        var h = u.Host.Replace("-", "--").Replace(".", "-");
+        var q = (u.Query.Length > 1 ? u.Query[1..] + "&" : "") + "_x_tr_sl=auto&_x_tr_tl=ko&_x_tr_hl=ko";
+        return $"https://{h}.translate.goog{u.AbsolutePath}?{q}";
+    }
+
+    // 머리의 날짜: 맥 "10월 13일 오후 3:05" 모양
+    public static string DateLabel(DateTimeOffset? d) =>
+        d is { } v ? v.ToLocalTime().ToString("M월 d일 tt h:mm", CultureInfo.GetCultureInfo("ko-KR")) : "";
+
+    // 창 하나에 보낼 전부. 번역/원문 전환은 창이 들고 있고, 두 쪽에 필요한 것(제목·원문·읽는 시간)을 함께 보낸다.
+    public static object View(NewsItem item, PreparedArticle? a, AppModel? m, Scrapbook book)
+    {
+        var blocks = a?.Blocks ?? new();
+        var (skip, byline) = BodyCleanup.Analyze(blocks);   // 기자 줄 → 바이라인, 짝 잃은 설명 문구 빼기
+        // 표지: 피드 사진 → 매거진이 받아 둔 대표 사진 → 본문의 첫 사진(맥과 같은 순서). 기자 프로필·로고 같은 잡그림은 빼고,
+        // 본문에서는 표지와 같은 사진(크기만 다른 것 포함)을 다시 싣지 않는다.
+        var stored = m?.Magazine.StoredImage(item.Key);
+        var cover = new[] { item.Image, stored }.FirstOrDefault(u => u is not null && !ImageKey.IsJunk(u))
+            ?? blocks.FirstOrDefault(b => b.Type == BlockKind.Img && !ImageKey.IsJunk(b.Src))?.Src;
+        var shown = blocks.Select(b => b.Text).OfType<string>().ToList();
+        var original = blocks.Select(b => b.Original ?? b.Text).OfType<string>().ToList();
+        var phase = Phase(a);
+        var title = a?.Title ?? item.DisplayTitle;
+        return new
+        {
+            key = item.Key,
+            item = ItemView.From(item, m),
+            phase,
+            title,
+            byline,
+            originalTitle = a?.OriginalTitle ?? item.Title,
+            translated = a?.Translated ?? false,
+            engine = a?.Engine ?? "",
+            // T-06: 요약이 있거나 요약 중일 때만 상자
+            summary = a?.Summary,
+            summarizing = a?.Summarizing ?? false,
+            fallback = a?.Fallback ?? "",
+            translatedPage = TranslatedPageUrl(item.Link) is not null,
+            cover,
+            date = DateLabel(item.Date),
+            minutes = new { shown = ReadingMinutes(shown), original = ReadingMinutes(original) },
+            // 소리 내어 읽기(R-09): 번역이 없으면 제목 언어로 판단
+            koreanTitle = !Translator.LooksForeign(title),
+            blocks = blocks.Select((b, i) => (b, i))
+                .Where(x => !skip.Contains(x.i) && !(x.b.Type == BlockKind.Img && (ImageKey.IsJunk(x.b.Src) || ImageKey.Same(x.b.Src, cover))))
+                .Select(x => new
+                {
+                    i = x.i,
+                    type = x.b.Type.ToString().ToLowerInvariant(),
+                    text = x.b.Text ?? "",
+                    original = x.b.Original is { } o && o != x.b.Text ? o : null,
+                    src = x.b.Type == BlockKind.Img ? x.b.Src : null,
+                    scrap = x.b.Type is BlockKind.P or BlockKind.Li or BlockKind.Quote or BlockKind.H,
+                }).ToList(),
+            marks = Marks(item, m, book),
+            fontSize = FontSize,
+        };
+    }
+
+    // 저장·스크랩 표시(자주 바뀌므로 따로 물을 수 있게)
+    public static object Marks(NewsItem item, AppModel? m, Scrapbook book) => new
+    {
+        saved = m?.IsSaved(item) ?? false,
+        scrapped = book.IsScrapped(item),
+        scraps = book.Scraps.Where(s => s.Item.Key == item.Key && s.Quote is not null)
+            .Select(s => new { quote = s.Quote, collection = s.Collection, memo = s.Memo }).ToList(),
+        collections = book.Collections,
+        lastCollection = book.LastCollection,
+    };
+
+    // MARK: 명령
+
+    private Entry Find(string key)
+    {
+        lock (gate) if (open.TryGetValue(key, out var e)) return e;
+        var it = Lookup.Find(model, key, model.Magazine) ?? throw new KeyNotFoundException("기사를 찾지 못함");
+        Opening(it); // 앱이 Opening 을 부르지 않았거나 창을 새로 고친 경우
+        lock (gate) return open[key];
+    }
+
+    private PreparedArticle? ArticleOf(Entry e) { lock (gate) return e.Article; }
+
+    // 소리 내어 읽기: 보이는 언어의 제목과 본문(코드·사진 빼고)
+    public static (string Text, string Language) SpeechFor(NewsItem item, PreparedArticle? a, bool showOriginal)
+    {
+        var title = a?.Title ?? item.DisplayTitle;
+        var korean = a?.Translated == true ? !showOriginal : !Translator.LooksForeign(title);
+        var paras = (a?.Blocks ?? new()).Where(b => b.Type is not (BlockKind.Pre or BlockKind.Img))
+            .Select(b => (showOriginal ? b.Original : null) ?? b.Text).OfType<string>();
+        var head = showOriginal ? a?.OriginalTitle ?? item.Title : title;
+        var text = string.Join("\n\n", new[] { head }.Concat(paras).Where(t => t.Length > 0));
+        return (text, korean ? "ko-KR" : "en-US");
+    }
+
+    // 문단 하나의 보이는 글과(번역문이면) 원문
+    public static (string Quote, string? Original)? Paragraph(PreparedArticle? a, int index, bool showOriginal)
+    {
+        if (a is null || index < 0 || index >= a.Blocks.Count) return null;
+        var b = a.Blocks[index];
+        var text = (showOriginal ? b.Original : null) ?? b.Text;
+        if (string.IsNullOrEmpty(text)) return null;
+        return (text, showOriginal ? null : b.Original);
+    }
+
+    public Task<object?> Handle(string cmd, JsonObject a) => Task.FromResult(Do(cmd, a));
+
+    private object? Do(string cmd, JsonObject a)
+    {
+        var key = a.Str("key");
+        Entry E() => Find(key);
+        Scrap? ScrapOf(string quote) => book.Scraps.FirstOrDefault(s => s.Item.Key == key && s.Quote == quote);
+        switch (cmd)
+        {
+            case "ready":
+            case "view":
+            {
+                var e = E();
+                return View(e.Item, ArticleOf(e), model, book);
+            }
+            case "marks": return Marks(E().Item, model, book);
+            case "fontSize":
+            {
+                var size = Math.Clamp(a.Int("size", DefaultFont), MinFont, MaxFont);
+                Prefs.Set("readerFontSize", (double)size);
+                bridge.Emit(Name, "fontSize", new { size }); // 열린 읽기 창 모두 같은 크기(맥 AppStorage 처럼)
+                return new { size };
+            }
+            case "speak":
+            {
+                // 누를 때마다 읽기 ↔ 멈춤
+                if (platform.Speaking) { platform.StopSpeaking(); speakingKey = null; return new { speaking = false }; }
+                var e = E();
+                var (text, lang) = SpeechFor(e.Item, ArticleOf(e), a.Bool("original"));
+                platform.Speak(text, lang);
+                speakingKey = key;
+                return new { speaking = true };
+            }
+            case "speaking": return new { speaking = platform.Speaking && speakingKey == key };
+            case "stopSpeak": platform.StopSpeaking(); speakingKey = null; return null;
+            case "save": model.ToggleSaved(E().Item); return Marks(E().Item, model, book);
+            case "browser": ExternalLink.Open(E().Item.Link); return null;
+            case "openOriginal": ExternalLink.Open(E().Item.Link); return null;
+            case "translatedPage": ExternalLink.Open(TranslatedPageUrl(E().Item.Link)); return null;
+            case "share": platform.Share(E().Item); return null;
+            case "copy": platform.CopyText(a.Str("text")); return null;
+            case "scrapArticle":
+            {
+                book.Add(E().Item, collection: a.StrOrNull("collection"));
+                return new { collection = book.LastCollection };
+            }
+            case "newCollection":
+            {
+                // 새 폴더를 만들고 기사를 그 폴더에 스크랩
+                var name = a.Str("name").Trim();
+                if (name.Length == 0) return null;
+                book.CreateCollection(name);
+                book.Add(E().Item, collection: name);
+                return new { collection = name };
+            }
+            case "scrapParagraph":
+            {
+                var e = E();
+                var p = Paragraph(ArticleOf(e), a.Int("index", -1), a.Bool("original")) ?? throw new InvalidOperationException("문단을 찾지 못함");
+                book.Add(e.Item, quote: p.Quote, original: p.Original, collection: a.StrOrNull("collection"));
+                return new { quote = p.Quote, collection = ScrapOf(p.Quote)?.Collection ?? book.LastCollection };
+            }
+            case "scrapSelection":
+            {
+                // 끌어서 고른 글만. 고른 글이 들어 있는 문단의 원문도 함께(번역문을 골랐을 때)
+                var e = E();
+                var text = a.Str("quote").Trim();
+                if (text.Length == 0) return null;
+                var orig = ArticleOf(e)?.Blocks.FirstOrDefault(b => (b.Text ?? "").Contains(text, StringComparison.Ordinal))?.Original;
+                book.Add(e.Item, quote: text, original: orig);
+                return new { quote = text, collection = book.LastCollection };
+            }
+            case "updateScrap":
+            {
+                if (ScrapOf(a.Str("quote")) is not { } s) return null;
+                book.Update(s with { Collection = a.StrOrNull("collection") is { Length: > 0 } c ? c : s.Collection, Memo = a.StrOrNull("memo") ?? s.Memo });
+                return null;
+            }
+            case "removeScrap":
+                if (ScrapOf(a.Str("quote")) is { } r) book.Remove(r);
+                return null;
+            case "close": platform.CloseWindow($"{Name}:{key}"); return null;
+            default: throw new InvalidOperationException("모르는 명령 " + cmd);
+        }
+    }
+}

@@ -1,0 +1,10 @@
+# 빌드 결과(리눅스 앱)
+target/
+dist/
+*.AppImage
+AppDir/
+# 시험 중 생기는 PNG(그리기 확인)
+shots/
+# 앱 잠금 파일은 커밋하지 않지만 Cargo.lock 은 남긴다(루트 .gitignore 의 *.lock 예외)
+!Cargo.lock
+target-check/

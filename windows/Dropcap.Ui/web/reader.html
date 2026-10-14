@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ko" data-page="reader">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https://img.dropcap.example data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'none'; frame-src 'none'">
+<title>Dropcap</title>
+<link rel="stylesheet" href="base.css">
+<link rel="stylesheet" href="reader.css">
+<script src="bridge.js"></script>
+<script src="ui.js"></script>
+<script src="mock/reader.js"></script>
+</head>
+<body>
+<header class="bar">
+  <span id="src" class="src"></span>
+  <span class="grow"></span>
+  <nav id="lang" class="seg" hidden title="번역과 원문 바꿔 보기">
+    <button data-orig="0" class="on">번역</button>
+    <button data-orig="1">원문</button>
+  </nav>
+  <div class="group" title="글자 크기 (Ctrl+- / Ctrl+=)">
+    <button id="smaller" class="tb" aria-label="글자 작게"><i data-ic="textsize" class="small"></i></button>
+    <button id="larger" class="tb" aria-label="글자 크게"><i data-ic="textsize"></i></button>
+  </div>
+  <button id="speak" class="tb" title="소리 내어 읽기"><i data-ic="speaker"></i></button>
+  <div class="split" id="scrap">
+    <button id="scrapMain" class="tb" title="기사 스크랩 (누르면 마지막 폴더에, 화살표로 폴더 고르기)"><i data-ic="scissors"></i></button>
+    <button id="scrapMenu" class="tb arrow" aria-label="폴더 고르기"><i data-ic="chevronDown"></i></button>
+  </div>
+  <button id="save" class="tb" title="나중에 읽기로 저장"><i data-ic="bookmark"></i></button>
+  <button id="browser" class="tb" title="원문을 브라우저에서 열기"><i data-ic="globe"></i></button>
+  <button id="share" class="tb" title="공유"><i data-ic="share"></i></button>
+</header>
+<main id="scroll">
+  <article id="page">
+    <div id="cover"></div>
+    <section id="head" class="head"></section>
+    <section id="content"></section>
+  </article>
+</main>
+<div id="flash" class="flash" hidden></div>
+<script src="reader.js"></script>
+</body>
+</html>

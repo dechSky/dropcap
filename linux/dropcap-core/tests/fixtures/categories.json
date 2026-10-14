@@ -1,0 +1,15 @@
+{ "version": 1,
+  "sections": [
+    { "id": "top",      "name": "주요 뉴스", "symbol": "star.fill",              "color": "#FF9F0A", "flow": true },
+    { "id": "politics", "name": "정치",     "symbol": "building.columns",       "color": "#5E5CE6" },
+    { "id": "economy",  "name": "경제",     "symbol": "chart.line.uptrend.xyaxis", "color": "#30C759" },
+    { "id": "society",  "name": "사회",     "symbol": "person.3",               "color": "#FF6B35" },
+    { "id": "world",    "name": "국제",     "symbol": "globe.asia.australia",   "color": "#0A84FF" },
+    { "id": "tech",     "name": "IT",       "symbol": "desktopcomputer",        "color": "#64D2FF" },
+    { "id": "ai",       "name": "AI",       "symbol": "sparkles",               "color": "#BF5AF2" },
+    { "id": "science",  "name": "과학",     "symbol": "atom",                   "color": "#32ADE6" },
+    { "id": "life",     "name": "생활·건강", "symbol": "heart.text.square",     "color": "#FF375F" },
+    { "id": "culture",  "name": "문화·연예", "symbol": "theatermasks",          "color": "#FFD60A" },
+    { "id": "sports",   "name": "스포츠",   "symbol": "sportscourt",            "color": "#34C759" },
+    { "id": "climate",  "name": "기후·환경", "symbol": "leaf",                  "color": "#30D158", "more": true }
+  ] }

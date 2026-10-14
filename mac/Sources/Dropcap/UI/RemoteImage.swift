@@ -40,7 +40,10 @@ actor ImageLoader {
 
     private func load(_ url: String) async -> NSImage? {
         let f = file(url)
-        if let data = try? Data(contentsOf: f), let img = NSImage(data: data) { return img }
+        if let data = try? Data(contentsOf: f), let img = NSImage(data: data) {
+            try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: f.path) // 자주 보는 사진은 정리에서 늦게(A-26)
+            return img
+        }
         guard let data = try? await FeedService.shared.fetch(url), data.count < 8 << 20,
               let src = CGImageSourceCreateWithData(data as CFData, nil),
               let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, [

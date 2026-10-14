@@ -21,7 +21,26 @@ struct AppState: Codable {
     var notify: [String: Bool] = [:]    // 출처별 알림(없으면 출처 기본값)
     var followedStories: [String] = []  // 팔로우한 스토리(새 보도가 붙으면 알림)
     var storySeen: [String: Int] = [:]  // 스토리를 마지막으로 봤을 때의 보도 수('새 보도 N')
+    // 일반 뉴스 분야
+    var sectionsChosen: [String]?       // 고른 관심 분야(nil = 아직 고르지 않음 → 첫 실행 고르기 화면)
+    var sectionPolicy: [String: SectionPolicy] = [:] // 분야별 알림 모드·묶음 시각·하루 상한
+    var hiddenSources: [String] = []    // '이 출처 숨기기'(목록·매거진·알림 모두에서 뺌)
+    var pending: [PendingItem] = []     // 고인 소식(묶음 시각에 한 방울로)
+    var notifyLog: [NotifyMark] = []    // 떨어뜨린 물방울 기록(하루 상한 계산)
+    var notifiedStories: [String: Double] = [:] // 알린 스토리 → 시각(같은 이야기 한 번만)
+    var lastBundle: [String: Date] = [:] // 분야 → 마지막으로 묶음을 보낸 때
     var settings = Settings()
+
+    struct PendingItem: Codable, Hashable {
+        var item: NewsItem
+        var section: String
+        var story: String       // 같은 이야기를 두 번 고이지 않게
+        var at: Date
+    }
+    struct NotifyMark: Codable, Hashable {
+        var section: String
+        var at: Date
+    }
 
     struct Settings: Codable, Equatable {
         enum Style: String, Codable, CaseIterable { case drop, system }
@@ -37,6 +56,14 @@ struct AppState: Codable {
         var muteKeywords: [String] = [] // 알리지 않음
         var digestEnabled = true        // 아침 브리핑
         var digestHour = 9
+        var totalDailyCap = 10          // 모든 분야를 합친 하루 물방울 수
+        var krThreshold = 3             // 국내 n곳 이상 보도면 중요
+        var intlThreshold = 2           // 해외 n곳 이상
+        var bigThreshold = 8            // 국내 n곳 이상이면 상한 무시
+
+        var limits: PolicyLimits {
+            PolicyLimits(totalCap: totalDailyCap, krThreshold: krThreshold, intlThreshold: intlThreshold, bigThreshold: bigThreshold)
+        }
 
         init() {}
         // 새 항목이 추가돼도 예전 파일을 그대로 읽는다(없는 값은 기본값)
@@ -53,6 +80,10 @@ struct AppState: Codable {
             muteKeywords = (try? c.decodeIfPresent([String].self, forKey: .muteKeywords)) ?? []
             digestEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .digestEnabled)) ?? true
             digestHour = (try? c.decodeIfPresent(Int.self, forKey: .digestHour)) ?? 9
+            totalDailyCap = (try? c.decodeIfPresent(Int.self, forKey: .totalDailyCap)) ?? 10
+            krThreshold = (try? c.decodeIfPresent(Int.self, forKey: .krThreshold)) ?? 3
+            intlThreshold = (try? c.decodeIfPresent(Int.self, forKey: .intlThreshold)) ?? 2
+            bigThreshold = (try? c.decodeIfPresent(Int.self, forKey: .bigThreshold)) ?? 8
         }
     }
 
@@ -81,6 +112,13 @@ struct AppState: Codable {
         notify = (try? c.decodeIfPresent([String: Bool].self, forKey: .notify)) ?? [:]
         followedStories = (try? c.decodeIfPresent([String].self, forKey: .followedStories)) ?? []
         storySeen = (try? c.decodeIfPresent([String: Int].self, forKey: .storySeen)) ?? [:]
+        sectionsChosen = try? c.decodeIfPresent([String].self, forKey: .sectionsChosen)
+        sectionPolicy = (try? c.decodeIfPresent([String: SectionPolicy].self, forKey: .sectionPolicy)) ?? [:]
+        hiddenSources = (try? c.decodeIfPresent([String].self, forKey: .hiddenSources)) ?? []
+        pending = (try? c.decodeIfPresent([PendingItem].self, forKey: .pending)) ?? []
+        notifyLog = (try? c.decodeIfPresent([NotifyMark].self, forKey: .notifyLog)) ?? []
+        notifiedStories = (try? c.decodeIfPresent([String: Double].self, forKey: .notifiedStories)) ?? [:]
+        lastBundle = (try? c.decodeIfPresent([String: Date].self, forKey: .lastBundle)) ?? [:]
         settings = (try? c.decodeIfPresent(Settings.self, forKey: .settings)) ?? Settings()
     }
 }
@@ -126,9 +164,27 @@ enum Store {
     static func load() -> AppState {
         let (state, fromBackup) = read(file, backup: backupFile)
         // 본 파일이 깨져 .bak 에서 읽었으면, 첫 저장 때 깨진 파일로 .bak 을 덮어쓰지 않게 한다
-        if fromBackup { backedUp = true }
+        if fromBackup { saver.skipBackup() }
+        let existed = (try? Data(contentsOf: file)) != nil || fromBackup
+        return prepare(state, existing: existed, sources: Resources.config.sources)
+    }
+
+    // 읽은 상태를 쓸 수 있게 다듬는다.
+    // - 예전(AI 전용) 사용자: 분야를 고른 적이 없으면 'AI' 하나만 고른 것으로 옮기고, AI 는 예전처럼 즉시 알림.
+    // - 출처 켜기 기본값: 분야가 있는 출처는 그 분야를 골랐을 때만 기본으로 켠다(새로 생긴 국내 언론이 한꺼번에 켜지지 않게).
+    static func prepare(_ state: AppState, existing: Bool, sources: [Source], meta: [String: SourceMeta] = Sections.meta) -> AppState {
         var s = state
-        for src in Resources.config.sources + s.customSources where s.enabled[src.id] == nil { s.enabled[src.id] = src.defaultOn }
+        if s.sectionsChosen == nil, existing {
+            s.sectionsChosen = [Sections.ai]
+            s.sectionPolicy[Sections.ai] = SectionPolicy(mode: .instant)
+        }
+        for src in sources + s.customSources where s.enabled[src.id] == nil {
+            if let sec = Sections.section(ofSource: src.id, meta: meta), meta[src.id]?.section != nil {
+                s.enabled[src.id] = src.defaultOn && (s.sectionsChosen?.contains(sec) ?? false)
+            } else {
+                s.enabled[src.id] = src.defaultOn
+            }
+        }
         return s
     }
 
@@ -149,7 +205,6 @@ enum Store {
         return (AppState(), true)
     }
 
-    private static var backedUp = false
 
     // 본 글 기억은 오래된 것부터 정리해 seenLimit 개만 남긴다
     static func pruned(_ seen: [String: Double], limit: Int = seenLimit) -> [String: Double] {
@@ -159,13 +214,18 @@ enum Store {
         return out
     }
 
-    static func save(_ state: AppState) {
-        var state = state
-        // 실행마다 첫 저장 전에 이전 파일을 .bak 으로 남긴다(형식이 바뀌어 일부를 못 읽었을 때 되살릴 수 있게)
-        if !backedUp, exists {
+    // 저장 묶기(R-3): 0.5초 안의 저장 요청은 마지막 것 하나만, 뒤 스레드에서 쓴다. 끝낼 때·잠들기 전에는 flush() 로 바로.
+    static let saver = StateSaver(file: file, backup: backupFile)
+    static func save(_ state: AppState) { saver.save(state) }
+    static func flush() { saver.flush() }
+
+    // 실제 쓰기: 실행마다 첫 쓰기 전에 이전 파일을 .bak 으로 남기고(형식이 바뀌어 일부를 못 읽었을 때 되살릴 수 있게),
+    // 본 글 기억을 정리한 뒤 원자적으로 쓴다.
+    static func write(_ state: AppState, to file: URL, backup: URL, backedUp: inout Bool) {
+        if !backedUp, FileManager.default.fileExists(atPath: file.path) {
             backedUp = true
-            try? FileManager.default.removeItem(at: backupFile)
-            try? FileManager.default.copyItem(at: file, to: backupFile)
+            try? FileManager.default.removeItem(at: backup)
+            try? FileManager.default.copyItem(at: file, to: backup)
         }
         var s = state
         s.seen = pruned(s.seen)
@@ -173,5 +233,48 @@ enum Store {
         enc.dateEncodingStrategy = .iso8601
         guard let data = try? enc.encode(s) else { return }
         try? data.write(to: file, options: .atomic)
+    }
+}
+
+// 저장 요청을 모아 한 번에 쓰는 일꾼. 상태는 값이라 사본을 뒤 스레드로 넘겨 인코딩·쓰기를 한다.
+final class StateSaver: @unchecked Sendable {
+    private let file: URL
+    private let backup: URL
+    private let delay: TimeInterval
+    private let queue = DispatchQueue(label: "dropcap.state-writer", qos: .utility)
+    private let lock = NSLock()
+    private var pending: AppState?
+    private var scheduled = false
+    private var backedUp = false      // 쓰기 줄(queue)에서만 바꾼다
+    private(set) var writes = 0       // 시험용: 실제로 쓴 횟수
+
+    init(file: URL, backup: URL, delay: TimeInterval = 0.5) {
+        self.file = file; self.backup = backup; self.delay = delay
+    }
+
+    // 본 파일이 깨져 .bak 에서 읽은 실행: 깨진 파일로 .bak 을 덮어쓰지 않게(A-03)
+    func skipBackup() { queue.sync { backedUp = true } }
+
+    func save(_ state: AppState) {
+        lock.lock()
+        pending = state
+        let start = !scheduled
+        scheduled = true
+        lock.unlock()
+        if start { queue.asyncAfter(deadline: .now() + delay) { [self] in writePending() } }
+    }
+
+    // 기다리는 저장이 있으면 지금 바로 쓴다(끝낼 때·잠들기 전)
+    func flush() { queue.sync { writePending() } }
+
+    private func writePending() {
+        lock.lock()
+        let s = pending
+        pending = nil
+        scheduled = false
+        lock.unlock()
+        guard let s else { return }
+        Store.write(s, to: file, backup: backup, backedUp: &backedUp)
+        writes += 1
     }
 }

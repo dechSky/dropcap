@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- 위젯 확장은 샌드박스여야 한다. 앱이 쓰는 스냅숏 폴더 하나만 읽는다(네트워크·다른 파일 없음). -->
+  <key>com.apple.security.app-sandbox</key><true/>
+  <key>com.apple.security.temporary-exception.files.home-relative-path.read-only</key>
+  <array>
+    <string>/Library/Application Support/Dropcap/Widget/</string>
+  </array>
+</dict>
+</plist>

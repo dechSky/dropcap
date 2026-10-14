@@ -254,7 +254,7 @@ struct URLSafetyDNSTests {
         let b = Scrap(item: it, quote: nil, memo: "", collection: "조사")
         let md = Scrapbook.render([b, a], title: "조사")
         #expect(md.hasPrefix("# 조사"))
-        #expect(md.components(separatedBy: "## [메타의 새 AI 모델](https://example.com/a)").count == 2) // 기사는 한 번만
+        #expect(md.components(separatedBy: "## [메타의 새 AI 모델](<https://example.com/a>)").count == 2) // 기사는 한 번만
         #expect(md.contains("> 메타가 새 모델을 공개했다."))
         #expect(md.contains("> _Meta released a new model._"))
         #expect(md.contains("- 메모: 보고서 1장"))
@@ -326,7 +326,7 @@ struct URLSafetyDNSTests {
     @Test func bylines() {
         #expect(BodyCleanup.byline("김가람 기자 reporter@example.com") == "김가람 기자")
         #expect(BodyCleanup.byline("이나래 기자 desk@example.com Powered by AI") == "이나래 기자")
-        #expect(BodyCleanup.byline("이나래 기자 desk@example.com Powered by AItimes AI Solution") == "이나래 기자")
+        #expect(BodyCleanup.byline("이나래 기자 desk@example.com Powered by Example AI Solution") == "이나래 기자")
         #expect(BodyCleanup.byline("By Jane Doe") == "By Jane Doe")
         #expect(BodyCleanup.byline("김가람 기자는 이날 현장에서 다음과 같이 말했다.") == nil)
     }

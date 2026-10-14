@@ -136,21 +136,90 @@ enum FeedParser {
 }
 
 enum Dates {
-    private static let rfc822: [DateFormatter] = ["EEE, dd MMM yyyy HH:mm:ss Z", "EEE, dd MMM yyyy HH:mm:ss zzz", "dd MMM yyyy HH:mm:ss Z", "EEE, dd MMM yyyy HH:mm Z", "yyyy-MM-dd HH:mm:ss"].map {
+    private static func formatter(_ format: String, zone: TimeZone? = nil) -> DateFormatter {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
-        f.dateFormat = $0
+        f.dateFormat = format
+        if let zone { f.timeZone = zone }
         return f
     }
+    private static let rfc822: [DateFormatter] = ["EEE, dd MMM yyyy HH:mm:ss Z", "EEE, dd MMM yyyy HH:mm:ss zzz", "dd MMM yyyy HH:mm:ss Z", "EEE, dd MMM yyyy HH:mm Z"].map { formatter($0) }
+    // 요일을 뗀 뒤 다시 시도하는 모양(요일이 틀렸거나 월을 숫자로 쓴 피드: 'Tue, 13 10 2026 16:00:47 +0900')
+    private static let loose: [DateFormatter] = ["dd MMM yyyy HH:mm:ss Z", "dd MMM yyyy HH:mm Z", "dd MM yyyy HH:mm:ss Z", "dd MM yyyy HH:mm Z",
+                                                 "yyyy-MM-dd'T'HH:mm:ssZ", "yyyy-MM-dd'T'HH:mm:ss.SSSZ", "yyyy-MM-dd HH:mm:ss Z", "yyyy-MM-dd HH:mm:ssZ"].map { formatter($0) }
+    // 시간대가 없는 국내 표기는 한국 시각으로 읽는다(AI타임스 'yyyy-MM-dd HH:mm:ss', 점·빗금 구분, 날짜만)
+    static let seoul = TimeZone(identifier: "Asia/Seoul")!
+    private static let local: [DateFormatter] = ["yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd HH:mm", "yyyy.MM.dd HH:mm:ss", "yyyy.MM.dd HH:mm",
+                                                 "yyyy/MM/dd HH:mm:ss", "yyyy/MM/dd HH:mm", "yyyy-MM-dd", "yyyy.MM.dd", "yyyy/MM/dd"].map { formatter($0, zone: seoul) }
     private static let iso: ISO8601DateFormatter = { let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime]; return f }()
     private static let isoFrac: ISO8601DateFormatter = { let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f }()
+    // 숫자로 바꿔 읽을 시간대 이름(DateFormatter 가 모르거나 지역마다 뜻이 다른 것)
+    private static let zoneNames = ["KST": "+0900", "JST": "+0900", "UT": "+0000", "UTC": "+0000", "GMT": "+0000", "Z": "+0000",
+                                    "EST": "-0500", "EDT": "-0400", "CST": "-0600", "CDT": "-0500", "MST": "-0700", "MDT": "-0600", "PST": "-0800", "PDT": "-0700"]
 
     static func parse(_ s: String) -> Date? {
         let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
         if t.isEmpty { return nil }
         if let d = iso.date(from: t) ?? isoFrac.date(from: t) { return d }
         for f in rfc822 { if let d = f.date(from: t) { return d } }
+        return parseLoose(t)
+    }
+
+    // 흔한 비표준 표기: '+09:00'(RFC 822 에 콜론), 시간대 이름, 틀린 요일, 숫자 월, 한국어 표기, 시간대 없는 표기
+    private static func parseLoose(_ t: String) -> Date? {
+        if let d = korean(t) { return d }
+        var n = t.replacingOccurrences(of: #"^[A-Za-z]{2,9}\.?,?\s+"#, with: "", options: .regularExpression)   // 요일 떼기
+        n = n.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        if let r = n.range(of: #"\s?([A-Z]{1,4})$"#, options: .regularExpression) {
+            let name = n[r].trimmingCharacters(in: .whitespaces)
+            if let off = zoneNames[name] { n = n[..<r.lowerBound] + " " + off }
+        }
+        n = n.replacingOccurrences(of: #"([+-]\d\d):(\d\d)$"#, with: "$1$2", options: .regularExpression)       // +09:00 → +0900
+        for f in loose { if let d = f.date(from: n) { return d } }
+        for f in local { if let d = f.date(from: n) { return d } }
         return nil
+    }
+
+    // '2024년 10월 29일 화요일 오후 11:30:00' 같은 한국어 표기(한국 시각)
+    private static func korean(_ t: String) -> Date? {
+        guard t.contains("년"), let re = try? NSRegularExpression(pattern: #"(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일(?:\s*\S+요일)?(?:\s*(오전|오후))?(?:\s*(\d{1,2}):(\d{2})(?::(\d{2}))?)?"#),
+              let m = re.firstMatch(in: t, range: NSRange(t.startIndex..., in: t)) else { return nil }
+        func g(_ i: Int) -> String? { Range(m.range(at: i), in: t).map { String(t[$0]) } }
+        var c = DateComponents()
+        c.timeZone = seoul
+        c.year = Int(g(1)!); c.month = Int(g(2)!); c.day = Int(g(3)!)
+        var hour = g(5).flatMap(Int.init) ?? 0
+        if g(4) == "오후", hour < 12 { hour += 12 }
+        if g(4) == "오전", hour == 12 { hour = 0 }
+        c.hour = hour; c.minute = g(6).flatMap(Int.init) ?? 0; c.second = g(7).flatMap(Int.init) ?? 0
+        return Calendar(identifier: .gregorian).date(from: c)
+    }
+}
+
+// 피드 날짜 다듬기: 받은 뒤 한 번에 적용한다.
+// - 날짜가 없는 글(한겨레 RSS 등)은 처음 본 시각을 날짜로(같은 실행 동안 바뀌지 않게 기억)
+// - 지금보다 10분 넘게 앞선 시각(시간대를 잘못 찍은 피드, 예약 글)은 받은 시각으로 자른다
+enum FeedDates {
+    static let futureSlack: TimeInterval = 10 * 60
+    static let memoryLimit = 20000
+
+    static func repair(_ entries: inout [FeedParser.Entry], sourceID: String, now: Date, firstSeen: inout [String: Date]) {
+        for i in entries.indices {
+            if let d = entries[i].date {
+                if d.timeIntervalSince(now) > futureSlack { entries[i].date = now }
+            } else {
+                let key = "\(sourceID)|\(entries[i].id)"
+                if let seen = firstSeen[key] {
+                    entries[i].date = seen
+                } else {
+                    firstSeen[key] = now
+                    entries[i].date = now
+                }
+            }
+        }
+        if firstSeen.count > memoryLimit {
+            for (k, _) in firstSeen.sorted(by: { $0.value < $1.value }).prefix(firstSeen.count - memoryLimit / 2) { firstSeen.removeValue(forKey: k) }
+        }
     }
 }
 

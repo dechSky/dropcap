@@ -1,0 +1,94 @@
+/* 모든 화면 공용: 글꼴(D-01·P-03), 색(D-02, 맥 SwiftUI 시스템 색과 같은 값), 라이트·다크 */
+@font-face {
+  font-family: 'Pretendard Variable';
+  src: url('fonts/PretendardVariable.ttf') format('truetype');
+  font-weight: 45 920;
+  font-display: block;
+}
+
+:root {
+  --font: 'Pretendard Variable', 'Segoe UI Variable Text', 'Segoe UI', 'Malgun Gothic', system-ui, sans-serif;
+  --font-display: 'Pretendard Variable', 'Segoe UI Variable Display', 'Segoe UI', 'Malgun Gothic', serif;
+  --bg: #f5f5f7;
+  --bg-elev: #ffffff;
+  --text: rgba(0, 0, 0, 0.88);
+  --text-2: rgba(0, 0, 0, 0.55);
+  --text-3: rgba(0, 0, 0, 0.30);
+  --fill: rgba(0, 0, 0, 0.06);
+  --fill-2: rgba(0, 0, 0, 0.10);
+  --line: rgba(0, 0, 0, 0.10);
+  --accent: #007aff;
+  --blue: #007aff; --purple: #af52de; --indigo: #5856d6; --green: #34c759; --red: #ff3b30; --gray: #8e8e93; --orange: #ff9500; --yellow: #ffcc00; --pink: #ff2d55; --teal: #30b0c7;
+  --shadow: 0 6px 24px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.08);
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1e1e1e;
+    --bg-elev: #2a2a2a;
+    --text: rgba(255, 255, 255, 0.92);
+    --text-2: rgba(235, 235, 245, 0.60);
+    --text-3: rgba(235, 235, 245, 0.30);
+    --fill: rgba(255, 255, 255, 0.07);
+    --fill-2: rgba(255, 255, 255, 0.12);
+    --line: rgba(255, 255, 255, 0.10);
+    --accent: #0a84ff;
+    --blue: #0a84ff; --purple: #bf5af2; --indigo: #5e5ce6; --green: #30d158; --red: #ff453a; --gray: #8e8e93; --orange: #ff9f0a; --yellow: #ffd60a; --pink: #ff375f; --teal: #40c8e0;
+    --shadow: 0 8px 28px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.3);
+  }
+}
+html.system-font { --font: 'Segoe UI Variable Text', 'Segoe UI', 'Malgun Gothic', system-ui, sans-serif; --font-display: 'Segoe UI Variable Display', 'Segoe UI', 'Malgun Gothic', Georgia, serif; }
+
+/* 분야 색(Category.color) · 종류 색(Issue.Section.color) */
+.cat-model { --cat: var(--blue); } .cat-research { --cat: var(--purple); } .cat-policy { --cat: var(--indigo); }
+.cat-business { --cat: var(--green); } .cat-security { --cat: var(--red); } .cat-other { --cat: var(--gray); }
+.kind-video { --cat: var(--red); } .kind-paper { --cat: #b31b1b; } .kind-release { --cat: var(--gray); } .kind-post { --cat: var(--orange); } .kind-podcast { --cat: var(--purple); }
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; }
+body {
+  font-family: var(--font);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+}
+input, textarea, button, select { font: inherit; color: inherit; }
+button { cursor: default; border: 0; background: none; padding: 0; }
+a { color: inherit; text-decoration: none; }
+.selectable { user-select: text; }
+
+/* 아이콘(icons.js 가 채움): <i class="ic" data-ic="bell"></i> */
+.ic { display: inline-flex; width: 1em; height: 1em; vertical-align: -0.14em; flex: none; }
+.ic svg { width: 100%; height: 100%; }
+
+/* 출처 글자 원형(모노그램) */
+.mono {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: var(--s, 28px); height: var(--s, 28px); border-radius: 50%;
+  background: var(--c, var(--accent)); color: #fff; font-weight: 700; font-size: calc(var(--s, 28px) * 0.46);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.25);
+}
+
+/* 띄우는 메뉴(오른쪽 클릭·더 보기) — 화면마다 menu.js 의 popMenu() 로 */
+.pop {
+  position: fixed; z-index: 1000; min-width: 180px; padding: 5px; border-radius: 10px;
+  background: var(--bg-elev); box-shadow: var(--shadow); border: 0.5px solid var(--line);
+  font-size: 13px; animation: pop-in 0.12s ease-out;
+}
+.pop .mi { display: flex; align-items: center; gap: 8px; padding: 5px 10px; border-radius: 6px; white-space: nowrap; }
+.pop .mi:hover { background: var(--accent); color: #fff; }
+.pop .mi.on::after { content: '✓'; margin-left: auto; padding-left: 16px; }
+.pop .mi.disabled { opacity: 0.4; pointer-events: none; }
+.pop .sep { height: 1px; background: var(--line); margin: 4px 6px; }
+.pop .hd { padding: 4px 10px 2px; font-size: 11px; color: var(--text-2); }
+@keyframes pop-in { from { opacity: 0; transform: scale(0.97); } }
+
+.reduce-motion *, .reduce-motion *::before, .reduce-motion *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--fill-2); border-radius: 5px; border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-track { background: transparent; }

@@ -87,7 +87,9 @@ final class Database: @unchecked Sendable {
         }
         while true {
             let r = sqlite3_step(st)
-            if r == SQLITE_ROW { row?(st!) } else { break }
+            if r == SQLITE_ROW { row?(st!); continue }
+            if r != SQLITE_DONE { NSLog("[DB] 실행 실패(%d) %@", r, String(cString: sqlite3_errmsg(db))) } // 잠김·디스크 가득 등(A-33)
+            break
         }
     }
 
@@ -186,6 +188,38 @@ final class Database: @unchecked Sendable {
     func image(_ key: String) -> String? {
         var out: String?
         queue.sync { run("SELECT image FROM items WHERE key=?", [.text(key)]) { st in out = Self.text(st, 0) } }
+        return out
+    }
+
+    // 최근 스토리마다 대표 기사(가장 최근 보도) 하나 — 스토리마다 따로 묻지 않고 한 번에
+    func representatives(since: Date) -> [String: StoredItem] {
+        var out: [String: StoredItem] = [:]
+        queue.sync {
+            run("""
+            SELECT cluster, json, first_seen FROM (
+              SELECT cluster, json, first_seen,
+                     ROW_NUMBER() OVER (PARTITION BY cluster ORDER BY COALESCE(date, first_seen) DESC, rowid DESC) AS rn
+              FROM items WHERE cluster IN (SELECT id FROM clusters WHERE last >= ?)
+            ) WHERE rn = 1
+            """, [.real(since.timeIntervalSince1970)]) { st in
+                guard let c = Self.text(st, 0), let j = Self.text(st, 1), let it = try? Self.decoder.decode(NewsItem.self, from: Data(j.utf8)) else { return }
+                out[c] = StoredItem(item: it, firstSeen: Date(timeIntervalSince1970: sqlite3_column_double(st, 2)), cluster: c)
+            }
+        }
+        return out
+    }
+
+    // 여러 기사의 스토리 id 를 한 번에
+    func clusters(of keys: [String]) -> [String: String] {
+        var out: [String: String] = [:]
+        for chunk in stride(from: 0, to: keys.count, by: 400).map({ Array(keys[$0..<min($0 + 400, keys.count)]) }) {
+            queue.sync {
+                run("SELECT key, cluster FROM items WHERE cluster IS NOT NULL AND key IN (\(Array(repeating: "?", count: chunk.count).joined(separator: ",")))",
+                    chunk.map { .text($0) }) { st in
+                    if let k = Self.text(st, 0), let c = Self.text(st, 1) { out[k] = c }
+                }
+            }
+        }
         return out
     }
 
@@ -336,6 +370,14 @@ final class Database: @unchecked Sendable {
                 if let j = Self.text(st, 0), let i = try? Self.decoder.decode(Issue.self, from: Data(j.utf8)) { out.append(i) }
             }
         }
+        return out
+    }
+
+    func issue(_ id: String) -> Issue? {
+        var out: Issue?
+        queue.sync { run("SELECT json FROM issues WHERE id=?", [.text(id)]) { st in
+            if let j = Self.text(st, 0) { out = try? Self.decoder.decode(Issue.self, from: Data(j.utf8)) }
+        } }
         return out
     }
 

@@ -347,7 +347,7 @@ impl AppModel {
                 // 별도 작업으로 돌려, 간격을 바꿔 이 반복이 취소돼도 진행 중인 확인은 끝까지 간다
                 let m = me.clone();
                 let _ = tokio::spawn(async move { m.check_all(false).await }).await;
-                let minutes = me.settings().interval_minutes.max(1) as u64;
+                let minutes = me.settings().interval_minutes.clamp(1, 24 * 60) as u64; // 넘침·쉬지 않고 받기 막음
                 tokio::time::sleep(std::time::Duration::from_secs(minutes * 60)).await;
             }
         });

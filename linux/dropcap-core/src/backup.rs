@@ -16,6 +16,128 @@ use std::path::{Path, PathBuf};
 pub const FORMAT_NAME: &str = "dropcap-backup";
 pub const CURRENT_VERSION: i64 = 1;
 pub const KEEP_BEFORE_IMPORT: usize = 5;
+pub const MAX_FILE_BYTES: usize = 50 * 1024 * 1024;
+
+// 파일에서 읽기: 50MB 가 넘으면 읽지 않는다(맥과 같은 상한)
+pub fn read_file(path: &Path) -> Result<BackupFile, Failure> {
+    let size = std::fs::metadata(path).map_err(|_| Failure::NotBackup)?.len();
+    if size > MAX_FILE_BYTES as u64 {
+        return Err(Failure::TooLarge);
+    }
+    let data = std::fs::read(path).map_err(|_| Failure::NotBackup)?;
+    decode(&data)
+}
+
+// 낱말: 빈 것 빼고 40자까지, 200개까지(설정 화면에서 넣을 수 있는 정도), 대소문자만 다른 것은 한 번
+fn clean_words(list: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    for w in list.iter().map(|w| w.trim()) {
+        if !w.is_empty() && w.chars().count() <= 40 && !out.iter().any(|o| o.to_lowercase() == w.to_lowercase()) {
+            out.push(w.to_string());
+            if out.len() == 200 {
+                break;
+            }
+        }
+    }
+    out
+}
+
+fn clean_ids(list: &[String], max: usize) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    for x in list {
+        if !x.is_empty() && x.chars().count() <= 64 && !out.contains(x) {
+            out.push(x.clone());
+            if out.len() == max {
+                break;
+            }
+        }
+    }
+    out
+}
+
+fn hex_color(c: &str) -> bool {
+    (4..=9).contains(&c.len()) && c.starts_with('#') && c[1..].chars().all(|x| x.is_ascii_hexdigit())
+}
+
+fn clip(s: &str, n: usize) -> String {
+    s.chars().take(n).collect()
+}
+
+// 가져온 기록 정리(맥 BackupFile.sanitize · 윈도우 Sanitize 와 같은 규칙): 범위 밖 수치를 묶고,
+// 직접 추가한 출처는 custom- id·공개 주소·#색(CSS 에 그대로 들어가지 않게)·피드 형식만, 기본 출처를 흉내 낸 것은 버림,
+// 저장·스크랩은 공개 http(s) 링크만, 폴더 이름은 60자까지
+pub fn sanitize(b: &mut BackupFile) {
+    use crate::url_safety::is_public_http;
+    b.settings.clamp();
+    if ![2, 5, 10, 15, 30].contains(&b.settings.interval_minutes) {
+        b.settings.interval_minutes = 5;
+    }
+    b.settings.digest_hour = b.settings.digest_hour.clamp(5, 12);
+    b.settings.must_keywords = clean_words(&b.settings.must_keywords);
+    b.settings.mute_keywords = clean_words(&b.settings.mute_keywords);
+    b.settings.watch_keywords = clean_words(&b.settings.watch_keywords);
+    b.section_policy.retain(|k, _| crate::sections::by_id(k).is_some());
+    for p in b.section_policy.values_mut() {
+        p.bundle_hour = p.bundle_hour.clamp(6, 23);
+        p.daily_cap = p.daily_cap.clamp(1, 10);
+    }
+    if let Some(ids) = &b.sections_chosen {
+        let mut out: Vec<String> = vec![];
+        for id in ids {
+            if crate::sections::by_id(id).is_some() && !out.contains(id) {
+                out.push(id.clone());
+            }
+        }
+        b.sections_chosen = Some(out);
+    }
+    b.custom_sources = b
+        .custom_sources
+        .iter()
+        .filter(|s| s.id.starts_with("custom-") && s.id.chars().count() <= 64 && is_public_http(&s.url))
+        .take(500)
+        .map(|s| {
+            let mut c = s.clone();
+            c.name = clip(&s.name, 80);
+            if !["lab", "press", "kr"].contains(&s.tier.as_str()) {
+                c.tier = "press".into();
+            }
+            c.kind_type = "feed".into();
+            c.match_ = None;
+            c.ai_only = false;
+            if !hex_color(&s.color) {
+                c.color = "#3B82F6".into();
+            }
+            c.kind = s.kind.as_deref().filter(|k| ["article", "video", "paper", "release", "post", "podcast"].contains(k)).map(|k| k.to_string());
+            c.group = s.group.as_deref().map(|g| clip(g, 80));
+            c.home = s.home.clone().filter(|h| is_public_http(h));
+            c.section = s.section.as_deref().and_then(crate::sections::by_id).map(|x| x.id.clone());
+            c.lang = s.lang.as_deref().map(|l| clip(l, 8));
+            c.region = s.region.clone().filter(|r| r == "kr" || r == "intl");
+            c.paywall = s.paywall.clone().filter(|p| p == "hard" || p == "metered");
+            c
+        })
+        .collect();
+    b.hidden_sources = clean_ids(&b.hidden_sources, 500);
+    b.followed_stories = clean_ids(&b.followed_stories, 1000);
+    b.enabled.retain(|k, _| k.chars().count() <= 64);
+    b.notify.retain(|k, _| k.chars().count() <= 64);
+    b.saved.retain(|i| is_public_http(&i.link));
+    b.saved.truncate(5000);
+    b.scraps.retain(|s| is_public_http(&s.item.link));
+    b.scraps.truncate(5000);
+    for s in b.scraps.iter_mut() {
+        let c = s.collection.trim().to_string();
+        s.collection = if c.is_empty() || c.chars().count() > 60 { DEFAULT_COLLECTION.to_string() } else { c };
+    }
+    let mut folders: Vec<String> = vec![];
+    for f in b.scrap_folders.iter().map(|f| f.trim().to_string()) {
+        if !f.is_empty() && f.chars().count() <= 60 && !folders.contains(&f) {
+            folders.push(f);
+        }
+    }
+    folders.truncate(200);
+    b.scrap_folders = folders;
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct BackupFile {
@@ -47,12 +169,14 @@ pub struct BackupFile {
 pub enum Failure {
     NotBackup,
     NewerVersion(i64),
+    TooLarge,
 }
 
 impl std::fmt::Display for Failure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Failure::NotBackup => write!(f, "Dropcap 기록 파일이 아닙니다"),
+            Failure::TooLarge => write!(f, "기록 파일이 너무 큽니다(50MB 까지)"),
             Failure::NewerVersion(v) => write!(f, "더 새 판 Dropcap 이 만든 기록입니다(형식 {v}). 앱을 업데이트한 뒤 가져오세요"),
         }
     }
@@ -107,7 +231,7 @@ pub fn decode(data: &[u8]) -> Result<BackupFile, Failure> {
     if version > CURRENT_VERSION {
         return Err(Failure::NewerVersion(version));
     }
-    Ok(BackupFile {
+    let mut b = BackupFile {
         format: FORMAT_NAME.into(),
         version,
         exported: m.get("exported").and_then(|x| x.as_str()).and_then(crate::iso::parse).unwrap_or(DateTime::<Utc>::UNIX_EPOCH),
@@ -123,7 +247,9 @@ pub fn decode(data: &[u8]) -> Result<BackupFile, Failure> {
         saved: list(m, "saved"),
         scraps: list(m, "scraps"),
         scrap_folders: field(m, "scrapFolders").unwrap_or_default(),
-    })
+    };
+    sanitize(&mut b);
+    Ok(b)
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]

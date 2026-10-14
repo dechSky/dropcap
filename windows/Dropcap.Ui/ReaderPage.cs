@@ -127,7 +127,7 @@ public sealed class ReaderPage : IPage
     // 피드 요약(HTML 꼬리표·여분 공백 제거, 제목과 같거나 너무 짧으면 없음) — 맥 ReaderView.feedSummary
     public static string? FeedSummary(NewsItem it)
     {
-        var t = Regex.Replace(Regex.Replace(it.Summary, "<[^>]+>", " "), @"\s+", " ").Trim();
+        var t = Regex.Replace(Plain.StripTags(it.Summary), @"\s+", " ").Trim();
         if (t.Length <= 30 || it.Title.StartsWith(t[..Math.Min(25, t.Length)], StringComparison.Ordinal)) return null;
         return t;
     }

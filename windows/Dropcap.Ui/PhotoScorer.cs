@@ -22,7 +22,7 @@ public static class PhotoScorer
     public static PhotoQuality.Score? Score(byte[] bytes, double textRatio)
     {
         using var codec = SKCodec.Create(new MemoryStream(bytes));   // 그림이 아니면 null
-        if (codec is null) return null;
+        if (codec is null || !ImageLoader.SafeDimensions(codec.Info)) return null;   // 압축 폭탄(보안 점검)
         using var bmp = SKBitmap.Decode(codec);
         if (bmp is null) return null;
         var colors = PhotoQuality.ColorVariety(Pixels(bmp, PhotoQuality.ColorSide));

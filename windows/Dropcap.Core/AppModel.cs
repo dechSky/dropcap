@@ -96,7 +96,7 @@ public sealed class AppModel
         {
             // 간격을 바꿔 이 반복이 취소돼도 진행 중인 확인은 끝까지 간다(취소 토큰을 넘기지 않음)
             try { await CheckAllAsync(); } catch { }
-            try { await Task.Delay(TimeSpan.FromMinutes(State.Settings.IntervalMinutes), ct); } catch (TaskCanceledException) { return; }
+            try { await Task.Delay(TimeSpan.FromMinutes(Math.Clamp(State.Settings.IntervalMinutes, 1, 24 * 60)), ct); } catch (TaskCanceledException) { return; }
         }
     }
 

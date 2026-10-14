@@ -142,7 +142,22 @@ public sealed class StateSettings
         d.AutoQuietFullscreen = Json.Field(o, "autoQuietFullscreen", true);
         d.AutoQuietSharing = Json.Field(o, "autoQuietSharing", true);
         d.AutoQuietCalendar = Json.Field(o, "autoQuietCalendar", false);
+        d.Clamp();
         return d;
+    }
+
+    // 파일에서 읽은 수치가 앱이 다룰 수 있는 범위를 넘지 않게(보안 점검: 고친 상태 파일·가져온 기록의 아주 큰 간격 값이면
+    // 확인 반복의 Task.Delay 가 예외로 멈추고, 0·음수면 쉬지 않고 받는다). 화면이 고를 수 있는 값은 그대로 둔다(맥 clamp 와 같음).
+    public void Clamp()
+    {
+        IntervalMinutes = Math.Clamp(IntervalMinutes, 1, 24 * 60);
+        QuietStart = Math.Clamp(QuietStart, 0, 23);
+        QuietEnd = Math.Clamp(QuietEnd, 0, 23);
+        DigestHour = Math.Clamp(DigestHour, 0, 23);
+        TotalDailyCap = Math.Clamp(TotalDailyCap, 1, 30);
+        KrThreshold = Math.Clamp(KrThreshold, 1, 10);
+        IntlThreshold = Math.Clamp(IntlThreshold, 1, 10);
+        BigThreshold = Math.Clamp(BigThreshold, 2, 20);
     }
 
     public StateSettings Copy()

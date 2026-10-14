@@ -185,13 +185,14 @@ public static class ChannelResolver
         return new Found(feed, title, kind, home, notify && recent <= 15);
     }
 
+    // <link …> 를 하나씩 떼어 본다(HtmlScan — 정규식 되풀이 훑기로 큰 페이지에서 멈추지 않게, 보안 점검)
     internal static IEnumerable<string> Alternates(string html)
     {
-        foreach (Match m in Regex.Matches(html, """<link[^>]+rel=["']alternate["'][^>]*>""", RegexOptions.IgnoreCase))
+        foreach (var tag in HtmlScan.Tags("link", html))
         {
-            var tag = m.Value;
-            if (!Regex.IsMatch(tag, """type=["']application/(rss|atom)\+xml["']""", RegexOptions.IgnoreCase)) continue;
-            if (FirstMatch(tag, """href=["']([^"']+)["']""") is { } h) yield return h.Replace("&amp;", "&");
+            if (!string.Equals(HtmlScan.Attr(tag, "rel"), "alternate", StringComparison.OrdinalIgnoreCase)) continue;
+            if (HtmlScan.Attr(tag, "type")?.ToLowerInvariant() is not ("application/rss+xml" or "application/atom+xml")) continue;
+            if (HtmlScan.Attr(tag, "href") is { Length: > 0 } h) yield return h.Replace("&amp;", "&");
         }
     }
 

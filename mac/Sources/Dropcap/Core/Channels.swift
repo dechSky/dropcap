@@ -183,12 +183,12 @@ enum ChannelResolver {
     }
 
     private static func alternates(_ html: String) -> [String] {
-        guard let re = try? NSRegularExpression(pattern: #"<link[^>]+rel=["']alternate["'][^>]*>"#, options: [.caseInsensitive]) else { return [] }
-        return re.matches(in: html, range: NSRange(html.startIndex..., in: html)).compactMap { m in
-            guard let r = Range(m.range, in: html) else { return nil }
-            let tag = String(html[r])
-            guard tag.range(of: #"type=["']application/(rss|atom)\+xml["']"#, options: [.regularExpression, .caseInsensitive]) != nil else { return nil }
-            return firstMatch(tag, #"href=["']([^"']+)["']"#)?.replacingOccurrences(of: "&amp;", with: "&")
+        // <link …> 를 하나씩 떼어 본다(HTMLScan — 정규식 되풀이 훑기로 큰 페이지에서 멈추지 않게)
+        HTMLScan.tags("link", in: html).compactMap { tag in
+            guard HTMLScan.attr(tag, "rel")?.lowercased() == "alternate",
+                  let type = HTMLScan.attr(tag, "type")?.lowercased(), type == "application/rss+xml" || type == "application/atom+xml",
+                  let href = HTMLScan.attr(tag, "href"), !href.isEmpty else { return nil }
+            return href.replacingOccurrences(of: "&amp;", with: "&")
         }
     }
 

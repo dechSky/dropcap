@@ -62,12 +62,9 @@ enum FeedParser {
         }
         for field in ["content:encoded", "content", "description", "summary"] {
             let html = it.value(field)
-            if let r = html.range(of: #"<img[^>]+src=["']([^"']+)["']"#, options: .regularExpression) {
-                let tag = String(html[r])
-                if let q = tag.range(of: #"src=["']"#, options: .regularExpression) {
-                    let rest = tag[q.upperBound...]
-                    if let end = rest.firstIndex(where: { $0 == "\"" || $0 == "'" }) { return String(rest[..<end]) }
-                }
+            // <img …> 를 하나씩 떼어 본다(정규식 되풀이 훑기로 큰 본문에서 멈추지 않게 — 보안 점검)
+            for tag in HTMLScan.tags("img", in: String(html.prefix(512_000))) {
+                if let u = HTMLScan.attr(tag, "src") ?? HTMLScan.attr(tag, "data-src"), !u.isEmpty { return u }
             }
         }
         return nil
@@ -240,8 +237,24 @@ enum Plain {
     private static let entity = try! NSRegularExpression(pattern: "&(#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[a-zA-Z]{2,8});")
 
     static func clean(_ s: String) -> String {
-        let out = decodeEntities(s.replacingOccurrences(of: "<[^>]*>", with: " ", options: .regularExpression))
+        let out = decodeEntities(stripTags(s))
         return out.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces)
+    }
+
+    // 꼬리표를 빈칸으로(정규식 "<[^>]*>" 와 같음). 한 번 훑는다 — 닫히지 않은 '<' 가 많은 글에서 정규식은 크기의 제곱으로 느려진다(보안 점검)
+    static func stripTags(_ s: String) -> String {
+        guard s.contains("<") else { return s }
+        var out = ""
+        out.reserveCapacity(s.count)
+        var rest = s[...]
+        while let lt = rest.firstIndex(of: "<") {
+            out += rest[..<lt]
+            guard let gt = rest[lt...].firstIndex(of: ">") else { out += rest[lt...]; return out } // 뒤에 '>' 가 없으면 남은 '<' 도 꼬리표가 아니다
+            out += " "
+            rest = rest[rest.index(after: gt)...]
+        }
+        out += rest
+        return out
     }
 
     // 한 번에 훑어 푼다(&amp;lt; 가 '<' 로 두 번 풀리지 않게). 숫자 표기(&#8217; · &#x2019;)는 모두, 이름 표기는 흔한 것만.

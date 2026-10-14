@@ -767,7 +767,7 @@ pub mod body_cleanup {
     use regex::Regex;
     use std::collections::HashSet;
 
-    // "김가람 기자 reporter@example.com", "이나래 기자 desk@example.com Powered by AI", "홍길동 특파원"
+    // "김가람 기자 reporter@example.com", "이나래 기자 desk@example.com Powered by AI", "홍길동 특파원", "By Jane Doe"
     static BYLINE: Lazy<Regex> = Lazy::new(|| {
         Regex::new(r"^\s*(?:\[[^\]]{1,20}\]\s*)?([가-힣]{2,4})\s?(기자|특파원|에디터|선임기자|객원기자|논설위원)(?:\s*[=·,]?\s*[\w.+-]+@[\w-]+(?:\.[\w-]+)+)?(?:\s*Powered by [\w .]{1,40})?\s*$").unwrap()
     });

@@ -89,6 +89,10 @@ fn host_ok(h: &str) -> bool {
     if ODD_NUMERIC.is_match(&host) && host.chars().last().map(|c| c.is_ascii_digit()).unwrap_or(false) {
         return false;
     }
+    // 마디가 모두 숫자나 0x 16진수면 IP 표기다(0x7f.0.0.0xa → 127.0.0.10) — 맥과 같은 규칙. 정규화 뒤 검사와 겹쳐 두 번 막는다
+    if host.split('.').all(|p| p.chars().all(|c| c.is_ascii_digit()) && !p.is_empty() || (p.starts_with("0x") && p[2..].chars().all(|c| c.is_ascii_hexdigit()))) {
+        return false;
+    }
     true
 }
 
@@ -113,6 +117,9 @@ pub fn is_public_v4(b: &[u8; 4]) -> bool {
         (100, 64..=127) => false, // 통신사 공유 주소
         (192, 0) if b[2] == 0 => false,
         (198, 18..=19) => false, // 시험용
+        (192, 0) if b[2] == 2 => false,     // 192.0.2.0/24 문서용
+        (198, 51) if b[2] == 100 => false,  // 198.51.100.0/24 문서용
+        (203, 0) if b[2] == 113 => false,   // 203.0.113.0/24 문서용
         _ => b[0] < 224,         // 멀티캐스트·예약 제외
     }
 }
@@ -132,6 +139,21 @@ pub fn is_public_v6(b: &[u8; 16]) -> bool {
     }
     if b[0] == 0xFF {
         return false; // 멀티캐스트
+    }
+    if b[0] == 0x01 && b[1] == 0x00 && b[2..8].iter().all(|&x| x == 0) {
+        return false; // 100::/64 버림용
+    }
+    if b[0] == 0x20 && b[1] == 0x01 && b[2] == 0x0D && b[3] == 0xB8 {
+        return false; // 2001:db8::/32 문서용
+    }
+    if b[0] == 0x20 && b[1] == 0x01 && b[2] == 0x00 && b[3] == 0x00 {
+        return false; // 2001::/32 Teredo(내부 IPv4 를 감춰 담을 수 있음)
+    }
+    if b[0] == 0x3F && b[1] == 0xFF && b[2] & 0xF0 == 0x00 {
+        return false; // 3fff::/20 문서용
+    }
+    if b[0] == 0x00 && b[1] == 0x64 && b[2] == 0xFF && b[3] == 0x9B && b[4] == 0x00 && b[5] == 0x01 {
+        return false; // 64:ff9b:1::/48 로컬 NAT64
     }
     let v4 = |i: usize| [b[i], b[i + 1], b[i + 2], b[i + 3]];
     if b[..10].iter().all(|&x| x == 0) && b[10] == 0xFF && b[11] == 0xFF {
@@ -207,4 +229,10 @@ pub fn external_link(link: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+// 기사 추리기용 숨은 웹 보기가 응답을 들일까(L1): 웹 보기가 보여 줄 수 있는 종류이고, 첨부(내려받기)로 온 것이 아닐 때만.
+// 그 밖의 응답을 들이면 WebKitGTK 기본 동작으로 사용자 확인 없이 내려받기가 시작될 수 있다
+pub fn web_response_allowed(mime_supported: bool, content_disposition: Option<&str>) -> bool {
+    mime_supported && !content_disposition.map(|d| d.trim().to_ascii_lowercase().starts_with("attachment")).unwrap_or(false)
 }

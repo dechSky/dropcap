@@ -58,7 +58,7 @@ final class AppModel: ObservableObject {
                 // 별도 작업으로 돌려, 간격을 바꿔 이 반복이 취소돼도 진행 중인 확인은 끝까지 간다
                 await Task { await self?.checkAll() }.value
                 let minutes = await MainActor.run { self?.state.settings.intervalMinutes ?? 5 }
-                try? await Task.sleep(for: .seconds(Double(minutes) * 60))
+                try? await Task.sleep(for: .seconds(Double(min(max(minutes, 1), 24 * 60)) * 60))
             }
         }
     }

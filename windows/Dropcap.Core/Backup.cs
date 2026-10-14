@@ -93,8 +93,23 @@ public sealed class BackupFile
             .Take(500).ToList();
         HiddenSources = HiddenSources.Where(x => x.Length is > 0 and <= 64).Distinct().Take(500).ToList();
         FollowedStories = FollowedStories.Where(x => x.Length is > 0 and <= 64).Distinct().Take(1000).ToList();
-        ScrapFolders = ScrapFolders.Where(x => x.Trim().Length is > 0 and <= 60).Distinct().Take(200).ToList();
+        ScrapFolders = ScrapFolders.Select(x => x.Trim()).Where(x => x.Length is > 0 and <= 60).Distinct().Take(200).ToList();
+        // 저장·스크랩: 공개 http(s) 기사만, 개수·글 길이 제한, 스크랩 폴더도 폴더 규칙대로(맥 sanitize 와 같음)
+        Saved = Saved.Where(i => UrlSafety.IsPublicHttp(i.Link)).Select(Trim).Take(5000).ToList();
+        Scraps = Scraps.Where(sc => UrlSafety.IsPublicHttp(sc.Item.Link)).Select(sc => sc with
+        {
+            Item = Trim(sc.Item),
+            Collection = sc.Collection.Trim() is { Length: > 0 and <= 60 } c ? c : Scrapbook.DefaultCollection,
+            Quote = Cut(sc.Quote, 20_000), QuoteOriginal = Cut(sc.QuoteOriginal, 20_000), Memo = Cut(sc.Memo, 20_000) ?? "",
+        }).Take(5000).ToList();
+        Enabled = Enabled.Where(kv => kv.Key.Length <= 64).Take(2000).ToDictionary();
+        Notify = Notify.Where(kv => kv.Key.Length <= 64).Take(2000).ToDictionary();
     }
+
+    private static string? Cut(string? s, int n) => s is not null && s.Length > n ? s[..n] : s;
+
+    // 기사 한 건: 제목·요약 길이 제한(앱이 만드는 요약은 300자)
+    private static NewsItem Trim(NewsItem i) => i with { Title = Cut(i.Title, 1000) ?? "", Summary = Cut(i.Summary, 2000) ?? "" };
 
     // 낱말: 빈 것 빼고 40자까지, 200개까지(설정 화면에서 넣을 수 있는 정도)
     private static List<string> Words(List<string> list) =>
@@ -245,20 +260,26 @@ public static class Backup
         s.FollowedStories = Union(s.FollowedStories, b.FollowedStories, ref followed);
         sum.Hidden = hidden; sum.Followed = followed;
         // 저장(같은 기사는 건너뜀, 가져온 것은 뒤에)
+        var savedKeys = s.Saved.Select(x => x.Key).ToHashSet();
         foreach (var it in b.Saved)
         {
-            if (s.Saved.Any(x => x.Key == it.Key)) continue;
+            if (!savedKeys.Add(it.Key)) continue;
             s.Saved.Add(it); sum.Saved++;
         }
         // 스크랩(같은 id, 또는 같은 기사·같은 문단·같은 폴더면 건너뜀)
         var newScraps = new List<Scrap>();
+        var ids = scraps.Select(x => x.Id).ToHashSet();
+        var same = scraps.Select(x => (x.Item.Key, x.Quote, x.Collection)).ToHashSet();
         foreach (var sc in b.Scraps)
-            if (!scraps.Concat(newScraps).Any(x => x.Id == sc.Id || (x.Item.Key == sc.Item.Key && x.Quote == sc.Quote && x.Collection == sc.Collection)))
-                newScraps.Add(sc);
+        {
+            if (ids.Contains(sc.Id) || same.Contains((sc.Item.Key, sc.Quote, sc.Collection))) continue;
+            newScraps.Add(sc); ids.Add(sc.Id); same.Add((sc.Item.Key, sc.Quote, sc.Collection));
+        }
         sum.Scraps = newScraps.Count;
         var fs = folders.ToList();
+        var have = fs.ToHashSet();
         foreach (var f in b.ScrapFolders.Concat(newScraps.Select(x => x.Collection)))
-            if (!fs.Contains(f)) { fs.Add(f); sum.Folders++; }
+            if (have.Add(f)) { fs.Add(f); sum.Folders++; }
         return new Merged(s, newScraps, fs, sum);
     }
 
@@ -319,10 +340,17 @@ public static class Backup
         catch (Exception e) { return new(false, $"내보내지 못했습니다: {e.Message}"); }
     }
 
+    // 가져올 파일 크기 상한(맥과 같은 50MB). 고르는 창(앱)도 같은 값을 쓴다
+    public const long MaxFileSize = 50L << 20;
+
     public static BackupResult ImportFrom(string path, AppModel model, Scrapbook book)
     {
         string text;
-        try { text = File.ReadAllText(path); }
+        try
+        {
+            if (new FileInfo(path).Length > MaxFileSize) return new(false, "가져오지 못했습니다: 기록 파일이 너무 큽니다(50MB 까지)");
+            text = File.ReadAllText(path);
+        }
         catch (Exception e) { return new(false, $"가져오지 못했습니다: {e.Message}"); }
         return Import(text, model, book);
     }
@@ -330,6 +358,7 @@ public static class Backup
     // 가져오기 전 지금 기록을 backups/ 에 남기고(최근 5개만), 합친다
     public static BackupResult Import(string json, AppModel model, Scrapbook book)
     {
+        if (json.Length > MaxFileSize) return new(false, "가져오지 못했습니다: 기록 파일이 너무 큽니다(50MB 까지)");
         try
         {
             var b = Decode(json);

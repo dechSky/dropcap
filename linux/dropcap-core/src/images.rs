@@ -43,7 +43,14 @@ pub fn shrink(data: &[u8]) -> Option<Vec<u8>> {
     if data.len() >= MAX_BYTES {
         return None;
     }
-    let img = image::load_from_memory(data).ok()?;
+    // 압축 폭탄: 받은 크기(8MB)는 작아도 풀면 거대한 그림 — 가로·세로 8192 · 풀 때 128MB 까지만(L3)
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(data)).with_guessed_format().ok()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(8192);
+    limits.max_image_height = Some(8192);
+    limits.max_alloc = Some(128 << 20);
+    reader.limits(limits);
+    let img = reader.decode().ok()?;
     let img = if img.width() > MAX_PIXELS || img.height() > MAX_PIXELS { img.thumbnail(MAX_PIXELS, MAX_PIXELS) } else { img };
     let rgb = img.to_rgb8();
     let mut out = Vec::new();

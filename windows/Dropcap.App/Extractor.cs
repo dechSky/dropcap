@@ -56,6 +56,8 @@ internal sealed class Extractor(nint parent, DispatcherQueue ui) : IArticleExtra
         s.IsStatusBarEnabled = false;
         s.UserAgent = UserAgent;
         c.CoreWebView2.NewWindowRequested += (_, e) => e.Handled = true;   // 팝업 금지
+        s.IsWebMessageEnabled = false;            // 추출 칸은 앱과 말을 주고받지 않는다(보안 점검: 한 겹 더)
+        s.AreHostObjectsAllowed = false;
         c.CoreWebView2.DownloadStarting += (_, e) => e.Cancel = true;
         c.CoreWebView2.PermissionRequested += (_, e) => e.State = CoreWebView2PermissionState.Deny;
         c.CoreWebView2.IsMuted = true;
@@ -68,7 +70,8 @@ internal sealed class Extractor(nint parent, DispatcherQueue ui) : IArticleExtra
         if (sandbox is not null) return sandbox;
         var c = await Create(parent, "dropcap-sandbox");
         var core = c.CoreWebView2;
-        core.AddWebResourceRequestedFilter("*", CoreWebView2WebResourceContext.All);
+        // 문서·워커(SharedWorker·ServiceWorker)에서 나온 요청 모두(보안 점검: 문서만 받는 오버로드는 워커의 fetch 를 놓친다)
+        core.AddWebResourceRequestedFilter("*", CoreWebView2WebResourceContext.All, CoreWebView2WebResourceRequestSourceKinds.All);
         core.WebResourceRequested += (_, e) =>
         {
             var env = core.Environment;
@@ -82,7 +85,7 @@ internal sealed class Extractor(nint parent, DispatcherQueue ui) : IArticleExtra
         core.NavigationStarting += (_, e) =>
         {
             if (serving is { } s && e.Uri == s.Url) return;
-            if (e.Uri.StartsWith("about:", StringComparison.Ordinal) || e.Uri.StartsWith("data:", StringComparison.Ordinal)) return;
+            if (e.Uri.StartsWith("about:", StringComparison.Ordinal)) return;   // data: 이동도 막는다(필요 없음)
             e.Cancel = true;
         };
         return sandbox = c;
@@ -131,23 +134,40 @@ internal sealed class Extractor(nint parent, DispatcherQueue ui) : IArticleExtra
         var core = c.CoreWebView2;
         try
         {
-            // 그림·동영상·글꼴은 받지 않는다(S-10). 모든 요청은 공개 주소 검사(S-05).
-            core.AddWebResourceRequestedFilter("*", CoreWebView2WebResourceContext.All);
+            // 그림·동영상·글꼴은 받지 않는다(S-10). 문서·워커에서 나온 모든 요청을 거친다(보안 점검: 워커의 fetch 도).
+            // GET 은 앱이 SafeHttp 로 대신 받아 돌려준다 — 접속하는 순간 IP 를 검사하고 그 IP 로만 붙으므로 DNS 바꿔치기로 내부망 응답을
+            // 페이지가 읽을 수 없다(브라우저가 따로 이름을 풀지 않음). GET 이 아닌 요청(POST 등)은 본문 추출에 필요 없어 막는다.
+            core.AddWebResourceRequestedFilter("*", CoreWebView2WebResourceContext.All, CoreWebView2WebResourceRequestSourceKinds.All);
             core.WebResourceRequested += async (_, e) =>
             {
+                var env = core.Environment;
                 if (e.ResourceContext is CoreWebView2WebResourceContext.Image or CoreWebView2WebResourceContext.Media or CoreWebView2WebResourceContext.Font
-                    or CoreWebView2WebResourceContext.Websocket)
+                    or CoreWebView2WebResourceContext.Websocket || !string.Equals(e.Request.Method, "GET", StringComparison.OrdinalIgnoreCase))
                 {
-                    e.Response = core.Environment.CreateWebResourceResponse(null, 403, "Forbidden", "");
+                    e.Response = env.CreateWebResourceResponse(null, 403, "Forbidden", "");
                     return;
                 }
                 if (e.Request.Uri.StartsWith("data:", StringComparison.Ordinal)) return;
                 var d = e.GetDeferral();
                 try
                 {
-                    if (!await UrlSafety.ResolvesPublicAsync(e.Request.Uri))
-                        e.Response = core.Environment.CreateWebResourceResponse(null, 403, "Forbidden", "");
+                    var r = await SafeHttp.GetAsync(e.Request.Uri, req =>
+                    {
+                        if (e.Request.Headers.GetHeader("Accept") is { Length: > 0 } accept) req.Headers.TryAddWithoutValidation("Accept", accept);
+                        req.Headers.TryAddWithoutValidation("User-Agent", UserAgent);
+                    }, timeout: TimeSpan.FromSeconds(10), maxBody: (long)FetchLimit.Page);
+                    // 리다이렉트를 따라갔으면 본문 대신 최종 주소로 넘긴다: 다른 곳의 응답을 요청한 주소(출처)의 것으로 내주지 않게
+                    // (보안 검토: 출처 혼동). 브라우저가 최종 주소로 다시 요청하면 이 처리기를 다시 거친다.
+                    if (r.FinalUri.AbsoluteUri != new Uri(e.Request.Uri).AbsoluteUri)
+                    {
+                        e.Response = env.CreateWebResourceResponse(null, 302, "Found", $"Location: {r.FinalUri.AbsoluteUri}");
+                        return;
+                    }
+                    var type = r.ContentHeaders?.ContentType?.ToString() ?? "application/octet-stream";
+                    e.Response = env.CreateWebResourceResponse(new MemoryStream(r.Body).AsRandomAccessStream(), r.Status, "OK",
+                        $"Content-Type: {type.Replace("\r", "").Replace("\n", "")}");
                 }
+                catch { e.Response = env.CreateWebResourceResponse(null, 403, "Forbidden", ""); }
                 finally { d.Complete(); }
             };
             // 페이지가 내부망 주소로 이동하거나 넘기려 하면 막는다(about:·data: 만 예외)
@@ -156,7 +176,7 @@ internal sealed class Extractor(nint parent, DispatcherQueue ui) : IArticleExtra
             core.NavigationStarting += (sender, e) =>
             {
                 var target = e.Uri;
-                if (target.StartsWith("about:", StringComparison.Ordinal) || target.StartsWith("data:", StringComparison.Ordinal)) return;
+                if (target.StartsWith("about:", StringComparison.Ordinal)) return;   // data: 로 이동은 막는다(내려받기·우회 길)
                 if (approved.Contains(target)) return;
                 e.Cancel = true;
                 if (!UrlSafety.IsPublicHttp(target)) return;

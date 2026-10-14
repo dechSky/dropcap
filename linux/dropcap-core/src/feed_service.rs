@@ -43,6 +43,13 @@ impl FetchLimit {
     }
 }
 
+// 사이트맵 출처의 글 주소 정규식은 앱에 든 기본 출처(같은 id·같은 정규식)의 것만 쓴다(맥 sitemapPattern).
+// 상태 파일·가져온 기록에서 온 값은 믿지 않는다(regex crate 는 선형이지만 아주 큰 정규식·이상한 값을 들이지 않게)
+pub fn sitemap_pattern(source: &Source) -> Option<String> {
+    let m = source.match_.as_ref()?;
+    crate::models::resources::CONFIG.sources.iter().any(|b| b.id == source.id && b.match_.as_ref() == Some(m)).then(|| m.clone())
+}
+
 pub struct Body {
     pub data: Vec<u8>,
     pub encoding: Option<String>,
@@ -107,9 +114,9 @@ impl FeedService {
         let health = &crate::source_health::BOOK;
         let parsed: Result<Option<Vec<Entry>>, FeedError> = async {
             let Some(data) = self.fetch(&source.url, conditional).await? else { return Ok(None) };
-            Ok(Some(match (&source.match_, source.is_sitemap()) {
+            Ok(Some(match (sitemap_pattern(source), source.is_sitemap()) {
                 (Some(m), true) => {
-                    let re = Regex::new(m).map_err(|_| FeedError::BadFormat)?;
+                    let re = Regex::new(&m).map_err(|_| FeedError::BadFormat)?;
                     feed_parser::parse_sitemap(&data, &re)?
                 }
                 _ => feed_parser::parse_feed(&data)?,

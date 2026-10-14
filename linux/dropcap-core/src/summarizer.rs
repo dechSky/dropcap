@@ -32,12 +32,8 @@ pub async fn model() -> Option<String> {
     let found = async {
         let r = LOCAL.get(format!("{OLLAMA}/api/tags")).timeout(Duration::from_secs(2)).send().await.ok()?;
         let v: serde_json::Value = r.json().await.ok()?;
-        let names: Vec<String> = v["models"].as_array()?.iter().filter_map(|m| m["name"].as_str().map(|s| s.to_string())).collect();
-        if let Ok(want) = std::env::var("DROPCAP_OLLAMA_MODEL") {
-            return names.iter().find(|n| (**n == want || n.starts_with(&format!("{want}:"))) && local_text_model(n)).cloned();
-        }
-        // 임베딩 전용과 Ollama 클라우드 모델(이름에 cloud — 글을 바깥 서버로 보냄)은 빼고, 이 컴퓨터에서 도는 것만
-        names.into_iter().find(|n| local_text_model(n))
+        // 임베딩 전용과 Ollama 클라우드 모델(글을 바깥 서버로 보냄)은 빼고, 이 컴퓨터에서 도는 것만
+        pick_local(&v, std::env::var("DROPCAP_OLLAMA_MODEL").ok().as_deref())
     }
     .await;
     *MODEL.lock().unwrap() = Some((found.clone(), Instant::now()));
@@ -48,6 +44,21 @@ pub async fn model() -> Option<String> {
 pub fn local_text_model(name: &str) -> bool {
     let n = name.to_lowercase();
     !n.contains("embed") && !n.contains("cloud")
+}
+
+// /api/tags 목록에서 이 컴퓨터에서 도는 글 모델 고르기. 원격(클라우드) 모델은 이름에 cloud 가 없어도
+// 목록에 remote_host·remote_model 이 붙어 오므로 그것으로도 거른다(L5)
+pub fn pick_local(tags: &serde_json::Value, want: Option<&str>) -> Option<String> {
+    let names: Vec<String> = tags["models"]
+        .as_array()?
+        .iter()
+        .filter(|m| m.get("remote_host").map(|v| v.is_null()).unwrap_or(true) && m.get("remote_model").map(|v| v.is_null()).unwrap_or(true))
+        .filter_map(|m| m["name"].as_str().map(|s| s.to_string()))
+        .collect();
+    if let Some(w) = want {
+        return names.iter().find(|n| (**n == w || n.starts_with(&format!("{w}:"))) && local_text_model(n)).cloned();
+    }
+    names.into_iter().find(|n| local_text_model(n))
 }
 
 pub async fn available() -> bool {

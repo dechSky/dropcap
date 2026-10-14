@@ -15,6 +15,10 @@ public sealed class ImageLoader
 
     public const int MaxBytes = (int)FetchLimit.Image;   // 사진 8MB(S-12)
     public const int MaxPixels = 1400;
+    public const long MaxSourcePixels = 40_000_000;   // 풀기 전 가로×세로 상한(보안 점검: 6MB PNG 가 6GB 로 풀리는 압축 폭탄)
+
+    // 머리만 읽어 크기를 본다. 너무 크거나 비어 있으면 false
+    public static bool SafeDimensions(SKImageInfo info) => info.Width > 0 && info.Height > 0 && (long)info.Width * info.Height <= MaxSourcePixels;
     public const int DiskLimit = 600, DiskKeep = 500;
 
     private readonly string dir;
@@ -85,7 +89,7 @@ public sealed class ImageLoader
     public static byte[]? Shrink(byte[] data)
     {
         using var codec = SKCodec.Create(new MemoryStream(data));
-        if (codec is null) return null;
+        if (codec is null || !SafeDimensions(codec.Info)) return null;
         var info = codec.Info;
         var scale = Math.Min(1f, (float)MaxPixels / Math.Max(info.Width, info.Height));
         using var full = SKBitmap.Decode(codec);

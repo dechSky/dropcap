@@ -26,29 +26,10 @@ enum CoverPick {
         return nil
     }
 
-    static func metaTags(_ head: String) -> [String] {
-        var out: [String] = []
-        var rest = head[...]
-        while let r = rest.range(of: "<meta", options: .caseInsensitive) {
-            let after = rest[r.upperBound...]
-            let end = after.prefix(2000).firstIndex(of: ">") // 꼬리표 하나는 길어야 2000자
-            out.append(String(after[..<(end ?? after.prefix(2000).endIndex)]))
-            rest = after
-        }
-        return out
-    }
+    // 꼬리표 훑기·속성 읽기는 HTMLScan 한 곳(피드·저장·채널 찾기도 같이 씀)
+    static func metaTags(_ head: String) -> [String] { HTMLScan.tags("meta", in: head) }
 
-    // 꼬리표 안 속성 값(따옴표 " ' 또는 없음)
-    private static let attrRes: [String: NSRegularExpression] = Dictionary(uniqueKeysWithValues: ["property", "name", "content"].map {
-        ($0, try! NSRegularExpression(pattern: #"(?:^|\s)"# + $0 + #"\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))"#, options: .caseInsensitive))
-    })
-
-    static func attr(_ tag: String, _ name: String) -> String? {
-        guard let re = attrRes[name],
-              let m = re.firstMatch(in: tag, range: NSRange(tag.startIndex..., in: tag)) else { return nil }
-        for g in 1...3 { if let r = Range(m.range(at: g), in: tag) { return String(tag[r]) } }
-        return nil
-    }
+    static func attr(_ tag: String, _ name: String) -> String? { HTMLScan.attr(tag, name) }
 
     static func ogImage(_ link: String) async -> String? {
         guard let data = try? await FeedService.shared.fetch(link, limit: .page) else { return nil }

@@ -1,0 +1,148 @@
+// 보안 점검(2026-10-14) 리눅스 항목 재현·고침 시험
+use dropcap_core::url_safety::is_public_http;
+
+#[test]
+fn hex_ip_spellings_are_rejected() {
+    for u in ["http://0x7f.0.0.0xa/", "http://0x7f.1/", "http://0xa.0.0.1/x", "http://0x7f.0x0.0x0.0x1/", "http://10.0.0.0xa/"] {
+        assert!(!is_public_http(u), "{u}");
+    }
+    assert!(is_public_http("https://0xabc.example.com/"));
+}
+
+use dropcap_core::backup;
+use dropcap_core::store::Settings;
+
+// L6 · 맥 M5: 상태 파일·가져온 기록의 범위 밖 수치(Int.max 간격은 곱셈 넘침·0 은 쉬지 않고 받기)
+#[test]
+fn settings_are_clamped_when_read() {
+    let s: Settings = serde_json::from_str(r#"{"intervalMinutes":9223372036854775807,"quietStart":99,"digestHour":-3,"totalDailyCap":0,"bigThreshold":1000}"#).unwrap();
+    assert_eq!(s.interval_minutes, 1440);
+    assert_eq!(s.quiet_start, 23);
+    assert_eq!(s.digest_hour, 0);
+    assert_eq!(s.total_daily_cap, 1);
+    assert_eq!(s.big_threshold, 20);
+    let z: Settings = serde_json::from_str(r#"{"intervalMinutes":0}"#).unwrap();
+    assert_eq!(z.interval_minutes, 1);
+}
+
+fn backup_json(extra: &str) -> Vec<u8> {
+    format!(r#"{{"format":"dropcap-backup","version":1{extra}}}"#).into_bytes()
+}
+
+#[test]
+fn imported_backup_is_sanitized() {
+    let b = backup::decode(&backup_json(r##","settings":{"intervalMinutes":7,"digestHour":2,"mustKeywords":["  a ","A","","xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"]},
+      "customSources":[
+        {"id":"custom-ok","name":"OK","tier":"press","type":"sitemap","url":"https://ok.example/feed","match":"^(a+)+$","aiOnly":true,"defaultOn":true,"color":"red; } * { background: url(http://10.0.0.1/x) "},
+        {"id":"openai","name":"가짜 기본 출처","tier":"lab","type":"feed","url":"https://evil.example/feed","aiOnly":false,"defaultOn":true,"color":"#000"},
+        {"id":"custom-local","name":"내부","tier":"press","type":"feed","url":"http://192.168.0.1/feed","aiOnly":false,"defaultOn":true,"color":"#000"}],
+      "sectionPolicy":{"economy":{"mode":"bundle","bundleHour":99,"dailyCap":0},"nope":{"mode":"bundle","bundleHour":9,"dailyCap":3}},
+      "sectionsChosen":["economy","nope","economy"],
+      "saved":[{"id":"1","title":"t","link":"https://ok.example/1","sourceId":"s","sourceName":"S","summary":"","tier":"press"},
+               {"id":"2","title":"t","link":"javascript:alert(1)","sourceId":"s","sourceName":"S","summary":"","tier":"press"}],
+      "scraps":[{"id":"x","item":{"id":"1","title":"t","link":"https://ok.example/1","sourceId":"s","sourceName":"S","summary":"","tier":"press"},"memo":"","collection":"아주 긴 폴더 이름 아주 긴 폴더 이름 아주 긴 폴더 이름 아주 긴 폴더 이름 아주 긴 폴더 이름 아주 긴 폴더 이름 아주 긴 폴더 이름 아주 긴 폴더 이름 ","created":"2027-01-01T00:00:00Z"}],
+      "scrapFolders":["보고서"," ","보고서"]"##))
+    .unwrap();
+    assert_eq!(b.settings.interval_minutes, 5); // 고를 수 있는 값이 아니면 기본
+    assert_eq!(b.settings.digest_hour, 5);
+    assert_eq!(b.settings.must_keywords, vec!["a".to_string()]);
+    assert_eq!(b.custom_sources.len(), 1);
+    let c = &b.custom_sources[0];
+    assert_eq!(c.id, "custom-ok");
+    assert_eq!(c.color, "#3B82F6"); // CSS 에 그대로 들어가지 않게
+    assert!(c.match_.is_none() && c.kind_type == "feed" && !c.ai_only);
+    assert_eq!(b.section_policy.len(), 1);
+    assert_eq!((b.section_policy["economy"].bundle_hour, b.section_policy["economy"].daily_cap), (23, 1));
+    assert_eq!(b.sections_chosen, Some(vec!["economy".to_string()]));
+    assert_eq!(b.saved.len(), 1);
+    assert_eq!(b.scraps[0].collection, "스크랩");
+    assert_eq!(b.scrap_folders, vec!["보고서".to_string()]);
+}
+
+#[test]
+fn oversized_backup_file_is_refused() {
+    let d = tempfile::tempdir().unwrap();
+    let f = d.path().join("big.json");
+    let file = std::fs::File::create(&f).unwrap();
+    file.set_len((backup::MAX_FILE_BYTES + 1) as u64).unwrap(); // 실제로 쓰지 않고 크기만
+    assert_eq!(backup::read_file(&f), Err(backup::Failure::TooLarge));
+    assert!(backup::Failure::TooLarge.to_string().contains("50MB"));
+}
+
+// 맥 M4: 사이트맵 정규식은 앱에 든 기본 출처(같은 id·같은 정규식)의 것만
+#[test]
+fn sitemap_pattern_only_from_bundled_sources() {
+    use dropcap_core::feed_service::sitemap_pattern;
+    use dropcap_core::models::resources;
+    let bundled = resources::CONFIG.sources.iter().find(|s| s.is_sitemap() && s.match_.is_some()).cloned().expect("기본 사이트맵 출처");
+    assert_eq!(sitemap_pattern(&bundled).as_deref(), bundled.match_.as_deref());
+    let mut forged = bundled.clone();
+    forged.match_ = Some("^(a+)+$".into());
+    assert_eq!(sitemap_pattern(&forged), None);
+    let mut custom = bundled.clone();
+    custom.id = "custom-x".into();
+    assert_eq!(sitemap_pattern(&custom), None);
+}
+
+// L1: 숨은 웹 보기는 보여 줄 수 없는 응답·첨부를 들이지 않는다(내려받기로 바뀌지 않게)
+#[test]
+fn web_view_refuses_downloads() {
+    use dropcap_core::url_safety::web_response_allowed;
+    assert!(web_response_allowed(true, None));
+    assert!(web_response_allowed(true, Some("inline")));
+    assert!(!web_response_allowed(true, Some("attachment; filename=x.desktop")));
+    assert!(!web_response_allowed(true, Some(" Attachment")));
+    assert!(!web_response_allowed(false, None));
+}
+
+// L3: 사진 크기 폭탄 — 가로·세로가 8192 를 넘으면 풀지 않는다
+#[test]
+fn huge_image_dimensions_are_refused() {
+    let mut png = Vec::new();
+    image::DynamicImage::new_luma8(8300, 1).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+    assert!(dropcap_core::images::shrink(&png).is_none());
+    let mut ok = Vec::new();
+    image::DynamicImage::new_rgb8(800, 600).write_to(&mut std::io::Cursor::new(&mut ok), image::ImageFormat::Png).unwrap();
+    assert!(dropcap_core::images::shrink(&ok).is_some());
+}
+
+// L7: 데이터 폴더 0700 · 파일 0600
+#[cfg(unix)]
+#[test]
+fn data_files_are_private() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = tempfile::tempdir().unwrap();
+    let dir = d.path().join("data");
+    let store = dropcap_core::store::Store::new(dir.clone());
+    store.save(&Default::default());
+    assert_eq!(std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);
+    assert_eq!(std::fs::metadata(store.file()).unwrap().permissions().mode() & 0o777, 0o600);
+    let f = dir.join("x.json");
+    dropcap_core::store::write_atomic(&f, b"{}").unwrap();
+    assert_eq!(std::fs::metadata(&f).unwrap().permissions().mode() & 0o777, 0o600);
+}
+
+// L9: 특수 대역(문서용·Teredo·폐기·로컬 NAT64 등)
+#[test]
+fn special_ranges_are_not_public() {
+    use dropcap_core::url_safety::{parse_v4, parse_v6, is_public_v4, is_public_v6};
+    for a in ["192.0.2.1", "198.51.100.7", "203.0.113.9"] {
+        assert!(!is_public_v4(&parse_v4(a).unwrap()), "{a}");
+    }
+    for a in ["2001:db8::1", "2001::1", "100::1", "64:ff9b:1::a00:1", "3fff::1"] {
+        assert!(!is_public_v6(&parse_v6(a).unwrap()), "{a}");
+    }
+    assert!(is_public_v6(&parse_v6("2606:4700::1111").unwrap()));
+    assert!(is_public_v4(&parse_v4("8.8.8.8").unwrap()));
+}
+
+// L5: Ollama 의 원격(클라우드) 모델은 이름이 아니라 목록의 원격 표시로도 거른다
+#[test]
+fn ollama_remote_models_are_skipped() {
+    let tags = serde_json::json!({"models":[
+        {"name":"mystery:latest","remote_model":"gpt-oss:120b","remote_host":"https://ollama.com:443"},
+        {"name":"nomic-embed-text:latest"},
+        {"name":"qwen2.5:7b"}]});
+    assert_eq!(dropcap_core::summarizer::pick_local(&tags, None).as_deref(), Some("qwen2.5:7b"));
+    assert_eq!(dropcap_core::summarizer::pick_local(&tags, Some("mystery")), None);
+}

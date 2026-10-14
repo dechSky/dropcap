@@ -108,7 +108,7 @@ actor FeedService {
                 await SourceHealthBook.shared.recordUnchanged(source.id, at: now)
                 return nil
             }
-            if source.type == "sitemap", let m = source.match, let re = try? NSRegularExpression(pattern: m) {
+            if source.type == "sitemap", let m = Self.sitemapPattern(source), let re = try? NSRegularExpression(pattern: m) {
                 entries = try FeedParser.parseSitemap(data, match: re)
             } else {
                 entries = try FeedParser.parseFeed(data)
@@ -134,21 +134,23 @@ actor FeedService {
         }
     }
 
+    // 사이트맵 거르기 정규식은 앱에 든 기본 출처의 것만 쓴다. 바깥(가져온 기록·고친 상태 파일)에서 온 정규식은
+    // 시간 제한 없이 돌아 받기 전체를 멈출 수 있다(보안 점검: ^(a+)+$ 한 줄로 actor 가 멈춤)
+    nonisolated static func sitemapPattern(_ source: Source, bundled: [Source] = Resources.config.sources) -> String? {
+        guard let m = source.match, bundled.contains(where: { $0.id == source.id && $0.match == m }) else { return nil }
+        return m
+    }
+
     // 사이트맵에서 찾은 새 글은 본문을 받아 제목·설명을 채운다
     func fillTitle(_ item: inout NewsItem) async {
         guard let data = try? await fetch(item.link, limit: .page) else { item.title = Plain.titleFromSlug(item.link); return }
         let html = String(decoding: data, as: UTF8.self)
-        func meta(_ pattern: String) -> String? {
-            guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
-                  let m = re.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)),
-                  let r = Range(m.range(at: 1), in: html) else { return nil }
-            return String(html[r])
-        }
-        let title = meta("<meta[^>]+property=[\"']og:title[\"'][^>]+content=[\"']([^\"']+)") ?? meta("<title[^>]*>([^<]+)</title>")
+        // 꼬리표를 하나씩 떼어 본다(HTMLScan — 정규식 되풀이 훑기로 큰 페이지에서 멈추지 않게)
+        let title = HTMLScan.meta(html, ["og:title"]) ?? HTMLScan.title(html)
         item.title = title.map { Plain.clean($0).replacingOccurrences(of: "\\s*[|\\\\-]\\s*Anthropic\\s*$", with: "", options: .regularExpression) }?.nonEmpty
             ?? Plain.titleFromSlug(item.link)
-        if let d = meta("<meta[^>]+name=[\"']description[\"'][^>]+content=[\"']([^\"']+)") { item.summary = String(Plain.clean(d).prefix(300)) }
-        if item.image == nil, let img = meta("<meta[^>]+property=[\"']og:image[\"'][^>]+content=[\"']([^\"']+)") { item.image = img }
+        if let d = HTMLScan.meta(html, ["description"]) { item.summary = String(Plain.clean(d).prefix(300)) }
+        if item.image == nil, let img = HTMLScan.meta(html, ["og:image"]) { item.image = img }
     }
 }
 

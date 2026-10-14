@@ -147,7 +147,7 @@ public sealed class Translator
         var url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=" + target + "&dt=t&q=" + Uri.EscapeDataString(q);
         try
         {
-            var r = await SafeHttp.GetAsync(url, timeout: TimeSpan.FromSeconds(15));
+            var r = await SafeHttp.GetAsync(url, timeout: TimeSpan.FromSeconds(15), maxBody: 2L << 20);   // 번역 응답은 2MB 까지(보안 점검)
             if (r.Status != 200) return null;
             using var doc = JsonDocument.Parse(r.Body);
             if (doc.RootElement.ValueKind != JsonValueKind.Array || doc.RootElement.GetArrayLength() == 0) return null;

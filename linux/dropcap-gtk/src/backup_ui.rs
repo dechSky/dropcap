@@ -30,11 +30,8 @@ pub fn export(path: &Path) -> String {
 
 // 가져오기 전 지금 기록을 backups/ 에 남기고(최근 5개만), 합친다
 pub fn import(path: &Path) -> String {
-    let data = match std::fs::read(path) {
-        Ok(d) => d,
-        Err(e) => return format!("가져오지 못했습니다: {e}"),
-    };
-    let b = match backup::decode(&data) {
+    // 50MB 가 넘는 파일은 읽지 않고, 읽은 값은 정리한 뒤에만 쓴다(backup::read_file → sanitize)
+    let b = match backup::read_file(path) {
         Ok(b) => b,
         Err(e) => return format!("가져오지 못했습니다: {e}"),
     };
@@ -60,7 +57,7 @@ pub fn import(path: &Path) -> String {
 
 pub fn undo() -> String {
     let Some(f) = undo_file() else { return "되돌릴 가져오기가 없습니다".into() };
-    let b = match std::fs::read(&f).map_err(|e| e.to_string()).and_then(|d| backup::decode(&d).map_err(|e| e.to_string())) {
+    let b = match backup::read_file(&f).map_err(|e| e.to_string()) {
         Ok(b) => b,
         Err(e) => return format!("되돌리지 못했습니다: {e}"),
     };

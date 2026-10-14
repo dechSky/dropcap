@@ -91,6 +91,8 @@ internal sealed class WebWindow
         core.PermissionRequested += (_, e) => e.State = CoreWebView2PermissionState.Deny;
         core.WebMessageReceived += async (_, e) =>
         {
+            // 앱 폴더(가상 호스트)에서 온 말만 듣는다(보안 점검: 한 겹 더 — 지금은 iframe 이 막혀 있어 다른 출처가 없음)
+            if (!Uri.TryCreate(e.Source, UriKind.Absolute, out var from) || from.Host != AppHost) return;
             var reply = await bridge.Receive(Page, e.WebMessageAsJson);
             core?.PostWebMessageAsJson(reply);
         };

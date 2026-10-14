@@ -204,6 +204,11 @@ async fn make_web(js: bool, block: &[&str], id: &'static str) -> Option<Web> {
     let session = webkit6::NetworkSession::new_ephemeral();
     let proxy = webkit6::NetworkProxySettings::new(Some(&format!("http://127.0.0.1:{port}")), &[]);
     session.set_proxy_settings(webkit6::NetworkProxyMode::Custom, Some(&proxy));
+    // 숨은 웹 보기는 아무것도 내려받지 않는다(meta refresh·첨부 응답으로 ~/Downloads 에 몰래 받기 막음)
+    session.connect_download_started(|_, d| {
+        log::warn!("[기사] 웹 보기의 내려받기를 막음");
+        d.cancel();
+    });
     let view = webkit6::WebView::builder().settings(&settings).user_content_manager(&ucm).network_session(&session).build();
     view.set_size_request(1200, 900);
     // 이동 검사(S-05): 결정을 붙잡아 두고 이름 풀기까지 마친 뒤 허락·거절
@@ -220,8 +225,13 @@ async fn make_web(js: bool, block: &[&str], id: &'static str) -> Option<Web> {
                 .and_then(|r| r.uri())
                 .map(|u| u.to_string())
                 .unwrap_or_default();
-            if uri.starts_with("about:") || uri.starts_with("data:") {
+            if uri.starts_with("about:") {
                 decision.use_();
+                return true;
+            }
+            // data: 이동은 쓰지 않는다(본문 추리기에 필요 없음, 페이지가 만든 문서로 옮겨 가는 길을 막음)
+            if uri.starts_with("data:") {
+                decision.ignore();
                 return true;
             }
             if !dropcap_core::url_safety::is_public_http(&uri) {
@@ -230,6 +240,19 @@ async fn make_web(js: bool, block: &[&str], id: &'static str) -> Option<Web> {
             }
             let d = decision.clone();
             bg(async move { dropcap_core::url_safety::resolves_public(&uri).await }, move |ok| if ok { d.use_() } else { d.ignore() });
+            true
+        }
+        webkit6::PolicyDecisionType::Response => {
+            // 보여 줄 수 없는 종류(파일)·첨부로 온 응답은 받지 않는다(내려받기로 바뀌지 않게)
+            let Some(r) = decision.downcast_ref::<webkit6::ResponsePolicyDecision>() else {
+                decision.ignore();
+                return true;
+            };
+            if dropcap_core::url_safety::web_response_allowed(r.is_mime_type_supported(), r.response().and_then(|x| x.http_headers()).and_then(|h| h.one("Content-Disposition")).as_deref()) {
+                decision.use_();
+            } else {
+                decision.ignore();
+            }
             true
         }
         _ => false,
@@ -314,3 +337,4 @@ async fn run_slow(url: String, max_secs: u64) -> Option<Article> {
     }
     try_extract(&web.view).await
 }
+

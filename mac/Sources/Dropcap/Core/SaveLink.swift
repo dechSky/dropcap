@@ -59,9 +59,8 @@ enum SaveLink {
     }
 
     static func firstHref(_ html: String) -> URL? {
-        let re = try! NSRegularExpression(pattern: #"<a\b[^>]*\bhref\s*=\s*["']([^"']+)["']"#, options: [.caseInsensitive])
-        for m in re.matches(in: html, range: NSRange(html.startIndex..., in: html)) {
-            if let r = Range(m.range(at: 1), in: html), let u = normalize(Plain.decodeEntities(String(html[r]))) { return u }
+        for tag in HTMLScan.tags("a", in: html) {
+            if let raw = HTMLScan.attr(tag, "href"), !raw.isEmpty, let u = normalize(Plain.decodeEntities(raw)) { return u }
         }
         return nil
     }
@@ -84,24 +83,11 @@ enum SaveLink {
     struct Head: Equatable { var title: String?; var image: String?; var site: String?; var description: String? }
 
     static func parseHead(_ html: String, base: URL) -> Head {
-        func meta(_ names: [String]) -> String? {
-            for n in names {
-                let key = NSRegularExpression.escapedPattern(for: n)
-                for p in [#"<meta[^>]+(?:property|name)=["']\#(key)["'][^>]*content=["']([^"']*)["']"#,
-                          #"<meta[^>]+content=["']([^"']*)["'][^>]*(?:property|name)=["']\#(key)["']"#] {
-                    if let re = try? NSRegularExpression(pattern: p, options: [.caseInsensitive]),
-                       let m = re.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)),
-                       let r = Range(m.range(at: 1), in: html), let v = cleanTitle(String(html[r])) { return v }
-                }
-            }
-            return nil
-        }
+        // 꼬리표를 하나씩 떼어 본다(HTMLScan — 정규식 되풀이 훑기로 큰 페이지에서 멈추지 않게)
+        func meta(_ names: [String]) -> String? { HTMLScan.meta(html, names, accept: cleanTitle) }
         var h = Head()
         h.title = meta(["og:title", "twitter:title"])
-        if h.title == nil, let re = try? NSRegularExpression(pattern: "<title[^>]*>([^<]+)</title>", options: [.caseInsensitive]),
-           let m = re.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)), let r = Range(m.range(at: 1), in: html) {
-            h.title = cleanTitle(String(html[r]))
-        }
+        if h.title == nil, let t = HTMLScan.title(html) { h.title = cleanTitle(t) }
         h.site = meta(["og:site_name", "application-name"])
         h.description = meta(["og:description", "description", "twitter:description"])
         if let raw = meta(["og:image", "og:image:url", "twitter:image"]),

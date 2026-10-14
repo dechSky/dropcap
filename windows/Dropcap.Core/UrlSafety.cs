@@ -43,10 +43,13 @@ public static class UrlSafety
         // 점 없는 이름(intranet), 숫자·16진수로만 된 이상한 표기(2130706433, 0x7f.1, 127.1)는 거절
         if (!host.Contains('.')) return false;
         if (OddNumeric.IsMatch(host) && char.IsDigit(host[^1])) return false;
+        // 마디가 모두 숫자나 0x 16진수면 IP 표기다(0x7f.0.0.0xa → 127.0.0.10). 이름 확인 없이 바깥 브라우저로 열리는 길도 막는다(보안 점검)
+        if (host.Split('.').All(p => NumericLabel.IsMatch(p))) return false;
         return true;
     }
 
     private static readonly Regex OddNumeric = new("^[0-9a-fx.]+$");
+    private static readonly Regex NumericLabel = new("^(0x[0-9a-f]*|[0-9]+)$");
 
     // scheme://[사용자@]이름[:포트]/... 에서 이름만(원래 글자 그대로)
     public static string? RawHost(string url)
@@ -142,6 +145,9 @@ public static class UrlSafety
             (100, >= 64 and <= 127) => false,   // 통신사 공유 주소
             (192, 0) when b[2] == 0 => false,
             (198, 18 or 19) => false,           // 시험용
+            (192, 0) when b[2] == 2 => false,   // 문서용 TEST-NET-1·2·3
+            (198, 51) when b[2] == 100 => false,
+            (203, 0) when b[2] == 113 => false,
             _ => b[0] < 224,                    // 멀티캐스트·예약 제외
         };
     }
@@ -160,6 +166,11 @@ public static class UrlSafety
         if (b[0] == 0x00 && b[1] == 0x64 && b[2] == 0xFF && b[3] == 0x9B)            // 64:ff9b::/96 NAT64
             return IsPublicV4(b[12..16]);
         if (b[0] == 0x20 && b[1] == 0x02) return IsPublicV4(b[2..6]);               // 2002::/16 6to4
+        if (b.Take(8).All(x => x == 0) && b[8] == 0xFF && b[9] == 0xFF && b[10] == 0 && b[11] == 0) return false; // ::ffff:0:a.b.c.d (IPv4-translated)
+        if (b[0] == 0x00 && b[1] == 0x64 && b[2] == 0xFF && b[3] == 0x9B && b[4] == 0 && b[5] == 0x01) return false; // 64:ff9b:1::/48 지역 NAT64
+        if (b[0] == 0x20 && b[1] == 0x01 && b[2] == 0 && b[3] == 0) return false;   // 2001::/32 Teredo
+        if (b[0] == 0x20 && b[1] == 0x01 && b[2] == 0x0D && b[3] == 0xB8) return false; // 2001:db8::/32 문서용
+        if (b[0] == 0x01 && b[1] == 0x00 && b.Skip(2).Take(6).All(x => x == 0)) return false; // 100::/64 버림용
         return true;
     }
 }

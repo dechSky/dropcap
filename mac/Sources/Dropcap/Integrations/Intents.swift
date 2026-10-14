@@ -46,17 +46,14 @@ enum IntentLogic {
 
     // <title> 또는 og:title
     static func pageTitle(_ html: String) -> String? {
-        let patterns = [#"<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']"#,
-                        #"<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']"#,
-                        #"<title[^>]*>([^<]+)</title>"#]
-        for p in patterns {
-            guard let re = try? NSRegularExpression(pattern: p, options: [.caseInsensitive]),
-                  let m = re.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)),
-                  let r = Range(m.range(at: 1), in: html) else { continue }
-            let t = String(html[r]).replacingOccurrences(of: "&amp;", with: "&").replacingOccurrences(of: "&quot;", with: "\"")
+        // 꼬리표를 하나씩 떼어 본다(HTMLScan — 정규식 되풀이 훑기로 큰 페이지에서 멈추지 않게)
+        func clean(_ raw: String) -> String? {
+            let t = raw.replacingOccurrences(of: "&amp;", with: "&").replacingOccurrences(of: "&quot;", with: "\"")
                 .replacingOccurrences(of: "&#39;", with: "'").trimmingCharacters(in: .whitespacesAndNewlines)
-            if !t.isEmpty { return t }
+            return t.isEmpty ? nil : t
         }
+        if let t = HTMLScan.meta(html, ["og:title"], accept: clean) { return t }
+        if let t = HTMLScan.title(html).flatMap(clean) { return t }
         return nil
     }
 }

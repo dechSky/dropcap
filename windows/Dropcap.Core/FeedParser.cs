@@ -66,13 +66,13 @@ public static class FeedParser
         }
         foreach (var field in new[] { "content:encoded", "content", "description", "summary" })
         {
-            var m = ImgTag.Match(it.Value(field));
-            if (m.Success) return m.Groups[1].Value;
+            // <img …> 를 하나씩 떼어 본다(HtmlScan — 정규식 되풀이 훑기로 큰 본문에서 멈추지 않게, 보안 점검)
+            var html = it.Value(field);
+            foreach (var tag in HtmlScan.Tags("img", html.Length > 512_000 ? html[..512_000] : html))
+                if ((HtmlScan.Attr(tag, "src") ?? HtmlScan.Attr(tag, "data-src")) is { Length: > 0 } u) return u;
         }
         return null;
     }
-
-    private static readonly Regex ImgTag = new("""<img[^>]+src=["']([^"']+)["']""", RegexOptions.CultureInvariant);
 
     private static bool IsImage(XNode n)
     {
@@ -314,13 +314,30 @@ public static class Plain
         ["middot"] = "·", ["bull"] = "•", ["laquo"] = "«", ["raquo"] = "»", ["copy"] = "©", ["reg"] = "®", ["trade"] = "™",
     };
     private static readonly Regex Entity = new("&(#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[a-zA-Z]{2,8});");
-    private static readonly Regex Tags = new("<[^>]*>");
     private static readonly Regex Spaces = new(@"\s+");
 
     public static string Clean(string s)
     {
-        var o = DecodeEntities(Tags.Replace(s, " "));
+        var o = DecodeEntities(StripTags(s));
         return Spaces.Replace(o, " ").Trim(' ', '\t');
+    }
+
+    // 꼬리표를 빈칸으로(정규식 "<[^>]*>" 와 같음). 한 번 훑는다 — 닫히지 않은 '<' 가 많은 글에서 정규식은 크기의 제곱으로 느려진다(보안 점검)
+    public static string StripTags(string s)
+    {
+        if (!s.Contains('<')) return s;
+        var o = new System.Text.StringBuilder(s.Length);
+        var i = 0;
+        while (i < s.Length)
+        {
+            var lt = s.IndexOf('<', i);
+            if (lt < 0) break;
+            var gt = s.IndexOf('>', lt + 1);
+            if (gt < 0) break;   // 뒤에 '>' 가 없으면 남은 '<' 도 꼬리표가 아니다
+            o.Append(s, i, lt - i).Append(' ');
+            i = gt + 1;
+        }
+        return o.Append(s, i, s.Length - i).ToString();
     }
 
     // 한 번에 훑어 푼다(&amp;lt; 가 '<' 로 두 번 풀리지 않게). 숫자 표기(&#8217; · &#x2019;)는 모두, 이름 표기는 흔한 것만.

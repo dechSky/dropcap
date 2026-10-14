@@ -52,19 +52,81 @@ struct BackupFile: Codable, Equatable {
         saved = (try? c.decodeIfPresent([NewsItem].self, forKey: .saved)) ?? []
         scraps = (try? c.decodeIfPresent([Scrap].self, forKey: .scraps)) ?? []
         scrapFolders = (try? c.decodeIfPresent([String].self, forKey: .scrapFolders)) ?? []
+        sanitize()
+    }
+
+    // 바깥에서 온 파일이므로 설정 화면이 고를 수 있는 값만 남긴다(보안 점검: 가져오기가 설정 화면의 검사를 건너뛰지 않게 — 윈도우 Sanitize 와 같음).
+    // 범위 밖 수치는 가장 가까운 허용값으로, 직접 추가 출처는 공개 http(s) 피드만(사이트맵·정규식은 앱에 든 기본 출처만 씀),
+    // 저장·스크랩은 공개 http(s) 기사만, 낱말·폴더는 개수·길이 제한.
+    mutating func sanitize() {
+        settings.clamp()
+        if ![2, 5, 10, 15, 30].contains(settings.intervalMinutes) { settings.intervalMinutes = 5 }
+        settings.digestHour = min(max(settings.digestHour, 5), 12)
+        settings.mustKeywords = Self.words(settings.mustKeywords)
+        settings.muteKeywords = Self.words(settings.muteKeywords)
+        settings.watchKeywords = Self.words(settings.watchKeywords)
+        sectionPolicy = sectionPolicy.filter { Sections.byID($0.key) != nil }.mapValues { p in
+            var p = p
+            p.bundleHour = min(max(p.bundleHour, 6), 23)
+            p.dailyCap = min(max(p.dailyCap, 1), 10)
+            return p
+        }
+        sectionsChosen = sectionsChosen.map { ids in ids.filter { Sections.byID($0) != nil }.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } } }
+        customSources = Array(customSources.filter { $0.id.hasPrefix("custom-") && $0.id.count <= 64 && URLSafety.isPublicHTTP(URL(string: $0.url)) }
+            .map { s in
+                let hex = s.color.count >= 4 && s.color.count <= 9 && s.color.hasPrefix("#") && s.color.dropFirst().allSatisfy(\.isHexDigit)
+                return Source(id: s.id, name: String(s.name.prefix(80)), tier: ["lab", "press", "kr"].contains(s.tier) ? s.tier : "press",
+                              type: "feed", url: s.url, match: nil, aiOnly: false, defaultOn: s.defaultOn, color: hex ? s.color : "#3B82F6",
+                              kind: s.kind.flatMap { ItemKind(rawValue: $0) }?.rawValue, notifyDefault: s.notifyDefault, group: s.group.map { String($0.prefix(80)) },
+                              home: s.home.flatMap { URLSafety.isPublicHTTP(URL(string: $0)) ? $0 : nil }, section: s.section.flatMap { Sections.byID($0)?.id },
+                              lang: s.lang.map { String($0.prefix(8)) }, region: s.region == "kr" || s.region == "intl" ? s.region : nil,
+                              paywall: s.paywall == "hard" || s.paywall == "metered" ? s.paywall : nil)
+            }.prefix(500))
+        hiddenSources = Self.ids(hiddenSources, max: 500)
+        followedStories = Self.ids(followedStories, max: 1000)
+        enabled = enabled.filter { $0.key.count <= 64 }
+        notify = notify.filter { $0.key.count <= 64 }
+        saved = Array(saved.filter { URLSafety.isPublicHTTP(URL(string: $0.link)) }.prefix(5000))
+        scraps = Array(scraps.filter { URLSafety.isPublicHTTP(URL(string: $0.item.link)) }.map { sc in
+            var sc = sc
+            let c = sc.collection.trimmingCharacters(in: .whitespaces)
+            sc.collection = c.isEmpty || c.count > 60 ? "스크랩" : c   // Scrapbook.defaultCollection
+            return sc
+        }.prefix(5000))
+        scrapFolders = Array(scrapFolders.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && $0.count <= 60 }
+            .reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }.prefix(200))
+    }
+
+    // 낱말: 빈 것 빼고 40자까지, 200개까지(설정 화면에서 넣을 수 있는 정도)
+    static func words(_ list: [String]) -> [String] {
+        var out: [String] = []
+        for w in list.map({ $0.trimmingCharacters(in: .whitespaces) }) where !w.isEmpty && w.count <= 40 && !out.contains(where: { $0.lowercased() == w.lowercased() }) {
+            out.append(w)
+            if out.count == 200 { break }
+        }
+        return out
+    }
+
+    static func ids(_ list: [String], max: Int) -> [String] {
+        var seen = Set<String>(), out: [String] = []
+        for x in list where !x.isEmpty && x.count <= 64 && seen.insert(x).inserted { out.append(x); if out.count == max { break } }
+        return out
     }
 }
 
 enum Backup {
     enum Failure: LocalizedError {
-        case notBackup, newerVersion(Int)
+        case notBackup, newerVersion(Int), tooLarge
         var errorDescription: String? {
             switch self {
             case .notBackup: return "Dropcap 기록 파일이 아닙니다"
+            case .tooLarge: return "기록 파일이 너무 큽니다(50MB 까지)"
             case .newerVersion(let v): return "더 새 판 Dropcap 이 만든 기록입니다(형식 \(v)). 앱을 업데이트한 뒤 가져오세요"
             }
         }
     }
+
+    static let maxFileSize = 50 * 1024 * 1024
 
     static func make(_ s: AppState, scraps: [Scrap], folders: [String], now: Date = Date()) -> BackupFile {
         BackupFile(exported: now, settings: s.settings, sectionsChosen: s.sectionsChosen, sectionPolicy: s.sectionPolicy,
@@ -219,6 +281,8 @@ final class BackupManager: ObservableObject {
     // 가져오기 전 지금 기록을 backups/ 에 남기고(최근 5개만), 합친다
     func importFile(_ url: URL) {
         do {
+            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            guard size <= Backup.maxFileSize else { throw Backup.Failure.tooLarge }
             let b = try Backup.decode(Data(contentsOf: url))
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             let before = dir.appendingPathComponent("before-import-\(Self.stamp()).json")

@@ -216,6 +216,8 @@ pub fn resource(name: &str) -> PathBuf {
             cands.push(bin.join("../share/dropcap").join(name));
         }
     }
+    // 개발 중에만 저장소의 linux/resources(배포판에 빌드한 컴퓨터의 경로가 남지 않게 — L8)
+    #[cfg(debug_assertions)]
     cands.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../resources").join(name));
-    cands.iter().find(|p| p.exists()).cloned().unwrap_or_else(|| cands.last().unwrap().clone())
+    cands.iter().find(|p| p.exists()).cloned().unwrap_or_else(|| cands.last().cloned().unwrap_or_else(|| PathBuf::from(name)))
 }

@@ -83,3 +83,17 @@
 - 출처 켜기·끄기·해지·분야 고르기·숨기기 직후 `SubscriptionsChanged`: 대기열 정리 · 안 읽음 수 맞추기 · 저장 · 매거진 다시 엮기(열린 화면은 changed 알림으로 바로).
 - 시험: 맥 SourceFilterTests 6개 + 끄기→목록·안 읽음·대기열·검색·스토리 크기·지난 호·오늘 호, 다시 켜기, 해지·분야 해제. 출처 목록에 없는 가짜 출처 id 를 쓰는 예전 시험은 `ShowAllSourcesForTests`(맥 active = nil 과 같음)로.
 - 위젯·단축어: 윈도우 판에 없는 기능이라 해당 없음.
+
+## 보안 점검 고침(2026-10-14, 맥 고침과 같은 규칙)
+
+- 공개 노출: 바이라인 예시·시험 문자열의 실제 기자 이름·이메일을 맥과 같은 가상 문자열로(`BodyCleanup.cs`, `AuditTests.cs`).
+- 바깥 HTML 정규식 되풀이 훑기(중간): 새 `Core/HtmlScan.cs`(맥 HTMLScan 과 같음 — 꼬리표를 한 번 훑어 떼어 보고 속성은 그 조각 안에서만). 피드 본문 첫 사진(`FeedParser`), 사이트맵 글 제목·설명·사진(`FeedService.FillFrom`), og:image(`FeedService.OgImageFrom`), 피드 찾기(`ChannelResolver.Alternates`)를 모두 이것으로. `Plain.Clean` 의 꼬리표 빼기는 한 번 훑는 `Plain.StripTags`(매거진·읽기 창 요약도). 고치기 전 같은 시험이 2~103초 → 고친 뒤 모두 2초 안.
+- 사이트맵 정규식(중간): 앱에 든 기본 출처(같은 id·같은 정규식)의 것만 쓴다(`FeedService.SitemapPattern`, 시간 제한 250ms 는 그대로).
+- 느린 길 WebView2(중간): 요청 필터를 워커에서 나온 요청까지(`CoreWebView2WebResourceRequestSourceKinds.All`). GET 은 앱이 SafeHttp 로 대신 받아 돌려줌(접속 순간 IP 검사 — DNS 바꿔치기로 내부망 응답을 페이지가 읽을 수 없음), GET 이 아닌 요청은 막음. 추출 칸은 웹 메시지·호스트 객체 끔, `data:` 이동 막음. 앱 화면은 앱 가상 호스트에서 온 메시지만 받음.
+- 사진 압축 폭탄(중간): 풀기 전 가로×세로 4천만 화소 상한(`ImageLoader.SafeDimensions` — Shrink·PhotoScorer).
+- 가져오기(낮음): 파일 50MB 상한(맥과 같음, 고르는 창도 같은 값) · 저장·스크랩은 공개 http(s) 기사만, 5000개·글 길이 제한, 스크랩 폴더도 60자 규칙 · 합치기를 집합으로(수만 개에도 멈추지 않게). 상태 파일을 읽을 때도 수치 clamp(`StateSettings.Clamp` — 아주 큰 간격 값이면 확인 반복이 예외로 멈추던 것), 확인 반복도 1~1440분.
+- 주소(낮음): `0x7f.0.0.0xa` 같은 16진수 IP 표기 거절, IPv4-translated·지역 NAT64(64:ff9b:1::/48)·Teredo·문서용(2001:db8::/32, TEST-NET 3개)·버림용(100::/64) 대역 추가. 번역 응답 2MB 상한.
+- 시험: `SecurityTests.cs`(SecurityScanTests · SecurityBackupTests). 전체 397 통과(바깥 서버 시험 8 건너뜀), WinUI 컴파일 점검 경고 0·오류 0. WebView2 대리 받기는 실제 윈도우 PC 에서 기사 몇 개로 느린 길 확인 필요(이 맥에서는 컴파일만).
+- 남은 것(범위만):
+  - 번역 끄기 설정(낮음~중간): 지금은 외국어 제목·본문 번역과 스토리 비교용 영어 번역이 늘 구글 번역(비공식 주소)으로 감. 설정 화면에 '번역 안 함' 스위치와 처음 쓸 때 안내가 필요(화면·문구 결정이 필요해 이번에는 안 함).
+  - 시스템 프록시를 쓰는 경우의 DNS 바꿔치기(낮음): 프록시가 이름을 다시 풀므로 요청 전 검사(5분 기억)에만 기댐. 프록시 경로 재설계가 필요해 이번에는 안 함.

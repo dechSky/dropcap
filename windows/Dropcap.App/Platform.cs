@@ -79,7 +79,7 @@ internal sealed class Platform(Shell shell) : IPlatform
         return true;
     }
 
-    // 내 기록 가져오기(P-08): 여는 대화상자. 너무 큰 파일(32MB 넘음)은 읽지 않는다
+    // 내 기록 가져오기(P-08): 여는 대화상자. 너무 큰 파일(Backup.MaxFileSize, 50MB 넘음)은 읽지 않는다
     public async Task<string?> OpenJsonFile()
     {
         var picker = new FileOpenPicker();
@@ -88,7 +88,7 @@ internal sealed class Platform(Shell shell) : IPlatform
         var file = await picker.PickSingleFileAsync();
         if (file is null) return null;
         var props = await file.GetBasicPropertiesAsync();
-        if (props.Size > 32UL << 20) throw new InvalidOperationException("파일이 너무 큽니다");
+        if (props.Size > (ulong)Backup.MaxFileSize) throw new InvalidOperationException("기록 파일이 너무 큽니다(50MB 까지)");
         return await Windows.Storage.FileIO.ReadTextAsync(file);
     }
 

@@ -337,13 +337,12 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
         return m < 90 ? $"{(int)Math.Round(m, MidpointRounding.AwayFromZero)}분 뒤" : $"{(int)Math.Round(m / 60, MidpointRounding.AwayFromZero)}시간 뒤";
     }
 
-    private static readonly Regex Tags = new("<[^>]+>");
     private static readonly Regex Spaces = new(@"\s+");
 
     // 요약의 첫 문장(HTML 꼬리표 제거, 제목과 같으면 생략)
     public static string? Lede(NewsItem it)
     {
-        var t = Spaces.Replace(Tags.Replace(it.Summary ?? "", " "), " ").Trim();
+        var t = Spaces.Replace(Plain.StripTags(it.Summary ?? ""), " ").Trim();
         var head = it.Title.Length > 20 ? it.Title[..20] : it.Title;
         if (t.Length <= 20 || t.StartsWith(head, StringComparison.Ordinal)) return null;
         return t.Length > 220 ? t[..220] : t;

@@ -65,6 +65,19 @@ pub struct Settings {
 }
 
 impl Settings {
+    // 범위 밖 값 묶기(상태 파일을 직접 고쳤거나 가져온 기록 — 맥 Settings.clamp 와 같은 범위).
+    // 큰 간격은 시간 계산이 넘치고, 0 이하는 쉬지 않고 받는다
+    pub fn clamp(&mut self) {
+        self.interval_minutes = self.interval_minutes.clamp(1, 24 * 60);
+        self.quiet_start = self.quiet_start.clamp(0, 23);
+        self.quiet_end = self.quiet_end.clamp(0, 23);
+        self.digest_hour = self.digest_hour.clamp(0, 23);
+        self.total_daily_cap = self.total_daily_cap.clamp(1, 30);
+        self.kr_threshold = self.kr_threshold.clamp(1, 10);
+        self.intl_threshold = self.intl_threshold.clamp(1, 10);
+        self.big_threshold = self.big_threshold.clamp(2, 20);
+    }
+
     pub fn limits(&self) -> crate::notify_policy::PolicyLimits {
         crate::notify_policy::PolicyLimits {
             total_cap: self.total_daily_cap,
@@ -122,7 +135,7 @@ impl<'de> Deserialize<'de> for Settings {
         let v = Value::deserialize(d)?;
         let Some(m) = v.as_object() else { return Ok(Settings::default()) };
         let def = Settings::default();
-        Ok(Settings {
+        let mut s = Settings {
             style: field(m, "style").unwrap_or(def.style),
             sound: field(m, "sound").unwrap_or(def.sound),
             interval_minutes: field(m, "intervalMinutes").unwrap_or(def.interval_minutes),
@@ -142,7 +155,9 @@ impl<'de> Deserialize<'de> for Settings {
             auto_quiet_fullscreen: field(m, "autoQuietFullscreen").unwrap_or(def.auto_quiet_fullscreen),
             auto_quiet_sharing: field(m, "autoQuietSharing").unwrap_or(def.auto_quiet_sharing),
             auto_quiet_calendar: field(m, "autoQuietCalendar").unwrap_or(def.auto_quiet_calendar),
-        })
+        };
+        s.clamp();
+        Ok(s)
     }
 }
 
@@ -309,9 +324,19 @@ pub const SEEN_LIMIT: usize = 8000;
 // 데이터 폴더: DROPCAP_DATA_DIR(시험용) → $XDG_DATA_HOME/dropcap → ~/.local/share/dropcap
 pub static DIR: Lazy<PathBuf> = Lazy::new(|| {
     let d = data_dir_from_env();
-    let _ = std::fs::create_dir_all(&d);
+    make_private_dir(&d);
     d
 });
+
+// 데이터 폴더는 이 사용자만(0700) — 읽은 기록·스크랩·설정이 같은 컴퓨터의 다른 사용자에게 보이지 않게(L7)
+pub fn make_private_dir(d: &Path) {
+    let _ = std::fs::create_dir_all(d);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(d, std::fs::Permissions::from_mode(0o700));
+    }
+}
 
 pub fn data_dir_from_env() -> PathBuf {
     if let Ok(custom) = std::env::var("DROPCAP_DATA_DIR") {
@@ -350,7 +375,7 @@ pub struct Store {
 
 impl Store {
     pub fn new(dir: PathBuf) -> Store {
-        let _ = std::fs::create_dir_all(&dir);
+        make_private_dir(&dir);
         Store { dir, backed_up: AtomicBool::new(false) }
     }
     pub fn file(&self) -> PathBuf {
@@ -430,7 +455,19 @@ pub fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
     {
-        let mut f = std::fs::File::create(&tmp)?;
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600); // 이 사용자만 읽기·쓰기(L7)
+        }
+        let mut f = opts.open(&tmp)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            f.set_permissions(std::fs::Permissions::from_mode(0o600))?; // 이미 있던 임시 파일도
+        }
         f.write_all(data)?;
         f.sync_all()?;
     }

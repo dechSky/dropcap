@@ -95,6 +95,20 @@ struct AppState: Codable {
             autoQuietFullscreen = (try? c.decodeIfPresent(Bool.self, forKey: .autoQuietFullscreen)) ?? true
             autoQuietSharing = (try? c.decodeIfPresent(Bool.self, forKey: .autoQuietSharing)) ?? true
             autoQuietCalendar = (try? c.decodeIfPresent(Bool.self, forKey: .autoQuietCalendar)) ?? false
+            clamp()
+        }
+
+        // 파일에서 읽은 수치가 앱이 다룰 수 있는 범위를 넘지 않게(보안 점검: 고친 상태 파일·가져온 기록의 아주 큰 간격 값으로
+        // 확인 반복의 시간 계산이 넘쳐 앱이 꺼지고, 0·음수면 쉬지 않고 받는다). 화면이 고를 수 있는 값은 그대로 둔다.
+        mutating func clamp() {
+            intervalMinutes = min(max(intervalMinutes, 1), 24 * 60)
+            quietStart = min(max(quietStart, 0), 23)
+            quietEnd = min(max(quietEnd, 0), 23)
+            digestHour = min(max(digestHour, 0), 23)
+            totalDailyCap = min(max(totalDailyCap, 1), 30)
+            krThreshold = min(max(krThreshold, 1), 10)
+            intlThreshold = min(max(intlThreshold, 1), 10)
+            bigThreshold = min(max(bigThreshold, 2), 20)
         }
     }
 

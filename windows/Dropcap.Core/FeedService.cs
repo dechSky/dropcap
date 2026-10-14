@@ -67,7 +67,7 @@ public sealed class FeedService
         var data = await FetchAsync(source.Url, conditional, ct);
         if (data is null) return null;
         List<FeedParser.Entry> entries;
-        if (source.Type == "sitemap" && source.Match is { } m)
+        if (source.Type == "sitemap" && SitemapPattern(source) is { } m)
             entries = FeedParser.ParseSitemap(data, new Regex(m, RegexOptions.None, TimeSpan.FromMilliseconds(250))); // 시간 제한(정규식 폭주 막기)
         else
             entries = FeedParser.ParseFeed(data);
@@ -84,10 +84,12 @@ public sealed class FeedService
         }).ToList();
     }
 
-    private static string? Meta(string html, string pattern)
+    // 사이트맵 거르기 정규식은 앱에 든 기본 출처(같은 id·같은 정규식)의 것만 쓴다(맥 sitemapPattern 과 같음).
+    // 바깥(가져온 기록·고친 상태 파일)에서 온 정규식은 쓰지 않는다 — 시간 제한이 있어도 새로 고칠 때마다 붙잡힌다(보안 점검)
+    internal static string? SitemapPattern(Source source, IReadOnlyList<Source>? bundled = null)
     {
-        var m = Regex.Match(html, pattern, RegexOptions.IgnoreCase);
-        return m.Success ? m.Groups[1].Value : null;
+        if (source.Match is not { } m) return null;
+        return (bundled ?? Resources.Config.Sources).Any(b => b.Id == source.Id && b.Match == m) ? m : null;
     }
 
     // 사이트맵에서 찾은 새 글은 본문을 받아 제목·설명을 채운다(C-03)
@@ -96,12 +98,17 @@ public sealed class FeedService
         byte[]? data;
         try { data = await FetchAsync(item.Link, ct: ct, limit: FetchLimit.Page); } catch { data = null; }
         if (data is null) return item with { Title = Plain.TitleFromSlug(item.Link) };
-        var html = System.Text.Encoding.UTF8.GetString(data);
-        var title = Meta(html, "<meta[^>]+property=[\"']og:title[\"'][^>]+content=[\"']([^\"']+)") ?? Meta(html, "<title[^>]*>([^<]+)</title>");
+        return FillFrom(item, System.Text.Encoding.UTF8.GetString(data));
+    }
+
+    // 꼬리표를 하나씩 떼어 본다(HtmlScan — 정규식 되풀이 훑기로 큰 페이지에서 멈추지 않게, 보안 점검)
+    internal static NewsItem FillFrom(NewsItem item, string html)
+    {
+        var title = HtmlScan.Meta(html, "og:title") ?? HtmlScan.Title(html);
         var t = title is null ? null : FeedParser.NonEmpty(Regex.Replace(Plain.Clean(title), @"\s*[|\\-]\s*Anthropic\s*$", ""));
         var it = item with { Title = t ?? Plain.TitleFromSlug(item.Link) };
-        if (Meta(html, "<meta[^>]+name=[\"']description[\"'][^>]+content=[\"']([^\"']+)") is { } d) it = it with { Summary = FeedParser.Prefix(Plain.Clean(d), 300) };
-        if (it.Image is null && Meta(html, "<meta[^>]+property=[\"']og:image[\"'][^>]+content=[\"']([^\"']+)") is { } img) it = it with { Image = img };
+        if (HtmlScan.Meta(html, "description") is { } d) it = it with { Summary = FeedParser.Prefix(Plain.Clean(d), 300) };
+        if (it.Image is null && HtmlScan.Meta(html, "og:image") is { } img) it = it with { Image = img };
         return it;
     }
 
@@ -111,19 +118,15 @@ public sealed class FeedService
         byte[]? data;
         try { data = await FetchAsync(link, ct: ct, limit: FetchLimit.Page); } catch { return null; }
         if (data is null) return null;
-        var head = System.Text.Encoding.UTF8.GetString(data, 0, Math.Min(data.Length, 65536));
-        foreach (var pattern in new[] {
-                     """<meta[^>]+property=["']og:image(?::url)?["'][^>]+content=["']([^"']+)""",
-                     """<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image""",
-                     """<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)""" })
-        {
-            if (Meta(head, pattern) is { } raw)
-            {
-                raw = raw.Replace("&amp;", "&");
-                return Uri.TryCreate(new Uri(link), raw, out var u) ? u.AbsoluteUri : null;
-            }
-        }
-        return null;
+        return OgImageFrom(System.Text.Encoding.UTF8.GetString(data, 0, Math.Min(data.Length, 65536)), link);
+    }
+
+    // og:image(:url) → og:image:secure_url → twitter:image, 속성 순서는 어느 쪽이든(맥 CoverPick 과 같은 HtmlScan)
+    internal static string? OgImageFrom(string head, string link)
+    {
+        if (HtmlScan.Meta(head, "og:image", "og:image:url", "og:image:secure_url", "twitter:image", "twitter:image:src") is not { } raw) return null;
+        raw = raw.Replace("&amp;", "&").Trim();
+        return Uri.TryCreate(new Uri(link), raw, out var u) && u.Scheme is "http" or "https" ? u.AbsoluteUri : null;
     }
 }
 

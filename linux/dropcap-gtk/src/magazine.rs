@@ -438,6 +438,12 @@ fn sidebar_key(p: &Page) -> Page {
 }
 
 pub fn tint(w: &impl IsA<gtk::Widget>, hex: &str) {
+    // 색 값은 출처(가져온 기록·상태 파일)에서 올 수 있으므로 #16진수·글자 이름만 CSS 에 넣는다(L6)
+    let safe = (hex.starts_with('#') && (4..=9).contains(&hex.len()) && hex[1..].chars().all(|c| c.is_ascii_hexdigit()))
+        || (!hex.is_empty() && hex.len() <= 20 && hex.chars().all(|c| c.is_ascii_alphabetic()));
+    if !safe {
+        return;
+    }
     let prov = gtk::CssProvider::new();
     prov.load_from_string(&format!("* {{ color: {hex}; }}"));
     #[allow(deprecated)]

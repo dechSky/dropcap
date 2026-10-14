@@ -28,6 +28,8 @@ enum URLSafety {
         // 점 없는 이름(intranet), 숫자·16진수로만 된 이상한 표기(2130706433, 0x7f.1, 127.1)는 거절
         if !host.contains(".") { return false }
         if host.range(of: #"^[0-9a-fx.]+$"#, options: .regularExpression) != nil, host.last.map({ $0.isNumber }) == true { return false }
+        // 마디가 모두 숫자나 0x 16진수면 IP 표기다(0x7f.0.0.0xa → 127.0.0.10). 이름 확인 없이 바깥 브라우저로 열리는 길도 막는다(보안 점검)
+        if host.split(separator: ".").allSatisfy({ $0.range(of: #"^(0x[0-9a-f]*|[0-9]+)$"#, options: .regularExpression) != nil }) { return false }
         return true
     }
 

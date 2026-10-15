@@ -67,6 +67,7 @@ struct AppState: Codable {
         var autoQuietFullscreen = true  // 전체 화면 앱 사용 중에는 조용히(고임)
         var autoQuietSharing = true     // 화면 공유·기록 중
         var autoQuietCalendar = false   // 캘린더 일정 중(켤 때 권한을 묻는다)
+        var translateEngine: Translator.Mode = .auto // 번역 방식: auto·apple·google·off(윈도우·리눅스와 같은 키·값, mac/TRANSLATE.md)
 
         var limits: PolicyLimits {
             PolicyLimits(totalCap: totalDailyCap, krThreshold: krThreshold, intlThreshold: intlThreshold, bigThreshold: bigThreshold)
@@ -95,6 +96,7 @@ struct AppState: Codable {
             autoQuietFullscreen = (try? c.decodeIfPresent(Bool.self, forKey: .autoQuietFullscreen)) ?? true
             autoQuietSharing = (try? c.decodeIfPresent(Bool.self, forKey: .autoQuietSharing)) ?? true
             autoQuietCalendar = (try? c.decodeIfPresent(Bool.self, forKey: .autoQuietCalendar)) ?? false
+            translateEngine = (try? c.decodeIfPresent(Translator.Mode.self, forKey: .translateEngine)) ?? .auto // 모르는 값도 자동으로
             clamp()
         }
 

@@ -65,7 +65,7 @@ public class SettingsPageTests : IDisposable
         Assert.Equal(["물방울 (앱이 직접 그림)", "시스템 알림 센터"], g["styles"]!.AsArray().Select(n => n!["label"]!.GetValue<string>()));
         Assert.Equal(["위쪽 가운데", "오른쪽 위"], g["positions"]!.AsArray().Select(n => n!["label"]!.GetValue<string>()));
         Assert.Equal("drop", g["style"]!.GetValue<string>());
-        Assert.Equal("Google 번역", g["translation"]!.GetValue<string>());
+        Assert.Equal("auto", g["translateEngine"]!.GetValue<string>());   // 번역 엔진 고르기(W4) — 기본은 자동(= Google)
         Assert.True(g["pretendard"]!.GetValue<bool>());
 
         var s = v["sources"]!;
@@ -375,5 +375,51 @@ public class SettingsPageTests : IDisposable
     {
         await Do("onboarding", new { });
         Assert.Equal(1, platform.Onboarding);
+    }
+}
+
+// 번역 방식 고르기(W4): 설정 › 일반 › 번역
+public class SettingsTranslateEngineTests : IDisposable
+{
+    private readonly TempDir tmp = new();
+    private readonly Database db;
+    private readonly AppModel model;
+    private readonly SettingsPage page;
+
+    public SettingsTranslateEngineTests()
+    {
+        db = new Database(System.IO.Path.Combine(tmp.Path, "magazine.sqlite"));
+        model = new AppModel(new FakeUi(), new Magazine(db), new AppState(), persist: false) { ShowAllSourcesForTests = true };
+        page = new SettingsPage(model, new MiniPlatform());
+    }
+
+    public void Dispose() { model.Stop(); db.Dispose(); tmp.Dispose(); }
+
+    private Task<object?> Do(string cmd, object args) =>
+        page.Handle(cmd, (JsonObject)JsonSerializer.SerializeToNode(args, global::Dropcap.Core.Json.Options)!);
+    private async Task<JsonNode> General() => JsonSerializer.SerializeToNode(await Do("view", new { }), global::Dropcap.Core.Json.Options)!["general"]!;
+
+    [Fact]
+    public async Task ChooseEngineAndPrivacyNote()
+    {
+        var g = await General();
+        Assert.Equal("auto", (string)g["translateEngine"]!);
+        Assert.Equal(["auto", "google", "off"], g["translateEngines"]!.AsArray().Select(n => (string)n!["id"]!));
+        Assert.Contains("Google 번역으로 본문 문단이 전송", (string)g["translationNote"]!);
+        await Do("set", new { key = "translateEngine", value = "off" });
+        Assert.Equal("off", model.State.Settings.TranslateEngine);
+        await Assert.ThrowsAnyAsync<ArgumentException>(() => Do("set", new { key = "translateEngine", value = "apple" })); // 이 PC 에서 고를 수 없음
+        Assert.Equal("off", model.State.Settings.TranslateEngine);
+        // 앱 번역기가 이 설정을 따른다
+        Assert.Equal("Hello world", await Translator.Shared.TranslateAsync("Hello world"));
+    }
+
+    [Fact]
+    public async Task AppleFromMacIsShownAndKept()
+    {
+        model.Update(s => s.TranslateEngine = "apple");
+        var g = await General();
+        Assert.Equal("apple", (string)g["translateEngine"]!);
+        Assert.Contains("apple", g["translateEngines"]!.AsArray().Select(n => (string)n!["id"]!));
     }
 }

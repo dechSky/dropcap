@@ -8,6 +8,7 @@ use dropcap_core::app_model::{UiEvent, INTERVALS};
 use dropcap_core::channels::{self, CATALOG};
 use dropcap_core::models::{resources, ItemKind, Source};
 use dropcap_core::store::{Position, Style};
+use dropcap_core::translator;
 use gtk::glib;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -138,12 +139,21 @@ fn general() -> adw::PreferencesPage {
     )));
     page.add(&g);
 
-    // 번역(P-02): 리눅스에는 무료 기기 내 번역이 없다(T-05 ⊘)
+    // 번역(P-02 · L4): 번역 방식 고르기(translateEngine — 맥·윈도우와 같은 키·값). 리눅스에는 무료 기기 내 번역이 없다(T-05 ⊘)
     let g = adw::PreferencesGroup::builder().title("번역").build();
-    let r = adw::ActionRow::builder().title("번역 방식").build();
-    r.add_suffix(&tag("Google 번역", 13.0, 400, &["dc-secondary"]));
-    g.add(&r);
-    g.add(&caption("리눅스에는 무료 기기 내 번역이 없어 Google 번역 공개 엔드포인트를 씁니다. 기사 문장이 Google 로 전송되며, 공식 API 가 아니라 언제든 막힐 수 있습니다."));
+    let opts = translator::engine_options(&st.translate_engine);
+    let labels: Vec<String> = opts.iter().map(|(_, l)| l.to_string()).collect();
+    let sel = opts.iter().position(|(m, _)| *m == translator::normalize_mode(&st.translate_engine)).unwrap_or(0);
+    let note = caption(translator::engine_note(&st.translate_engine));
+    {
+        let note = note.clone();
+        g.add(&combo("번역 방식", &labels, sel, move |i| {
+            let m = opts[i].0;
+            note.set_text(translator::engine_note(m));
+            ui().core.update(|s| s.translate_engine = m.into());
+        }));
+    }
+    g.add(&note);
     page.add(&g);
 
     // 글꼴(P-03)

@@ -258,7 +258,15 @@ impl Magazine {
             self.sidebar.append(&header("지난 호"));
             for i in archive {
                 let icon = if i.kind == dropcap_core::magazine::IssueKind::Weekly { "accessories-dictionary-symbolic" } else { "text-x-generic-symbolic" };
+                // 이름은 오른쪽 머리와 같은 title(), 기사가 너무 적은 호는 흐리게 + 도움말 '기록 적음'(머리에는 글로)
+                let (thin, tip) = (i.is_thin(), if i.is_thin() { format!("기록 적음 — 소식 {}건", i.count) } else { i.title() });
                 add(self, icon, &i.title(), None, Page::Issue(i));
+                if let Some((r, _)) = self.rows.borrow().last() {
+                    r.set_tooltip_text(Some(&tip));
+                    if thin {
+                        r.set_opacity(0.55);
+                    }
+                }
             }
         }
         let p = self.page.borrow().clone();

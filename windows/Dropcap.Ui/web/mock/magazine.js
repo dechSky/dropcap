@@ -132,13 +132,14 @@ if (!(window.chrome && window.chrome.webview)) {
   ];
   let folders = [{ name: '스크랩', count: 2 }, { name: '경제 메모', count: 0 }];
   let following = false;
+  let mockRecent = ['기준금리'];
   window.DropcapMock = (cmd, a) => {
     switch (cmd) {
       case 'ready': case 'sidebar':
         return { saved: 3, scraps: 2, sort: 'recommended', sections: ['top', 'economy', 'ai', 'sports'].map((id) => ({ id, name: SEC[id][0], icon: SEC[id][1], light: SEC[id][2], dark: SEC[id][2] })),
           archive: [
             { id: 'daily-2026-10-12', title: '10월 12일 일요일 호', weekly: false },
-            { id: 'daily-2026-10-11', title: '10월 11일 토요일 호', weekly: false },
+            { id: 'daily-2026-10-11', title: '10월 11일 토요일 호', weekly: false, thin: true, count: 3 },
             { id: 'weekly-2026-W40', title: '주간 · 10월 4일–10월 10일', weekly: true },
           ] };
       case 'issue':
@@ -188,9 +189,11 @@ if (!(window.chrome && window.chrome.webview)) {
       case 'canDigest': return true;
       case 'digest': return new Promise((r) => setTimeout(() => r(['한국은행이 기준금리를 연 2.75%로 묶었다.', '물가는 안정됐지만 환율 변동성을 더 지켜보겠다는 판단이다.', '시장은 연내 한 차례 인하를 내다본다.']), 1200));
       case 'reduce': return { hide: '이 출처 숨기기 — ' + (a.key || '').split('|')[0], less: '경제 덜 받기 — 묶음으로', words: ['한국은행', '기준금리', '동결', '물가', '환율'] };
-      case 'saved': return { items: [economy[0], ai[0], cover], archived: [economy[0].key], topics };
+      case 'saved': return { items: [economy[0], ai[0], cover], archived: [economy[0].key], topics, count: 3 };
+      case 'clearRecentSearches': mockRecent = []; return { q: '', items: [], watch: ['한국은행', '엔비디아'], recent: [] };
       case 'search': {
-        if (!a.q) return { q: '', items: [] };
+        if (a.submit && a.q && a.q.length >= 2) mockRecent = [a.q, ...mockRecent.filter((x) => x !== a.q)].slice(0, 8);
+        if (!a.q) return { q: '', items: [], watch: ['한국은행', '엔비디아'], recent: mockRecent };
         if (a.q.length < 2 && !a.submit) return { q: a.q };
         return { q: a.q, items: [cover, ...top, ...economy, ...ai].filter((i) => i.title.includes(a.q) || i.source.includes(a.q)), topics };
       }

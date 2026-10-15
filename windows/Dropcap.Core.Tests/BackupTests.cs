@@ -130,6 +130,7 @@ public class BackupTests : IDisposable
             "sound" : true,
             "style" : "drop",
             "totalDailyCap" : 10,
+            "translateEngine" : "auto",
             "watchKeywords" : [
               "삼성전자"
             ]

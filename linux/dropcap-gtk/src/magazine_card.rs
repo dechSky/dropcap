@@ -282,6 +282,10 @@ impl ChipBar {
 // MARK: 기사 카드(M-08)
 pub struct StoryCard;
 
+// 카드 격자 한 칸의 최소 너비와 카드 사진 칸의 최소 너비(사진이 칸을 밀지 않게 CARD_PHOTO_MIN_WIDTH ≤ CARD_MIN_WIDTH)
+pub const CARD_MIN_WIDTH: i32 = 230;
+pub const CARD_PHOTO_MIN_WIDTH: i32 = 120;
+
 impl StoryCard {
     // order: 지면 안 순서(차례로 깔리는 지연), story_items: 해외·국내가 섞인 스토리 보도
     // seq: 이 카드가 놓인 지면의 기사 순서(읽기 창 J/K 로 다음·이전, H-05)
@@ -297,7 +301,8 @@ impl StoryCard {
             ov.set_overflow(gtk::Overflow::Hidden);
             ov.set_vexpand(false); // 사진 칸은 150 으로 고정(같은 줄의 카드 높이에 따라 늘지 않게)
             ov.set_valign(gtk::Align::Start);
-            let img = RemoteImage::new(item.image.as_deref(), item.category(), &widgets::source_color(&item.source_id), 300, 150);
+            // 사진 칸의 최소 너비는 격자 칸보다 좁게(넓으면 칸을 밀어 좁은 4열에서 카드가 겹치거나 화면 밖으로 나감 — 맥 4e27109)
+            let img = RemoteImage::new(item.image.as_deref(), item.category(), &widgets::source_color(&item.source_id), CARD_PHOTO_MIN_WIDTH, 150);
             img.root.set_size_request(-1, 150);
             img.root.set_vexpand(false);
             img.root.add_css_class("dc-magphoto");
@@ -428,4 +433,15 @@ pub fn scroll_focus(scroll: &gtk::ScrolledWindow, cards: Rc<RefCell<Vec<gtk::Wid
         }
         busy.set(false);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // 사진 칸이 격자 칸보다 넓으면 좁은 4열에서 칸을 밀어낸다(예전 300 > 230)
+    #[test]
+    fn card_photo_does_not_push_column() {
+        assert!(CARD_PHOTO_MIN_WIDTH <= CARD_MIN_WIDTH);
+    }
 }

@@ -322,8 +322,9 @@ public sealed class ReaderPage : IPage
     private static async Task<object?> TranslateLines(JsonObject a)
     {
         var texts = (a["texts"] as JsonArray ?? new JsonArray()).Select(n => n is JsonValue v && v.TryGetValue<string>(out var t) ? t : "").Take(500).ToList();
+        if (!Translator.Shared.Sending) return new { @out = texts.Select(_ => (string?)null).ToList(), korean = false, off = true }; // 번역 안 함(W4)
         var (o, korean) = await ImageText.TranslateAsync(texts);
-        return new { @out = o, korean };
+        return new { @out = o, korean, off = false };
     }
 
     private async Task<object?> CopyImage(string key, string src)

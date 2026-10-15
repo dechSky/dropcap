@@ -13,6 +13,25 @@ public sealed class Translator
     public const string EngineGoogle = "Google 번역";
     public const string EngineNone = "번역 안 함";
 
+    // 번역 방식(W4 · 맥과 같은 설정 키 translateEngine · 값 auto|apple|google|off — mac/TRANSLATE.md).
+    // 윈도우엔 기기 내 번역이 없어 auto = Google. apple(맥에서 '기기 내만'으로 고른 기록을 가져온 것)은 기기 밖으로 보내지 않는다는 뜻이라 여기선 번역 안 함.
+    public static readonly string[] Modes = ["auto", "apple", "google", "off"];
+    public static string NormalizeMode(string? v) => v is not null && Modes.Contains(v) ? v : "auto"; // 모르는 값은 자동(맥과 같음)
+    public static bool Sends(string mode) => mode is "auto" or "google";
+
+    // 지금 번역 방식(AppModel 이 설정을 넣어 줌 — 시험은 바꿔 끼움)
+    public Func<string> ModeSource { get; set; } = () => "auto";
+    private string? lastMode;
+    // 방식이 바뀌면 캐시를 비운다(앞서 다른 방식으로 한 번역이 섞이지 않게 — 맥 TRANSLATE.md 케이스 11)
+    private void FollowMode()
+    {
+        var m = NormalizeMode(ModeSource());
+        if (lastMode is not null && lastMode != m) cache.Clear();
+        lastMode = m;
+    }
+    private bool IsOff() { FollowMode(); return !Sends(lastMode!); }
+    public bool Sending => !IsOff();   // 지금 방식이 번역을 보내는가(화면 안내용)
+
     private readonly ConcurrentDictionary<string, string> cache = new();
     public string LastEngine { get; private set; } = EngineNone;
 
@@ -39,12 +58,12 @@ public sealed class Translator
 
     // 한국어 제목을 영어로(같은 소식 비교용). 실패하면 null.
     public async Task<string?[]> ToEnglishAsync(IReadOnlyList<string> texts) =>
-        await Task.WhenAll(texts.Select(t => Google(t, "en")));
+        IsOff() ? new string?[texts.Count] : await Task.WhenAll(texts.Select(t => Google(t, "en")));
 
     public async Task<string> TranslateAsync(string text)
     {
         var src = text.Trim();
-        if (!LooksForeign(src)) return text;
+        if (IsOff() || !LooksForeign(src)) return text;
         if (cache.TryGetValue(src, out var c)) return c;
         return (await TranslateManyAsync([src])).FirstOrDefault() ?? src;
     }
@@ -55,6 +74,7 @@ public sealed class Translator
     // 윈도우는 엔진이 구글 하나라 새로 번역했거나 캐시(=구글 번역 결과)에서 꺼낸 것이 있으면 구글, 번역할 것이 없었으면 '번역 안 함'.
     public async Task<(List<string> Texts, string Engine)> TranslateManyReportingAsync(IReadOnlyList<string> texts)
     {
+        if (IsOff()) return (texts.ToList(), EngineNone); // 번역 안 함: 아무것도 보내지 않고 원문 그대로
         var cached = texts.Any(t => cache.ContainsKey(t));
         var (o, fresh) = await TranslateManyRawAsync(texts);
         return (o, fresh || cached ? EngineGoogle : EngineNone);

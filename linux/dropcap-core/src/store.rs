@@ -62,6 +62,8 @@ pub struct Settings {
     pub auto_quiet_sharing: bool, // 화면 공유·기록 중
     #[serde(rename = "autoQuietCalendar")]
     pub auto_quiet_calendar: bool, // 캘린더 일정 중(리눅스는 감지하지 않음 — 상태 파일 호환용)
+    #[serde(rename = "translateEngine")]
+    pub translate_engine: String, // 번역 방식 auto·apple·google·off(맥·윈도우와 같은 키·값 — mac/TRANSLATE.md, 리눅스 auto = Google)
 }
 
 impl Settings {
@@ -76,6 +78,7 @@ impl Settings {
         self.kr_threshold = self.kr_threshold.clamp(1, 10);
         self.intl_threshold = self.intl_threshold.clamp(1, 10);
         self.big_threshold = self.big_threshold.clamp(2, 20);
+        self.translate_engine = crate::translator::normalize_mode(&self.translate_engine).to_string(); // 모르는 값은 자동(맥과 같음)
     }
 
     pub fn limits(&self) -> crate::notify_policy::PolicyLimits {
@@ -110,6 +113,7 @@ impl Default for Settings {
             auto_quiet_fullscreen: true,
             auto_quiet_sharing: true,
             auto_quiet_calendar: false,
+            translate_engine: "auto".into(),
         }
     }
 }
@@ -155,6 +159,7 @@ impl<'de> Deserialize<'de> for Settings {
             auto_quiet_fullscreen: field(m, "autoQuietFullscreen").unwrap_or(def.auto_quiet_fullscreen),
             auto_quiet_sharing: field(m, "autoQuietSharing").unwrap_or(def.auto_quiet_sharing),
             auto_quiet_calendar: field(m, "autoQuietCalendar").unwrap_or(def.auto_quiet_calendar),
+            translate_engine: field(m, "translateEngine").unwrap_or(def.translate_engine), // 예전 파일엔 없음 → 자동
         };
         s.clamp();
         Ok(s)
@@ -497,6 +502,8 @@ pub struct Prefs {
     pub today_issue_done: Option<String>, // 오늘 호를 다 읽은 날(M-23)
     #[serde(rename = "scrapsCopyOff", skip_serializing_if = "std::ops::Not::not")]
     pub scraps_copy_off: bool, // 스크랩 사본(scraps.json) 끄기(M-17, 맥 scrapsCopyOff)
+    #[serde(rename = "magRecentSearches", skip_serializing_if = "Vec::is_empty")]
+    pub mag_recent_searches: Vec<String>, // 매거진 빈 검색 화면의 최근 검색어(맥 magRecentSearches, 8개)
 }
 
 impl Default for Prefs {
@@ -512,6 +519,7 @@ impl Default for Prefs {
             story_rule_version: 0,
             today_issue_done: None,
             scraps_copy_off: false,
+            mag_recent_searches: vec![],
         }
     }
 }
@@ -532,6 +540,7 @@ impl<'de> Deserialize<'de> for Prefs {
             story_rule_version: field(m, "storyRuleVersion").unwrap_or(0),
             today_issue_done: field(m, "todayIssueDone"),
             scraps_copy_off: field(m, "scrapsCopyOff").unwrap_or(false),
+            mag_recent_searches: field::<Vec<String>>(m, "magRecentSearches").unwrap_or_default().into_iter().take(crate::magazine::RECENT_SEARCHES).collect(),
         })
     }
 }

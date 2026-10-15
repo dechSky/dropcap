@@ -271,6 +271,7 @@ impl IssuePage {
     fn head_title(&self, d: &Built) -> String {
         match &self.source {
             IssueSource::Section(id) => dropcap_core::sections::name(id),
+            IssueSource::Week => d.r.issue.title().replace("주간 · ", "이번 주 · "),
             _ => d.r.issue.title(),
         }
     }
@@ -279,6 +280,7 @@ impl IssuePage {
             IssueSource::Today => "오늘".into(),
             IssueSource::Week => "이번 주".into(),
             IssueSource::Section(_) => format!("오늘 호의 분야 지면 · {}", d.r.issue.title().replace(" 호", "")),
+            IssueSource::Fixed(i) if i.is_thin() => "지난 호 · 기록 적음".into(),
             IssueSource::Fixed(_) => "지난 호".into(),
         }
     }

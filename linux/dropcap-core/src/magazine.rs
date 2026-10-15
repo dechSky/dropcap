@@ -197,9 +197,11 @@ pub fn make_issue_in(db: &Database, kind: IssueKind, from: DateTime<Utc>, to: Da
     let limit = if kind == IssueKind::Weekly { 60 } else { 90 };
     let picked: Vec<&(StoredItem, f64)> = ranked.iter().filter(|r| r.0.item.item_kind() == ItemKind::Article).take(limit).collect();
     // 표지: 사진이 있는 기사 중 점수 1등(없으면 그냥 1등). 화면 캡처·글자 그림·로고로 잰 사진은 건너뛴다(M-24)
-    let photo_scores = db.image_scores(&picked.iter().take(30).filter_map(|r| r.0.item.image.clone()).collect::<Vec<_>>());
-    let ranked_items: Vec<NewsItem> = picked.iter().map(|r| r.0.item.clone()).collect();
-    let cover = crate::photo_quality::pick_cover(&ranked_items, &photo_scores).or_else(|| picked.first().map(|r| r.0.item.key()));
+    // 주간 표지는 그 주 가장 많이 다룬 이야기(스토리 보도 수 → 점수 순) — 오늘 표지와 같아지지 않게
+    let cover_order: Vec<&(StoredItem, f64)> = if kind == IssueKind::Weekly { weekly_cover_order(&picked, &sizes) } else { picked.clone() };
+    let photo_scores = db.image_scores(&cover_order.iter().take(30).filter_map(|r| r.0.item.image.clone()).collect::<Vec<_>>());
+    let ranked_items: Vec<NewsItem> = cover_order.iter().map(|r| r.0.item.clone()).collect();
+    let cover = crate::photo_quality::pick_cover(&ranked_items, &photo_scores).or_else(|| cover_order.first().map(|r| r.0.item.key()));
     let articles: Vec<StoredItem> = picked.iter().filter(|r| Some(r.0.item.key()) != cover).map(|r| r.0.clone()).collect();
     let only_pick: Option<Vec<String>> = only.map(|s| vec![s.to_string()]);
     let chosen = if only.is_some() { only_pick.as_deref() } else { ed.chosen.as_deref() };
@@ -224,6 +226,14 @@ pub fn make_issue_in(db: &Database, kind: IssueKind, from: DateTime<Utc>, to: Da
     }
     let article_count = stored.iter().filter(|s| s.item.item_kind() == ItemKind::Article).count() as i64;
     Issue { id: id.into(), kind, date: Utc::now(), from, to, cover, sections, count: article_count }
+}
+
+// 주간 표지 후보 순서: 스토리 보도 수가 많은 것부터, 같으면 점수 순(맥 Editor.makeIssue coverOrder)
+fn weekly_cover_order<'a>(picked: &[&'a (StoredItem, f64)], sizes: &HashMap<String, i64>) -> Vec<&'a (StoredItem, f64)> {
+    let size = |r: &(StoredItem, f64)| r.0.cluster.as_ref().and_then(|c| sizes.get(c).cloned()).unwrap_or(1);
+    let mut v = picked.to_vec();
+    v.sort_by(|a, b| size(b).cmp(&size(a)).then(b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)));
+    v
 }
 
 fn coverage_of(s: &StoredItem, outlets: &HashMap<String, HashMap<String, String>>, meta: &HashMap<String, SourceMeta>) -> Coverage {
@@ -345,7 +355,7 @@ pub fn week_id(d: DateTime<Utc>) -> String {
     format!("{:04}-W{:02}", w.year(), w.week())
 }
 
-// 오늘 호(전날 18시~지금)·이번 주 호(7일)
+// 오늘 호(전날 18시~지금)·이번 주 호(달력 한 주)
 pub fn live_daily(db: &Database, interest: &Editorial) -> Issue {
     let now = Utc::now();
     let start = start_of_day(now);
@@ -359,9 +369,10 @@ pub fn live_section(db: &Database, interest: &Editorial, id: &str) -> Issue {
     make_issue_in(db, IssueKind::Daily, start - Duration::hours(6), now + Duration::seconds(60), &format!("live-section-{id}"), interest, Some(id))
 }
 
+// 이번 주: 달력 한 주의 시작(일요일 0시)부터 지금까지(지난 주간과 이어짐 — 예전엔 '지금부터 7일 전'이라 지난 주간과 날이 겹쳤다)
 pub fn live_weekly(db: &Database, interest: &Editorial) -> Issue {
     let now = Utc::now();
-    make_issue(db, IssueKind::Weekly, now - Duration::days(7), now + Duration::seconds(60), "live-weekly", interest)
+    make_issue(db, IssueKind::Weekly, week_range(now).0, now + Duration::seconds(60), "live-weekly", interest)
 }
 
 // 하루가 지나면 그날 호를, 주가 지나면 그 주 호를 발행해 지난 호에 남긴다(지난 3일 일간 + 지난주 주간)
@@ -383,17 +394,24 @@ pub fn publish_due(db: &Database, interest: &Editorial, now: DateTime<Utc>) -> V
             db.save_issue(&issue);
         }
     }
-    let ws = week_start(local_midnight(today));
-    let last = week_start(ws - Duration::days(7));
+    let ws = week_range(local_midnight(today)).0;
+    let (last, last_end) = week_range(ws - Duration::hours(1));
     let id = format!("weekly-{}", week_id(last));
     if !db.has_issue(&id) {
-        let issue = make_issue(db, IssueKind::Weekly, last, ws, &id, interest);
+        let issue = make_issue(db, IssueKind::Weekly, last, last_end, &id, interest);
         if issue.count > 0 {
             db.save_issue(&issue);
         }
     }
+    // 분야 개편 전에 엮은 호는 그 기간 기사로 지금 규칙(분야 지면)에 맞춰 다시 엮는다(기사가 지워졌으면 그대로 둠)
+    for old in db.issues(120).into_iter().filter(needs_rebuild) {
+        let again = make_issue(db, old.kind, old.from, old.to, &old.id, interest);
+        if again.count > 0 {
+            db.save_issue(&again);
+        }
+    }
     db.prune(crate::database::KEEP_ITEMS);
-    db.issues(120)
+    archive_order(db.issues(120))
 }
 
 // 기사 하나를 스토리에 넣는다: 대표 기사와 같은 소식이면 그 스토리에, 아니면 새 스토리. (스토리 id, 기존 스토리에 붙었는지)
@@ -572,6 +590,43 @@ pub fn story_groups(db: &Database, now: DateTime<Utc>, filter: &crate::source_fi
 
 
 // MARK: 지면 규칙(옆 목록과 오른쪽 화면이 같은 기준을 쓰게 — 맥 Magazine · SidebarRuleTests)
+
+// 기사가 너무 적은 호(앱을 막 쓰기 시작한 주 등) — 목록에 '기록 적음'으로 표시
+pub const THIN_ISSUE: i64 = 5;
+
+impl Issue {
+    pub fn is_thin(&self) -> bool {
+        self.count < THIN_ISSUE
+    }
+}
+
+// 지난 호 목록: 최신부터 호의 끝 시각 순(주간은 그 주 끝 — 토요일 호 바로 위)
+pub fn archive_order(mut issues: Vec<Issue>) -> Vec<Issue> {
+    issues.sort_by(|a, b| b.to.cmp(&a.to).then_with(|| (b.kind == IssueKind::Weekly).cmp(&(a.kind == IssueKind::Weekly))));
+    issues
+}
+
+// 주간 범위: 달력 한 주(일요일 0시 ~ 다음 일요일 0시). 이번 주 진행 중 호와 지난 주간이 겹치지 않고 이어짐
+pub fn week_range(d: DateTime<Utc>) -> (DateTime<Utc>, DateTime<Utc>) {
+    let from = week_start(d);
+    let next = from.with_timezone(&Local).date_naive() + Duration::days(7);
+    (from, local_midnight(next))
+}
+
+// 분야 개편(분야 지면) 전에 엮은 호: 기사 지면에 분야 id 가 없고 예전 AI 분류(모델·제품…)로 나뉨 → 지금 규칙으로 다시 엮는다
+pub fn needs_rebuild(issue: &Issue) -> bool {
+    issue.sections.iter().any(|s| s.kind.is_none() && s.section.is_none() && !s.category.is_other())
+}
+
+// 최근 검색어: 맨 앞에 넣고 같은 것(대소문자 무시)은 하나로, 두 글자 이상, 8개까지
+pub const RECENT_SEARCHES: usize = 8;
+pub fn remember_search(q: &str, list: &[String]) -> Vec<String> {
+    let t = q.trim();
+    if t.chars().count() < 2 {
+        return list.to_vec();
+    }
+    std::iter::once(t.to_string()).chain(list.iter().filter(|w| w.to_lowercase() != t.to_lowercase()).cloned()).take(RECENT_SEARCHES).collect()
+}
 
 // 머리 아래 숫자: 모은 소식 중 지면에 실은 수(표지 포함). 다 실었으면 한 숫자만
 pub fn subtitle(total: i64, shown: i64, sections: usize, noun: &str) -> String {

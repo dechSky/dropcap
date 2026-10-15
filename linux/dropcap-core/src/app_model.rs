@@ -237,7 +237,7 @@ impl AppModel {
         let state = store.load();
         let db = Arc::new(Database::open(&store.dir));
         let articles = ArticleService::new(store.dir.clone());
-        let archive = db.issues(120);
+        let archive = magazine::archive_order(db.issues(120));
         let paywall = Arc::new(crate::paywall::PaywallBook::new(db.clone()));
         let me = Arc::new(AppModel {
             store,
@@ -260,6 +260,11 @@ impl AppModel {
             weak: Mutex::new(std::sync::Weak::new()),
         });
         *me.weak.lock().unwrap() = Arc::downgrade(&me);
+        // 번역 방식(translateEngine): 번역할 때마다 지금 설정을 읽는다
+        {
+            let w = Arc::downgrade(&me);
+            TR.set_mode_source(move || w.upgrade().map(|m| m.settings().translate_engine).unwrap_or_else(|| "auto".into()));
+        }
         let book = me.paywall.clone();
         me.articles.set_recorder(Arc::new(move |it, failed, blocked| book.record(it, failed, blocked)));
         let weak = Arc::downgrade(&me);

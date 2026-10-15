@@ -37,6 +37,9 @@ public sealed record Issue
     public List<Section> Sections { get; init; } = new();
     public int Count { get; init; }
 
+    // 기사가 너무 적은 호(앱을 막 쓰기 시작한 주 등) — 목록에 '기록 적음'으로 표시
+    [JsonIgnore] public bool IsThin => Count < Magazine.ThinIssue;
+
     private static readonly CultureInfo Ko = new("ko-KR");
 
     [JsonIgnore]
@@ -80,7 +83,7 @@ public sealed class Magazine
     {
         this.db = db;
         this.feeds = feeds ?? FeedService.Shared;
-        Archive = db.Issues();
+        Archive = ArchiveOrder(db.Issues());
     }
 
     public void NotifyChanged() => Changed?.Invoke();
@@ -256,10 +259,14 @@ public sealed class Magazine
         var limit = kind == IssueKind.Weekly ? 60 : 90;
         var picked = ranked.Where(p => p.S.Item.ItemKind == ItemKind.Article).Take(limit).ToList();
         // 표지: 사진이 있는 기사 중 점수 1등(없으면 그냥 1등). 화면 캡처·글자 그림·로고로 잰 사진은 건너뛴다(M-24)
-        var photoScores = db.ImageScores(picked.Take(30).Select(p => p.S.Item.Image).OfType<string>().ToList());
-        var coverPick = PhotoQuality.PickCover(picked.Select(p => p.S.Item), photoScores);
+        // 주간 표지는 그 주 가장 많이 다룬 이야기(스토리 보도 수 → 점수 순) — 오늘 표지와 같아지지 않게
+        var coverOrder = kind == IssueKind.Weekly
+            ? picked.OrderByDescending(p => p.S.Cluster is { } c1 ? sizes.GetValueOrDefault(c1, 1) : 1).ThenByDescending(p => p.Score).ToList()
+            : picked;
+        var photoScores = db.ImageScores(coverOrder.Take(30).Select(p => p.S.Item.Image).OfType<string>().ToList());
+        var coverPick = PhotoQuality.PickCover(coverOrder.Select(p => p.S.Item), photoScores);
         var cover = picked.FirstOrDefault(p => p.S.Item.Key == coverPick);
-        if (cover.S is null) cover = picked.FirstOrDefault();
+        if (cover.S is null) cover = coverOrder.FirstOrDefault();
         var coverKey = cover.S?.Item.Key;
         var articles = picked.Where(p => p.S.Item.Key != coverKey).Select(p => p.S).ToList();
         var sections = SectionPages(articles, stored, only is not null ? [only] : Chosen(), Limits(), only is not null ? SectionPageLimit : (kind == IssueKind.Weekly ? 8 : 12));
@@ -411,8 +418,9 @@ public sealed class Magazine
         return (sec, cat);
     }
 
+    // 이번 주: 달력 한 주의 시작부터 지금까지(지난 주간과 이어짐 — 예전엔 '지금부터 7일 전'이라 지난 주간과 날이 겹쳤다)
     public Issue LiveWeekly() =>
-        MakeIssue(IssueKind.Weekly, DateTimeOffset.Now.AddDays(-7), DateTimeOffset.Now.AddSeconds(60), "live-weekly");
+        MakeIssue(IssueKind.Weekly, new DateTimeOffset(WeekRange(DateTime.Now).From), DateTimeOffset.Now.AddSeconds(60), "live-weekly");
 
     // 하루가 지나면 그날 호를, 일요일이 지나면 그 주 호를 발행해 지난 호에 남긴다
     public void PublishDue(DateTime? todayOverride = null)
@@ -429,18 +437,48 @@ public sealed class Magazine
             var issue = MakeIssue(IssueKind.Daily, new DateTimeOffset(day.AddHours(-6)), new DateTimeOffset(day.AddHours(18)), id);
             if (issue.Count > 0) db.SaveIssue(issue);
         }
-        // 한국 달력처럼 주는 일요일부터
-        var weekStart = today.AddDays(-(int)today.DayOfWeek);
-        var lastWeekStart = weekStart.AddDays(-7);
-        var wid = "weekly-" + WeekId(lastWeekStart);
+        var last = WeekRange(WeekRange(today).From.AddHours(-1));
+        var wid = "weekly-" + WeekId(last.From);
         if (!db.HasIssue(wid))
         {
-            var issue = MakeIssue(IssueKind.Weekly, new DateTimeOffset(lastWeekStart), new DateTimeOffset(weekStart), wid);
+            var issue = MakeIssue(IssueKind.Weekly, new DateTimeOffset(last.From), new DateTimeOffset(last.To), wid);
             if (issue.Count > 0) db.SaveIssue(issue);
         }
+        // 분야 개편 전에 엮은 호는 그 기간 기사로 지금 규칙(분야 지면)에 맞춰 다시 엮는다(기사가 지워졌으면 그대로 둠)
+        foreach (var old in db.Issues().Where(NeedsRebuild))
+        {
+            var again = MakeIssue(old.Kind, old.From, old.To, old.Id);
+            if (again.Count > 0) db.SaveIssue(again);
+        }
         db.Prune();
-        Archive = db.Issues();
+        Archive = ArchiveOrder(db.Issues());
         Changed?.Invoke();
+    }
+
+    // MARK: 지면 규칙(왼쪽 목록과 오른쪽 화면이 같은 기준을 쓰게 — 맥 SidebarRuleTests)
+    public const int ThinIssue = 5;
+
+    // 지난 호 목록: 최신부터 호의 끝 시각 순(주간은 그 주 끝 — 토요일 호 바로 위)
+    public static List<Issue> ArchiveOrder(IEnumerable<Issue> issues) =>
+        issues.OrderByDescending(i => i.To).ThenBy(i => i.Kind == IssueKind.Weekly ? 0 : 1).ToList();
+
+    // 주간 범위: 달력 한 주(한국 달력처럼 일요일부터, 7일). 이번 주 진행 중 호와 지난 주간이 겹치지 않고 이어짐
+    public static (DateTime From, DateTime To) WeekRange(DateTime local)
+    {
+        var start = local.Date.AddDays(-(int)local.DayOfWeek);
+        return (start, start.AddDays(7));
+    }
+
+    // 분야 개편(분야 지면) 전에 엮은 호: 기사 지면에 분야 id 가 없고 예전 AI 분류(모델·제품…)로 나뉨 → 지금 규칙으로 다시 엮는다
+    public static bool NeedsRebuild(Issue issue) =>
+        issue.Sections.Any(s => s.Kind is null && s.SectionId is null && !s.Category.IsOther());
+
+    // 최근 검색어: 맨 앞에 넣고 같은 것(대소문자 무시)은 하나로, 두 글자 이상, 8개까지
+    public static List<string> RememberSearch(string q, IReadOnlyList<string> list, int max = 8)
+    {
+        var t = q.Trim();
+        if (t.Length < 2) return list.ToList();
+        return new[] { t }.Concat(list.Where(x => !string.Equals(x, t, StringComparison.OrdinalIgnoreCase))).Take(max).ToList();
     }
 
     public static string DayId(DateTime d) => d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);

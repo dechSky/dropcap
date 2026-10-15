@@ -122,6 +122,7 @@ body { display: flex; width: 100%; height: 100%; min-width: 860px; min-height: 6
 .sec-h small { font-size: 13px; font-weight: 600; color: var(--text-2); }
 .sec-h .line { flex: 1; height: 1px; background: var(--text); opacity: 0.12; margin-left: 6px; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 22px 18px; padding: 0 28px; align-items: start; }
+.grid > * { min-width: 0; }   /* 긴 출처 줄·사진이 칸 너비를 밀어 4열에서 카드가 겹치지 않게(맥 4e27109) */
 .grid.bal { justify-content: start; }   /* 칸 수는 magazine.js 의 balance()(맥 BalancedGrid) */
 .wrap .grid { padding: 0; margin-top: 4px; }
 
@@ -387,3 +388,14 @@ body { display: flex; width: 100%; height: 100%; min-width: 860px; min-height: 6
 .weekly .wm { display: flex; gap: 6px; margin-top: 5px; font-size: 11.5px; min-width: 0; }
 .weekly .wm b { color: var(--c); font-weight: 600; flex: none; }
 .weekly .wm span { color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 사이드바 맞추기(맥 4e27109): '기록 적음' 호는 흐리게, 저장·스크랩북 머리 수, 빈 검색 화면 */
+.nav.thin { opacity: .55; }
+.h1n { font-family: var(--font); font-size: 15px; font-weight: 600; color: var(--text-2); margin-left: 10px; letter-spacing: 0; }
+.search-empty { margin-top: 18px; display: flex; flex-direction: column; gap: 16px; }
+.search-empty:empty { display: none; }
+.se-h { display: flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 600; color: var(--text-2); margin-bottom: 8px; }
+.se-h svg { width: 14px; height: 14px; }
+.se-help { font-size: 13px; color: var(--text-2); line-height: 1.6; }
+.se-help p { margin: 0; }
+.linkbtn { align-self: flex-start; background: none; border: 0; padding: 0; color: var(--accent); font-size: 12px; cursor: pointer; }

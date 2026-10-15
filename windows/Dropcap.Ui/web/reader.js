@@ -569,6 +569,7 @@
         translating: '<span class="spin"></span>번역하는 중…',
         noText: `${ic('search')}사진에서 글자를 찾지 못했습니다`,
         korean: `${ic('check')}이미 한국어 글자입니다`,
+        off: `${ic('translate')}번역 안 함으로 설정돼 있어 읽은 글자만 보여 드려요`,
         done: `${ic('translate')}${done}줄 번역`,
       }[name];
       $p('.ph-done').hidden = name !== 'done';
@@ -637,6 +638,7 @@
         return send('imageTranslate', { texts: lines.map((l) => l.text) }).then((t) => {
           if (closed) return;
           if (t.korean) { stage('korean'); return; }
+          if (t.off) { stage('off'); return; }
           t.out.forEach((x, i) => { if (x != null && lines[i]) lines[i].translated = x; });
           stage('done');
           overlay();

@@ -283,6 +283,14 @@ public class ReaderCatchup3Tests : IDisposable
     }
 
     [Fact]
+    public async Task UnchangedLinesAreNotCountedAsTranslated()
+    {
+        // 번역이 실패하거나 '번역 안 함'이라 원문이 그대로 오면 번역한 줄로 치지 않는다('N줄 번역'에 들지 않게)
+        var (o, _) = await ImageText.TranslateAsync(["SALES UP", "Q3 2026"], t => Task.FromResult(t.ToList()));
+        Assert.Equal(new string?[] { null, null }, o);
+    }
+
+    [Fact]
     public async Task ImageCommandsOnlyForArticleImages()
     {
         const string src = "https://img.example.com/2026/chart.jpg";

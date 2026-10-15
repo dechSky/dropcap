@@ -117,7 +117,7 @@
 - 문서: C-15 설명을 지금 기준(고유명사 2개 이상 + 적은 쪽의 절반 이상)으로, S-13 낡은 줄 정리, README 첫 소개 문장, '리눅스에서 확인할 목록' 17~22, AppImage 에 검색 공급자 파일 사본.
 - 시험: 새 `e2e_fix_tests` 8 · `reader_catchup_tests` 13 · `magazine_catchup_tests` 7 · `integrations_tests` 19. `cargo test --workspace` 전체 통과(핵심 242 · 화면 5), 리눅스 전 기능 형 검사(`scripts/check-linux-features.sh`) 통과. 앱 창은 띄우지 않음(화면 동작은 README 확인 목록 17~22).
 
-### 사이드바 맞추기(맥 4e27109) — 이식하지 않음, 리눅스와 다른 점(관리자 결정 대기)
+### 사이드바 맞추기(맥 4e27109) — 리눅스와 다른 점(→ 2026-10-15 linux-sidebar-translateoff 에서 이식, 아래 절)
 
 분야 지면(M-25)·스토리 분야 다수결(M-26)·머리 숫자 '… 건 중 M건 실음'은 FEATURES 행이라 이번에 반영했다. 그 밖에 리눅스에 없는 것:
 
@@ -137,3 +137,29 @@
 - L8 시험 훅: `test_hooks::var` 한 곳 — `DROPCAP_TEST_*`·`DROPCAP_SECTIONS`·`DROPCAP_CATEGORIES` 는 개발 빌드(debug)나 `--features test-hooks` 에서만 듣는다(배포 빌드에서는 변수가 있어도 꺼짐). 핵심·화면 모두 이 함수로(app.rs Env·test_extras·toast·reader_view·integrations·focus_guard·magazine·sections·category). `DROPCAP_DATA_DIR`·`DROPCAP_RESOURCES`·`DROPCAP_OLLAMA_MODEL` 은 사용 설정이라 그대로. 개발 경로(`CARGO_MANIFEST_DIR`) 후보는 이미 debug 빌드에만(app.rs `resource`).
   - 시험 `test_hooks_tests`: 고치기 전 `cargo test --release` 실패(배포 빌드에서 DROPCAP_TEST_WEEKLY 가 들음) → 고친 뒤 통과, 개발 빌드에서는 훅이 그대로 듦.
 - 시험: `cargo test --workspace` 전체 통과(핵심 244 · 화면 5, 새 proxy_tests 1 · test_hooks_tests 1), `cargo test --release --test test_hooks_tests` 통과, 리눅스 전 기능 형 검사 통과.
+
+## 2026-10-15 — 사이드바 맞추기 이식 + 번역 안 함(linux-sidebar-translateoff)
+
+사용자 결정: 사이드바(맥 4e27109) 이식, 번역은 맥과 같은 '엔진 고르기'(리눅스엔 기기 내 없음).
+
+- 사이드바(위 차이 목록 1~8):
+  1. 이번 주 = 달력 한 주(일요일 0시)~지금 — `magazine::week_range`, `live_weekly`·지난 주간 발행이 같은 범위(겹치지 않고 이어짐).
+  2. 주간 표지 = 그 주 보도가 가장 많은 스토리(보도 수 → 점수, `weekly_cover_order`). 오늘 호는 점수 순 그대로.
+  3. 지난 호 순서 `archive_order`(호 끝 시각 순, 같으면 주간 위). DB 정렬 값도 끝 시각이었지만 같은 값일 때를 맞추고 시작 시·발행 시 모두 거침.
+  4. 예전 호 다시 엮기 `needs_rebuild`(분야 id 없는 기사 지면 + 예전 AI 분류) → `publish_due` 가 그 기간 기사로 다시 엮음(기사가 지워져 0건이면 그대로).
+  5. 기록 적음(`THIN_ISSUE` 5): 옆 목록 흐리게(0.55) + 도움말 '기록 적음 — 소식 N건', 머리 '지난 호 · 기록 적음'.
+  6. 빈 검색 화면: 지켜볼 낱말·최근 검색 칩(prefs.json `magRecentSearches` — 맥 AppStorage 와 같은 이름, 2글자 이상 8개, 입력 확정·결과 있던 채로 떠날 때 기억)·'최근 검색 지우기'·도움말.
+  7. 저장 머리 'N건', 스크랩북 머리 '모두 N개'(옆 목록 수와 같음).
+  8. 카드 사진: 리눅스에도 같은 문제가 있었다 — 사진 칸(DrawingArea) 최소 너비 300 이 격자 칸 230 보다 넓어 좁은 4열에서 칸을 밀었음. `CARD_PHOTO_MIN_WIDTH` 120 ≤ `CARD_MIN_WIDTH` 230.
+  - 이미 있던 것: 분야 지면(M-25)·오늘 칩 건수 뺌·AI 하위 '기타' 칩·머리 숫자·스토리 다수결. 이번 주 머리 '이번 주 · …' 도 맞춤.
+- 번역 안 함(보안 L4 · 배경 제목 번역 옵트인 포함):
+  - 설정 키 `translateEngine`(상태 파일 settings — 맥·윈도우와 같은 키·값 `auto`·`apple`·`google`·`off`, 예전 파일·모르는 값은 `auto`, 기록 가져오기도 clamp 로 묶음). 리눅스 `auto` = Google, `apple`(맥에서 '기기 내만'을 가져온 기록) = 보내지 않음.
+  - `Translator` 가 번역할 때마다 AppModel 설정을 읽고(`set_mode_source`), 보내지 않는 방식이면 기사 본문·요약 대체문·배경 제목 번역(확인·채우기·첫 호)·영어 제목(T-04)·사진 속 글자 번역 모두 원문 그대로·엔진 없음(읽기 창 번역 표시 없음). 방식이 바뀌면 캐시를 비움(케이스 11).
+  - 설정 › 번역 방식: 자동 (Google 번역) · Google 번역 · 번역 안 함(apple 기록이면 그 항목도) + 개인정보 안내 'Google 번역으로 본문 문단이 전송됩니다(…)'. README '리눅스의 한계' 번역 줄도 같은 안내.
+  - 번역 응답 상한 `TRANSLATE_MAX_BODY` 2MB(전에는 일반 상한 32MB, 윈도우 maxBody 와 같게).
+- 시험: 새 `sidebar_tests` 7(맥 SidebarRuleTests·SidebarEditorTests 중 없던 것) · `translate_off_tests` 6 · 화면 `card_photo_does_not_push_column` 1.
+  - 고치기 전: 주간 표지·예전 호 다시 엮기 시험이 실패(표지 `openai|sb-lab`, 다시 엮은 호 1건 ≠ 3건), 나머지는 새 함수·설정이 없어 컴파일 실패(카드 사진 너비는 300 > 230). 고친 뒤 모두 통과.
+  - `cargo test --workspace` 전체 통과(핵심 257 · 화면 6), 리눅스 전 기능 형 검사 통과. 앱 창은 띄우지 않음(README 확인 목록 23·24).
+- FEATURES '리' 칸: M-05 · M-08 · M-15 · M-16 · P-02.
+- 워크트리: `wt/linux-native` 는 main 에 이미 병합돼 있어 지우고 다시 만드는 대신 main 으로 fast-forward(같은 결과, 빌드 캐시 유지).
+

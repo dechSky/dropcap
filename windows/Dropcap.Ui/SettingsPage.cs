@@ -64,6 +64,15 @@ public sealed class SettingsPage(AppModel model, IPlatform platform, Scrapbook? 
     }
 
     // 기본 출처·구독 중인 채널 한 줄
+    // 번역 방식 고르기(W4 · 맥과 같은 값). 윈도우엔 기기 내 번역이 없어 '기기 내'는 맥에서 가져온 값일 때만 보인다(그때는 번역하지 않음)
+    public sealed record EngineOption(string Id, string Label);
+    public static List<EngineOption> TranslateEngines(string current)
+    {
+        var o = new List<EngineOption> { new("auto", "자동 (Google 번역)"), new("google", "Google 번역"), new("off", "번역 안 함") };
+        if (current == "apple") o.Insert(1, new("apple", "기기 내 번역 (이 PC 에는 없어 번역하지 않음)"));
+        return o;
+    }
+
     public object SourceRow(Source s, bool removable)
     {
         var enabled = model.State.Enabled.GetValueOrDefault(s.Id);
@@ -179,9 +188,11 @@ public sealed class SettingsPage(AppModel model, IPlatform platform, Scrapbook? 
                 sound = st.Sound,
                 interval = st.IntervalMinutes,
                 intervals = StateSettings.Intervals.Select(m => new { value = m, label = $"{m}분" }).ToList(),
-                // P-02: 윈도우에는 무료 기기 내 번역이 없어 Google 번역만(T-05 ⊘)
-                translation = Translator.EngineGoogle,
-                translationNote = "윈도우에는 무료로 쓸 수 있는 기기 내 번역이 없어 Google 번역을 씁니다.",
+                // P-02: 번역 엔진 고르기(W4). 윈도우에는 무료 기기 내 번역이 없어 자동 = Google 번역(T-05 ⊘)
+                translateEngine = st.TranslateEngine,
+                translateEngines = TranslateEngines(st.TranslateEngine),
+                translationNote = "번역을 켜 두면 Google 번역으로 본문 문단이 전송됩니다(외국어 기사 제목·같은 소식 묶기용 영어 번역 포함). "
+                                + "윈도우에는 무료로 쓸 수 있는 기기 내 번역이 없습니다. '번역 안 함'이면 아무것도 보내지 않고 원문을 보여 줍니다.",
                 pretendard = Prefs.Get("usePretendard", true),
                 // P-04: ready 때 Ollama 를 한 번 찾아본 결과
                 summary = Summarizer.Status,
@@ -260,6 +271,11 @@ public sealed class SettingsPage(AppModel model, IPlatform platform, Scrapbook? 
             case "position":
                 var pos = a.Str("value") switch { "center" => ToastPosition.Center, "right" => ToastPosition.Right, _ => throw new ArgumentOutOfRangeException(key) };
                 model.Update(s => s.Position = pos);
+                break;
+            case "translateEngine":
+                var te = a.Str("value");
+                if (!TranslateEngines(model.State.Settings.TranslateEngine).Any(o => o.Id == te)) throw new ArgumentOutOfRangeException(key);
+                model.Update(s => s.TranslateEngine = te);
                 break;
             case "sound": var sound = a.Bool("value"); model.Update(s => s.Sound = sound); break;
             case "interval":

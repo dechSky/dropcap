@@ -64,7 +64,7 @@
     $('#undoImport').hidden = !g.backup.canUndo;
     $('#backupMsg').hidden = !g.backup.message;
     $('#backupMsg').textContent = g.backup.message || '';
-    $('#engine').textContent = g.translation;
+    fillSelect('translateEngine', g.translateEngines, g.translateEngine);
     $('#engineNote').textContent = g.translationNote;
     $('#summary').textContent = g.summary;
     // 분야(G-13)

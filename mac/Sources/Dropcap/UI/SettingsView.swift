@@ -77,11 +77,17 @@ struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("번역") {
-                LabeledContent("번역 방식") {
-                    Text(appleReady ? "기기 내 번역(Apple) — 무료·비공개" : "Google 번역")
-                        .foregroundStyle(.secondary)
+                Picker("번역 방식", selection: Binding(
+                    get: { model.state.settings.translateEngine },
+                    set: { v in model.update { $0.translateEngine = v } })) {
+                    Text("자동").tag(Translator.Mode.auto)
+                    Text("기기 내 번역만").tag(Translator.Mode.apple)
+                    Text("Google 번역").tag(Translator.Mode.google)
+                    Text("번역 안 함").tag(Translator.Mode.off)
                 }
-                if !appleReady {
+                Text(Self.translateNote(model.state.settings.translateEngine, appleReady: appleReady))
+                    .font(.caption).foregroundStyle(.secondary)
+                if !appleReady, model.state.settings.translateEngine == .auto || model.state.settings.translateEngine == .apple {
                     if #available(macOS 26.0, *) {
                         PrepareTranslationButton(preparing: $preparing) {
                             Task { appleReady = await Translator.appleReady() }
@@ -212,6 +218,16 @@ struct SettingsView: View {
 }
 
 extension SettingsView {
+    // 번역 방식 아래 한 줄 안내: 지금 실제로 무엇으로 번역되는지
+    static func translateNote(_ mode: Translator.Mode, appleReady: Bool) -> String {
+        switch mode {
+        case .auto: return appleReady ? "지금: 기기 내 번역(Apple) — 무료·비공개. 안 되면 Google 번역." : "지금: Google 번역(기사 글이 Google 로 갑니다). 언어 자료를 받으면 기기 내 번역."
+        case .apple: return appleReady ? "이 Mac 안에서만 번역합니다. 안 되면 원문 그대로." : "언어 자료가 없어 지금은 번역하지 않습니다(원문 그대로)."
+        case .google: return "늘 Google 번역 — 빠르지만 기사 글이 Google 로 갑니다."
+        case .off: return "외국어 기사·제목을 원문 그대로 보여 줍니다."
+        }
+    }
+
     // 분야: 고른 분야마다 알림 모드·묶음 시각·하루 상한(docs/research/COMPETITIVE.md (다)-3)
     var sectionsTab: some View {
         Form {

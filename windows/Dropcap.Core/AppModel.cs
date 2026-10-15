@@ -54,6 +54,7 @@ public sealed class AppModel
         Magazine.Chosen = () => State.SectionsChosen;
         Magazine.Limits = () => State.Settings.Limits;
         Magazine.IsFollowed = id => State.FollowedStories.Contains(id);
+        Translator.Shared.ModeSource = () => State.Settings.TranslateEngine;   // 번역 방식(W4)
         Shared = this;
     }
 

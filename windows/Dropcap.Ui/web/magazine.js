@@ -77,7 +77,7 @@
     $('#secs').innerHTML = s.sections.length ? '<div class="sh">분야</div>' + s.sections.map((x) =>
       `<button class="nav tint" style="${tint(x)}" data-go="section:${esc(x.id)}">${ic(x.icon)}<span>${esc(x.name)}</span></button>`).join('') : '';
     $('#archive').innerHTML = s.archive.length ? '<div class="sh">지난 호</div>' + s.archive.map((a) =>
-      `<button class="nav" data-go="issue:${esc(a.id)}" title="${esc(a.title)}">${ic(a.weekly ? 'books' : 'doc.rich')}<span>${esc(a.title)}</span></button>`).join('') : '';
+      `<button class="nav${a.thin ? ' thin' : ''}" data-go="issue:${esc(a.id)}" title="${esc(a.thin ? `기록 적음 — 소식 ${a.count}건` : a.title)}">${ic(a.weekly ? 'books' : 'doc.rich')}<span>${esc(a.title)}</span></button>`).join('') : '';
     markSide();
   }
   function markSide() {
@@ -568,7 +568,7 @@
     const scroll = el.scrollTop;
     const typing = document.activeElement && document.activeElement.id === 'addUrl' && el.contains(document.activeElement);
     el.innerHTML = `<div class="wrap" style="padding:0 32px 40px">
-      <h1 class="h1">저장</h1>
+      <h1 class="h1">저장<span class="h1n">${v.count}건</span></h1>
       <p class="lead">저장한 기사는 번역까지 이 PC 에 보관돼 인터넷 없이도 읽을 수 있습니다.</p>
       <div class="addurl-slot"></div>
       ${v.items.length ? '' : '<div class="note">아직 저장한 기사가 없습니다. 카드를 오른쪽 클릭해 \'나중에 읽기\'로 저장하세요.</div>'}
@@ -588,6 +588,7 @@
       <h1 class="h1">검색</h1>
       <label class="searchbox">${ic('search')}<input id="sq" placeholder="모든 기록에서 제목·출처·요약 검색" autocomplete="off" spellcheck="false"></label>
       <div class="found" hidden></div>
+      <div class="search-empty"></div>
       <div class="grid results"></div></div>`;
     const input = $('#sq', el);
     input.value = query;
@@ -601,6 +602,7 @@
     const r = await bridge.send('search', { q, submit });
     if (page !== 'search' || el !== current || q !== query || !r.items) return;
     remember(r.items);
+    drawSearchEmpty(el, r);
     const f = $('.found', el);
     f.hidden = !q;
     f.textContent = `${r.items.length}건`;
@@ -608,6 +610,26 @@
     g.innerHTML = r.items.map((it, i) => card(it, i, '', { topic: (r.topics || {})[it.key] })).join('');
     wireImages(g);
     watch(g);
+  }
+
+  // 빈 검색 화면: 지켜볼 낱말·최근 검색어를 눌러 바로 찾기, 무엇을 찾는지 안내(맥 SearchView.emptyState)
+  function drawSearchEmpty(el, r) {
+    const box = $('.search-empty', el);
+    if (!box) return;
+    if (query) { box.innerHTML = ''; return; }
+    const row = (title, icon, words) => `<div class="se-row"><div class="se-h">${ic(icon)}${esc(title)}</div>
+      <div class="chips">${words.map((w) => `<button class="chip" data-q="${esc(w)}">${ic(icon)}${esc(w)}</button>`).join('')}</div></div>`;
+    const watch = r.watch || [], recent = r.recent || [];
+    box.innerHTML = (watch.length ? row('지켜볼 낱말', 'eye', watch) : '')
+      + (recent.length ? row('최근 검색', 'clock', recent) + '<button class="linkbtn" id="clearRecent">최근 검색 지우기</button>' : '')
+      + `<div class="se-help"><p>이 PC 에 모인 모든 기사(지난 호 포함)의 제목·출처·요약에서 찾습니다.</p>
+        <p>회사·인물 이름이나 출처 이름(예: 연합뉴스)으로도 찾을 수 있습니다. Ctrl+F 로 언제든 이 화면을 엽니다.</p>
+        ${watch.length ? '' : "<p>설정 › 거르기의 '지켜볼 낱말'을 넣으면 여기서 바로 누를 수 있습니다.</p>"}</div>`;
+    box.querySelectorAll('[data-q]').forEach((b) => b.addEventListener('click', () => {
+      query = b.dataset.q; const i = $('#sq', el); if (i) i.value = query; runSearch(true);
+    }));
+    const clr = $('#clearRecent', box);
+    if (clr) clr.addEventListener('click', async () => { drawSearchEmpty(el, await bridge.send('clearRecentSearches', {})); });
   }
 
   // MARK: 스크랩북(M-17·M-18)
@@ -622,7 +644,7 @@
     const scroll = el.scrollTop;
     el.classList.toggle('calm', !fresh);
     el.innerHTML = `<div class="wrap" style="max-width:860px">
-      <div class="sb-h"><h1 class="h1">스크랩북</h1>
+      <div class="sb-h"><h1 class="h1">스크랩북<span class="h1n">모두 ${v.total}개</span></h1>
         <button class="btn" id="copyMd" ${empty ? 'disabled' : ''}>${ic('copy')}<span>Markdown 복사</span></button>
         <button class="btn" id="saveMd" ${empty ? 'disabled' : ''}>${ic('download')}<span>파일로 저장</span></button></div>
       <p class="lead" style="margin-top:18px">읽기 창에서 문단에 마우스를 올려 ✂︎ 를 누르거나, 도구막대의 스크랩으로 기사를 모아 두세요. 폴더째 Markdown 으로 내보낼 수 있습니다.</p>

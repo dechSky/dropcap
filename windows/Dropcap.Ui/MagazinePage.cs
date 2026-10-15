@@ -23,7 +23,7 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
     // MARK: 보기 데이터
     // 색은 라이트·다크 두 벌(#RRGGBB 만 — ItemView.SafeColor)
     public sealed record SideSection(string Id, string Name, string Icon, string Light, string Dark);
-    public sealed record ArchiveRow(string Id, string Title, bool Weekly);
+    public sealed record ArchiveRow(string Id, string Title, bool Weekly, bool Thin = false, int Count = 0);   // Thin: 기사가 너무 적은 호('기록 적음' — 흐리게)
     public sealed record SidebarView(int Saved, int Scraps, List<ArchiveRow> Archive, string Sort, List<SideSection> Sections);
 
     public sealed record TopicView(string Label, string Icon, string Light, string Dark);   // 카드의 분야 표시(N-05 TopicChip 과 같은 이름)
@@ -58,8 +58,9 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
     public sealed record RegionColumn(string Title, string Icon, int Count, List<ItemView> Items);
     public sealed record StoryView(string Id, string Title, string Sub, bool Following, List<TimelineRow> Items, RegionColumn? Intl, RegionColumn? Kr);
 
-    public sealed record SavedView(List<ItemView> Items, List<string> Archived, Dictionary<string, TopicView> Topics);
-    public sealed record SearchView(string Q, List<ItemView>? Items, Dictionary<string, TopicView>? Topics = null);   // Items 가 null 이면 화면은 앞 결과를 그대로 둔다
+    public sealed record SavedView(List<ItemView> Items, List<string> Archived, Dictionary<string, TopicView> Topics, int Count = 0);   // Count: 왼쪽 목록 '저장 N' 과 같은 수
+    public sealed record SearchView(string Q, List<ItemView>? Items, Dictionary<string, TopicView>? Topics = null,
+        List<string>? Watch = null, List<string>? Recent = null);   // Items 가 null 이면 화면은 앞 결과를 그대로 둔다. 빈 검색이면 지켜볼 낱말·최근 검색 칩
 
     public sealed record FolderView(string Name, int Count);
     public sealed record ScrapView(string Id, string? Quote, string? Original, string Memo, string Collection);
@@ -103,7 +104,7 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
 
     // 옆 목록(M-01): 이번 호 · 분야(고른 분야마다) · 모아 보기 · 지난 호
     public SidebarView Sidebar() => new(model.State.Saved.Count, book.Scraps.Count,
-        mag.Archive.Select(i => new ArchiveRow(i.Id, i.Title, i.Kind == IssueKind.Weekly)).ToList(), CurrentSort(),
+        mag.Archive.Select(i => new ArchiveRow(i.Id, i.Title, i.Kind == IssueKind.Weekly, i.IsThin, i.Count)).ToList(), CurrentSort(),
         model.ChosenSections.Select(id =>
         {
             var s = Sections.ById(id);
@@ -255,7 +256,7 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
             : Magazine.Subtitle(r.Issue.Count, shownCount, pages.Count(p => p.Section.Kind is null));
         var title = sectionPage is { } sp2 ? Sections.Name(sp2) : source == "week" ? r.Issue.Title.Replace("주간 · ", "이번 주 · ") : r.Issue.Title;
         var kicker = sectionPage is not null ? "오늘 호의 분야 지면 · " + r.Issue.Title.Replace(" 호", "")
-            : source switch { "today" => "오늘", "week" => "이번 주", _ => "지난 호" };
+            : source switch { "today" => "오늘", "week" => "이번 주", _ => r.Issue.IsThin ? "지난 호 · 기록 적음" : "지난 호" };
         return new IssueView(r.Issue.Id, title, live, r.Issue.Count, r.Issue.Sections.Count, order, cover, empty, sections, r.Clusters,
             built.rev, built.img, built.lay, preparing, focus, sub, chips, subChips, Topics(all), regions,
             today, source == "today" && TodayIssue.IsMarkedDone(now), brief,
@@ -390,18 +391,23 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
             ? items.Where(i => svc.Cached(i.Link) is not null).Select(i => i.Key).ToList()
             : new List<string>());
         var now = model.Now();
-        return new SavedView(items.Select(i => View(i, now)).ToList(), archived, Topics(items));
+        return new SavedView(items.Select(i => View(i, now)).ToList(), archived, Topics(items), items.Count);
     }
 
     // 검색(M-16): 입력 중에는 2글자부터, Enter 면 1글자도. 비우면 결과도 비움.
     public async Task<SearchView> SearchData(string q, bool submit)
     {
-        if (q.Length == 0) return new SearchView(q, new());
+        if (q.Length == 0) return new SearchView(q, new(), null, model.State.Settings.WatchKeywords.ToList(), RecentSearches);
         if (q.Length < 2 && !submit) return new SearchView(q, null);
         var list = await Task.Run(() => mag.Search(q));
+        if (submit) Prefs.Set(RecentKey, Magazine.RememberSearch(q, RecentSearches));   // Enter 로 찾은 낱말만 최근 검색에(입력 중 앞부분은 남기지 않음)
         var now = model.Now();
         return new SearchView(q, list.Select(i => View(i, now)).ToList(), Topics(list));
     }
+
+    // 최근 검색어(맥 magRecentSearches 와 같은 키 — 화면 설정이라 prefs.json)
+    public const string RecentKey = "magRecentSearches";
+    public static List<string> RecentSearches => Prefs.Get(RecentKey, new List<string>());
 
     // 스크랩북을 처음 열 때 폴더: 마지막으로 스크랩한 폴더, 없으면 내용이 있는 첫 폴더
     public static string InitialFolder(Scrapbook b)
@@ -565,6 +571,7 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
                 return new { ok = r.Ok, message = r.Item is { } it ? "저장함 · " + it.DisplayTitle : SaveLink.Message(r.Error ?? SaveLink.Failure.NotUrl) };
             }
             case "search": return await SearchData(a.Str("q"), a.Bool("submit"));
+            case "clearRecentSearches": Prefs.Set(RecentKey, new List<string>()); return await SearchData("", false);
             case "scrapbook": return ScrapbookData(a.StrOrNull("folder"), a.Bool("repick"));
             case "marks": return Marks((a["keys"] as JsonArray ?? new()).Select(n => n?.GetValue<string>() ?? ""));
 

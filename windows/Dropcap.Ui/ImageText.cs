@@ -103,7 +103,8 @@ public static class ImageText
         var o = texts.Select(_ => (string?)null).ToList();
         if (foreign.Count == 0) return (o, true);
         var got = await translate(foreign.Select(i => texts[i]).ToList());
-        for (var k = 0; k < foreign.Count && k < got.Count; k++) o[foreign[k]] = got[k];
+        for (var k = 0; k < foreign.Count && k < got.Count; k++)
+            if (got[k] != texts[foreign[k]]) o[foreign[k]] = got[k];   // 번역되지 않고 그대로 온 줄(실패·번역 안 함)은 번역으로 치지 않음
         return (o, false);
     }
 }

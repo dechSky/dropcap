@@ -1,7 +1,7 @@
 // 모아 보기 지면(맥 MagazineView 의 StoriesView·StoryView·SavedView·SearchView·ScrapbookView·WeeklyQuotes).
 use crate::app::{bg, copy_text, ui};
 use crate::magazine::tint;
-use crate::magazine_card::{has_photo, open_card, region_columns, stagger, StoryCard};
+use crate::magazine_card::{has_photo, open_card, region_columns, stagger, StoryCard, CARD_MIN_WIDTH};
 use crate::magazine_issue::balanced_columns;
 use crate::widgets::{self, label, lines, RemoteImage};
 use dropcap_core::app_model::UiEvent;
@@ -40,6 +40,18 @@ fn big_title(t: &str) -> gtk::Label {
     l
 }
 
+// 큰 제목 옆에 작은 수(저장 N건 · 스크랩북 모두 N개 — 옆 목록 수와 같게)
+fn title_with_count(t: &str, count: &str) -> gtk::Box {
+    let h = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    h.set_margin_top(28);
+    h.append(&label(t, 34.0, 700, &["dc-display"]));
+    let c = label(count, 15.0, 600, &["dc-secondary"]);
+    c.set_valign(gtk::Align::End);
+    c.set_margin_bottom(7);
+    h.append(&c);
+    h
+}
+
 // 카드 격자(최소 230, 최대 360 폭) — 마지막 줄 한 장 남지 않게
 fn card_grid(items: &[NewsItem], width_hint: i32, decorate: impl Fn(&NewsItem, gtk::Widget) -> gtk::Widget) -> gtk::FlowBox {
     let flow = gtk::FlowBox::new();
@@ -47,7 +59,7 @@ fn card_grid(items: &[NewsItem], width_hint: i32, decorate: impl Fn(&NewsItem, g
     flow.set_homogeneous(true);
     flow.set_column_spacing(18);
     flow.set_row_spacing(22);
-    let fit = ((width_hint + 18) / (230 + 18)).clamp(1, 4) as usize;
+    let fit = ((width_hint + 18) / (CARD_MIN_WIDTH + 18)).clamp(1, 4) as usize;
     let cols = balanced_columns(fit, items.len());
     flow.set_min_children_per_line(cols as u32);
     flow.set_max_children_per_line(cols as u32);
@@ -516,15 +528,16 @@ fn timeline_row(it: &NewsItem, first: bool) -> gtk::Box {
 // MARK: 저장(M-15): 카드 격자 + "보관됨"
 pub fn saved() -> (gtk::Widget, gtk::ScrolledWindow) {
     let (v, scroll) = wide_box();
-    v.append(&big_title("저장"));
+    let core = ui().core.clone();
+    let list = core.state().saved;
+    // 옆 목록 '저장 N' 과 같은 수
+    v.append(&title_with_count("저장", &format!("{}건", list.len())));
     v.append(&label("저장한 기사는 번역까지 이 컴퓨터에 보관돼 인터넷 없이도 읽을 수 있습니다.", 13.0, 400, &["dc-secondary"]));
     // 피드에 없는 기사도 주소로 저장(I-05, 맥 AddURLBar(compact: false))
     let bar = crate::add_url_bar::build(false);
     bar.set_halign(gtk::Align::Start);
     bar.set_size_request(560, -1);
     v.append(&bar);
-    let core = ui().core.clone();
-    let list = core.state().saved;
     if list.is_empty() {
         let l = label("아직 저장한 기사가 없습니다. 카드를 오른쪽 클릭해 '나중에 읽기'로 저장하세요.", 13.0, 400, &["dc-secondary"]);
         l.set_margin_top(40);
@@ -568,15 +581,23 @@ pub fn search() -> (gtk::Widget, gtk::ScrolledWindow) {
     v.append(&entry);
     let count = label("", 13.0, 400, &["dc-secondary"]);
     v.append(&count);
+    // 빈 검색 화면: 지켜볼 낱말·최근 검색어를 눌러 바로 찾기, 무엇을 찾는지 안내(맥 SearchView.emptyState)
+    let empty = gtk::Box::new(gtk::Orientation::Vertical, 16);
+    empty.set_margin_top(6);
+    v.append(&empty);
     let results = gtk::Box::new(gtk::Orientation::Vertical, 0);
     v.append(&results);
     let serial = Rc::new(Cell::new(0u64));
+    let last_hit: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new())); // 결과가 있었던 마지막 낱말(떠날 때 최근 검색에)
     let run = {
         let results = results.clone();
         let count = count.clone();
+        let empty = empty.clone();
+        let last_hit = last_hit.clone();
         move |q: String| {
             let n = serial.get() + 1;
             serial.set(n);
+            empty.set_visible(q.is_empty());
             if q.chars().count() < 2 {
                 widgets::clear_box(&results);
                 count.set_text("");
@@ -586,10 +607,14 @@ pub fn search() -> (gtk::Widget, gtk::ScrolledWindow) {
             let results = results.clone();
             let count = count.clone();
             let serial = serial.clone();
+            let last_hit = last_hit.clone();
             let q2 = q.clone();
             bg(async move { core.search(&q2, 200) }, move |found| {
                 if serial.get() != n {
                     return; // 그새 다른 글자를 입력함
+                }
+                if !found.is_empty() {
+                    *last_hit.borrow_mut() = q.clone();
                 }
                 widgets::clear_box(&results);
                 count.set_text(&format!("{}건", found.len()));
@@ -597,9 +622,19 @@ pub fn search() -> (gtk::Widget, gtk::ScrolledWindow) {
             });
         }
     };
+    fill_search_empty(&empty, &entry);
     let r1 = run.clone();
     entry.connect_search_changed(move |e| r1(e.text().to_string()));
-    entry.connect_activate(move |e| run(e.text().to_string()));
+    entry.connect_activate(move |e| {
+        remember_search(&e.text());
+        run(e.text().to_string())
+    });
+    scroll.connect_unmap(move |_| {
+        let q = last_hit.borrow().clone();
+        if !q.is_empty() {
+            remember_search(&q);
+        }
+    });
     if let Some(q) = PENDING_QUERY.with(|p| p.borrow_mut().take()) {
         entry.set_text(&q);
     }
@@ -608,6 +643,61 @@ pub fn search() -> (gtk::Widget, gtk::ScrolledWindow) {
         e2.grab_focus();
     });
     (scroll.clone().upcast(), scroll)
+}
+
+fn remember_search(q: &str) {
+    let now = ui().prefs.borrow().mag_recent_searches.clone();
+    let next = dropcap_core::magazine::remember_search(q, &now);
+    if next != now {
+        ui().update_prefs(|p| p.mag_recent_searches = next);
+    }
+}
+
+fn fill_search_empty(empty: &gtk::Box, entry: &gtk::SearchEntry) {
+    widgets::clear_box(empty);
+    let watch = ui().core.state().settings.watch_keywords;
+    let recent = ui().prefs.borrow().mag_recent_searches.clone();
+    let row = |title: &str, words: &[String], icon_name: &str| -> gtk::Box {
+        let col = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        let h = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+        h.append(&widgets::icon(icon_name, 12));
+        h.append(&label(title, 12.5, 600, &["dc-secondary"]));
+        col.append(&h);
+        let chips = gtk::FlowBox::new();
+        chips.set_selection_mode(gtk::SelectionMode::None);
+        chips.set_column_spacing(6);
+        chips.set_row_spacing(6);
+        for w in words {
+            let b = crate::menu_chips::chip(w, icon_name, "#3584E4", false, None, false);
+            let (e, w) = (entry.clone(), w.clone());
+            b.connect_clicked(move |_| e.set_text(&w));
+            chips.insert(&b, -1);
+        }
+        col.append(&chips);
+        col
+    };
+    if !watch.is_empty() {
+        empty.append(&row("지켜볼 낱말", &watch, "view-reveal-symbolic"));
+    }
+    if !recent.is_empty() {
+        empty.append(&row("최근 검색", &recent, "document-open-recent-symbolic"));
+        let clear = gtk::Button::with_label("최근 검색 지우기");
+        clear.add_css_class("flat");
+        clear.set_halign(gtk::Align::Start);
+        let (em, en) = (empty.clone(), entry.clone());
+        clear.connect_clicked(move |_| {
+            ui().update_prefs(|p| p.mag_recent_searches.clear());
+            fill_search_empty(&em, &en);
+        });
+        empty.append(&clear);
+    }
+    let help = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    help.append(&label("이 컴퓨터에 모인 모든 기사(지난 호 포함)의 제목·출처·요약에서 찾습니다.", 13.0, 400, &["dc-secondary"]));
+    help.append(&label("회사·인물 이름이나 출처 이름(예: 연합뉴스)으로도 찾을 수 있습니다. Ctrl+F 로 언제든 이 화면을 엽니다.", 13.0, 400, &["dc-secondary"]));
+    if watch.is_empty() {
+        help.append(&label("설정 › 거르기의 '지켜볼 낱말'을 넣으면 여기서 바로 누를 수 있습니다.", 13.0, 400, &["dc-secondary"]));
+    }
+    empty.append(&help);
 }
 
 // MARK: 스크랩북(M-17·M-18)
@@ -675,8 +765,14 @@ impl ScrapPage {
         let head = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         head.set_margin_top(28);
         let t = label("스크랩북", 34.0, 700, &["dc-display"]);
-        t.set_hexpand(true);
         head.append(&t);
+        // 옆 목록 '스크랩북 N' 과 같은 수(폴더별은 아래 칩)
+        let n = label(&format!("모두 {}개", all.len()), 15.0, 600, &["dc-secondary"]);
+        n.set_valign(gtk::Align::End);
+        n.set_margin_bottom(7);
+        n.set_hexpand(true);
+        n.set_xalign(0.0);
+        head.append(&n);
         let copy = gtk::Button::with_label("Markdown 복사");
         copy.set_sensitive(!list.is_empty());
         {

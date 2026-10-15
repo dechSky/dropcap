@@ -253,6 +253,7 @@ final class E2ERun {
         case "restart": await E2EPhases.restart(self)
         case "recover": await E2EPhases.recover(self)
         case "clicks": await E2EClickPhase.run(self)
+        case "header": await E2EHeaderPhase.run(self) // 창 머리 겹침 스냅샷(scripts/e2e/header.sh)
         default: await E2EPhases.main(self)
         }
         note("=== \(phase) 끝: \(steps.filter { $0.pass == true }.count) 통과 · \(steps.filter { $0.pass == false }.count) 실패 · \(steps.filter { $0.pass == nil }.count) 확인 못 함")

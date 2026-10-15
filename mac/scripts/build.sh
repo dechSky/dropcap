@@ -18,7 +18,7 @@ cp "$BIN" "$APP/Contents/MacOS/Dropcap"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp Resources/Readability.js "$APP/Contents/Resources/"
 cp -R Resources/Fonts "$APP/Contents/Resources/"
-cp ../shared/sources.json "$APP/Contents/Resources/"
+cp ../shared/sources.json ../shared/icon.json "$APP/Contents/Resources/"
 
 # 위젯 확장: Contents/PlugIns/DropcapWidgets.appex (버전은 앱과 같게)
 APPEX="$APP/Contents/PlugIns/DropcapWidgets.appex"
@@ -39,14 +39,16 @@ xcrun appintentsmetadataprocessor --output "$APP/Contents/Resources" --toolchain
 [[ -f "$APP/Contents/Resources/Metadata.appintents/extract.actionsdata" ]] || { echo "단축어 메타데이터를 만들지 못했습니다"; exit 1; }
 rm -rf "$META"
 
-# 아이콘
-ICON=build/icon && mkdir -p "$ICON/AppIcon.iconset"
-swift scripts/make-icon.swift "$ICON/1024.png"
-for s in 16 32 128 256 512; do
-  sips -z $s $s "$ICON/1024.png" --out "$ICON/AppIcon.iconset/icon_${s}x${s}.png" >/dev/null
-  sips -z $((s*2)) $((s*2)) "$ICON/1024.png" --out "$ICON/AppIcon.iconset/icon_${s}x${s}@2x.png" >/dev/null
-done
+# 아이콘: shared/icon.json(세 판 공통 도형)을 앱과 같은 코드(IconArt.swift)로 그린다. 32px 이하 칸은 단순화 판.
+ICON=build/icon && mkdir -p "$ICON"
+cat Sources/Dropcap/Core/IconArt.swift scripts/make-icon.swift > "$ICON/make-icon.swift"
+swift "$ICON/make-icon.swift" ../shared/icon.json "$ICON/AppIcon.iconset"
 iconutil -c icns "$ICON/AppIcon.iconset" -o "$APP/Contents/Resources/AppIcon.icns"
+# 위젯 확장도 같은 아이콘(위젯 갤러리·시스템 설정에 보임)
+mkdir -p "$APPEX/Contents/Resources"
+cp "$APP/Contents/Resources/AppIcon.icns" "$APPEX/Contents/Resources/"
+/usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon" "$APPEX/Contents/Info.plist" 2>/dev/null || \
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile AppIcon" "$APPEX/Contents/Info.plist"
 rm -rf "$ICON"
 
 # 서명(개발자 인증서가 없으면 이 Mac 전용 임시 서명)

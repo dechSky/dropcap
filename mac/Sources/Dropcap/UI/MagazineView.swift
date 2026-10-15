@@ -18,6 +18,7 @@ struct MagazineView: View {
         : TestEnv.get("STORY").map { .story($0) }
         ?? TestEnv.get("MAG_SECTION").map { .section($0) } ?? .today)
     @State private var turn = 0   // 넘긴 방향(+1 다음, -1 이전) — 책장 넘김 방향
+    @State private var scrolled = false // 지면이 머리 밑으로 들어감(머리 아래 구분선)
 
     var body: some View {
         NavigationSplitView {
@@ -56,13 +57,16 @@ struct MagazineView: View {
             }
             .navigationSplitViewColumnWidth(min: 190, ideal: 210)
         } detail: {
-            ZStack {
+            ZStack(alignment: .top) {
                 Color(nsColor: .textBackgroundColor).ignoresSafeArea()
                 detail
                     .id(page)
                     .transition(.pageTurn(forward: turn >= 0))
+                // 제목줄이 투명이라 스크롤한 본문이 머리에 비쳐 겹쳐 보였다 → 머리 자리에 바탕색(맨 위에선 그대로 보임)
+                TitlebarBackdrop(fill: Color(nsColor: .textBackgroundColor), separator: scrolled)
             }
             .clipped()
+            .onPreferenceChange(ScrolledPastTopKey.self) { scrolled = $0 }
         }
         .frame(minWidth: 860, minHeight: 620)
         .liveAppearance()
@@ -286,7 +290,7 @@ struct IssueView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    Color.clear.frame(height: 0).id("top")
+                    Color.clear.frame(height: 0).id("top").reportsScrolledPastTop(in: "issueScroll")
                     if let d = data {
                         Masthead(title: headTitle(d), kicker: kicker(d), subtitle: subtitle(d), live: !isFixed, appeared: appeared)
                             .padding(.horizontal, 36).padding(.top, 28).padding(.bottom, 22)
@@ -343,6 +347,7 @@ struct IssueView: View {
                     }
                 }
             }
+            .coordinateSpace(name: "issueScroll")
             // 키보드: 카드 고르기·열기·저장·브라우저·읽음(상단바 목록과 같은 키)
             .environment(\.selectedCard, selected)
             .environment(\.readerSequence, data.map(flat) ?? [])

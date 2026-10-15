@@ -193,6 +193,35 @@ public class ToastTests
         }
     }
 
+    // 앱 아이콘·트레이 상징은 shared/icon.json 으로 그린다: 32px 이하는 단순화 판, 트레이는 평소/새 소식이 다른 모양
+    [Fact]
+    public void IconArtFromSharedJson()
+    {
+        Assert.Equal(32, AppIcon.Art.SmallMax);
+        using var big = AppIcon.Render(64);
+        using var small = AppIcon.Render(32);
+        // 표지 가운데는 종이색(밝음), 단순화 판은 표지를 크게 그려 D 와 글줄 사이(20,19)도 종이
+        Assert.True(big.GetPixel(32, 32).Red > 200);
+        Assert.True(small.GetPixel(20, 19).Red > 200 && small.GetPixel(20, 19).Green > 180);
+        using var read = AppIcon.Tray(32, false, SKColors.White);
+        using var unread = AppIcon.Tray(32, true, SKColors.White);
+        Assert.Equal(0, read.GetPixel(16, 25).Alpha); // 평소: 표지 속은 비어 있음
+        Assert.True(unread.GetPixel(16, 25).Alpha > 200); // 새 소식: 표지가 채워짐
+        Assert.True(unread.GetPixel(4 * 2 + 1, 4 * 2 + 1).Alpha < 60); // 채운 표지에서 D 가 빠짐
+        var dir = Environment.GetEnvironmentVariable("DROPCAP_TOAST_FRAMES");
+        if (dir is not null)
+        {
+            Directory.CreateDirectory(dir);
+            foreach (var (name, bmp) in new[] { ("icon-1024", AppIcon.Render(1024)), ("icon-32", AppIcon.Render(32)), ("icon-16", AppIcon.Render(16)),
+                         ("tray-read-32", AppIcon.Tray(32, false, SKColors.Black)), ("tray-unread-32", AppIcon.Tray(32, true, SKColors.Black)) })
+            {
+                using (bmp)
+                using (var img = SKImage.FromBitmap(bmp))
+                    File.WriteAllBytes(Path.Combine(dir, name + ".png"), img.Encode(SKEncodedImageFormat.Png, 100).ToArray());
+            }
+        }
+    }
+
     [Fact]
     public void ImageShrinkCapsSize()
     {

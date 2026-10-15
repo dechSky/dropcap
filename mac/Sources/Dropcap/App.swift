@@ -17,8 +17,12 @@ struct DropcapApp: App {
         MenuBarExtra(isInserted: .constant(!E2EFeeds.active)) { // 시험 실행은 상단바 아이콘을 두지 않는다(설치된 앱과 겹치지 않게)
             MenuView()
         } label: {
-            // 안 읽은 소식이 있으면 채워진 아이콘
-            Image(systemName: model.state.unread > 0 ? "newspaper.fill" : "newspaper")
+            // 앱 아이콘과 같은 표지 상징(shared/icon.json). 안 읽은 소식이 있으면 채워진 표지. 못 읽으면 시스템 신문 기호.
+            if let img = model.state.unread > 0 ? MenuBarIcon.unread : MenuBarIcon.read {
+                Image(nsImage: img)
+            } else {
+                Image(systemName: model.state.unread > 0 ? "newspaper.fill" : "newspaper")
+            }
         }
         .menuBarExtraStyle(.window)
 
@@ -26,6 +30,13 @@ struct DropcapApp: App {
             SettingsView()
         }
     }
+}
+
+// 상단바 템플릿 상징: 한 번만 읽어 둔다
+private enum MenuBarIcon {
+    static let doc = IconArt.load(Resources.url("icon.json"))
+    static let read = doc.map { IconArt.symbol($0, unread: false) }
+    static let unread = doc.map { IconArt.symbol($0, unread: true) }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {

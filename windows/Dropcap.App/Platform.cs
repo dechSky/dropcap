@@ -32,10 +32,15 @@ internal sealed class Platform(Shell shell) : IPlatform
 
     public static string IconPath => Path.Combine(Store.Dir, "dropcap.ico");
 
-    // 창 아이콘(D-03): 처음 한 번 코드로 그려 둔다
+    // 창 아이콘(D-03): 코드로 그려 둔다. 아이콘이 바뀐 판으로 올라오면(예전 물방울) 새 그림으로 덮는다.
     public static void EnsureIcon()
     {
-        try { if (!File.Exists(IconPath)) File.WriteAllBytes(IconPath, AppIcon.Ico(16, 24, 32, 48, 64, 256)); } catch { }
+        try
+        {
+            var ico = AppIcon.Ico(16, 24, 32, 48, 64, 256);
+            if (!File.Exists(IconPath) || !File.ReadAllBytes(IconPath).AsSpan().SequenceEqual(ico)) File.WriteAllBytes(IconPath, ico);
+        }
+        catch { }
     }
 
     // MARK: IPlatform

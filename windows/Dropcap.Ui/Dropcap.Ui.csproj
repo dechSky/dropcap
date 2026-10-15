@@ -15,6 +15,11 @@
     <PackageReference Include="SkiaSharp" Version="4.153.1" />
   </ItemGroup>
 
+  <!-- 앱 아이콘·트레이 상징 도형(세 판 공통, docs/ICON.md) -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\shared\icon.json" Link="Toast\icon.json" LogicalName="Dropcap.icon.json" />
+  </ItemGroup>
+
   <ItemGroup>
     <InternalsVisibleTo Include="Dropcap.Core.Tests" />
   </ItemGroup>

@@ -45,7 +45,11 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
     public sealed record IssueView(string Id, string Title, bool Live, int Count, int SectionCount, string Sort, CoverView? Cover, EmptyView? Empty,
         List<SectionView> Sections, Dictionary<string, string> Clusters, int Revision, int ImageRevision, int LayoutRevision, bool Preparing,
         string? Focus, string? Sub, List<ChipView> Chips, List<ChipView> SubChips, Dictionary<string, TopicView> Topics, Dictionary<string, RegionLines> Regions,
-        TodayView? Today = null, bool TodayDone = false, BriefView? Brief = null);
+        TodayView? Today = null, bool TodayDone = false, BriefView? Brief = null,
+        string Head = "", string? Kicker = null, string? SectionPage = null, bool ChipsGo = false);
+    // Head: 머리 숫자(M-25 — "소식 N건 중 M건 실음 · 분야 K개", 분야 지면은 "IT 소식 N건 중 M건 실음 · 출처 K곳")
+    // SectionPage: 분야 지면(section:<id>)이면 그 분야 — 지면 머리(유리 띠)를 다시 달지 않는다
+    // ChipsGo: 오늘 호의 분야 칩은 그 분야 지면으로 가는 길(칩 건수는 가는 곳과 달라 달지 않음)
 
     public sealed record SourceChip(string Name, string Initial, string Color);
     public sealed record StoryCard(string Id, string Title, int Size, int Fresh, bool Following, string? Photo, TopicView? Topic, List<SourceChip> Sources, string Times);
@@ -60,7 +64,10 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
     public sealed record FolderView(string Name, int Count);
     public sealed record ScrapView(string Id, string? Quote, string? Original, string Memo, string Collection);
     public sealed record ScrapGroup(ItemView Item, List<ScrapView> Scraps);
-    public sealed record ScrapbookView(string Folder, List<FolderView> Folders, int Total, List<ScrapGroup> Groups);
+    public sealed record ScrapbookView(string Folder, List<FolderView> Folders, int Total, List<ScrapGroup> Groups, WeeklyView? Weekly = null);
+    // 이번 주 모은 문장(M-27): 일요일 17시부터 스크랩북 첫머리에 지난 7일 문단 스크랩(최근 것부터 6개, 같은 문장은 한 번)
+    public sealed record WeeklyQuote(string Key, string Quote, string Source, string Title, string Color);
+    public sealed record WeeklyView(string Count, List<WeeklyQuote> Items);
 
     public sealed record ReduceView(string Hide, string? Less, List<string> Words);
 
@@ -128,22 +135,26 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
     // 출처 이름(겹치지 않게, 앞에서부터 n곳)
     private static List<string> Names(IEnumerable<NewsItem> items, int n) => items.Select(i => i.SourceName).Distinct().Take(n).ToList();
 
-    // 한 호(M-04~M-11·G-09·G-10). source: today · week · 지난 호 id. 없는 호면 null.
+    // 한 호(M-04~M-11·G-09·G-10·M-25). source: today · week · section:<분야 id> · 지난 호 id. 없는 호면 null.
     // focus: 분야 칩·옆 목록 '분야'로 고른 한 분야(지면 이름 section:<id>), sub: AI 안의 하위 칩(모델·연구…)
     public async Task<IssueView?> IssueData(string source, string? sort = null, string? focus = null, string? sub = null)
     {
         if (sort is not null && Sorts.Contains(sort)) Prefs.Set("magSort", sort);
         var order = CurrentSort();
-        var live = source is "today" or "week";
+        // 분야 지면(M-25): 오늘 호 기간의 그 분야 칩이 달린 기사만으로 따로 엮은 호(표지·건수도 그 분야). 칩은 AI 하위 칩만
+        var sectionPage = source.StartsWith("section:", StringComparison.Ordinal) ? source["section:".Length..] : null;
+        if (sectionPage is { Length: 0 }) return null;
+        var live = source is "today" or "week" || sectionPage is not null;
+        if (sectionPage is not null) focus = null;
         if (focus is { Length: 0 }) focus = null;
-        if (focus != Sections.Ai || sub is { Length: 0 }) sub = null;
+        if ((focus ?? sectionPage) != Sections.Ai || sub is { Length: 0 }) sub = null;
         var built = await Task.Run(() =>
         {
             // 엮기 전에 판을 기억해 둔다(엮는 사이에 들어온 기사는 '새 소식' 띠로)
             var rev = mag.Revision;
             var img = mag.ImageRevision;
             var lay = mag.LayoutRevision;
-            var issue = source switch
+            var issue = sectionPage is not null ? mag.LiveSection(sectionPage) : source switch
             {
                 "today" => mag.LiveDaily(),
                 "week" => mag.LiveWeekly(),
@@ -164,7 +175,7 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
         foreach (var p in r.Sections) if (p.Section.SectionId is { } sid) counts[sid] = counts.GetValueOrDefault(sid) + p.Items.Count;
         var chipIds = counts.Keys.ToList();
         if (focus is not null && !chipIds.Contains(focus) && Sections.ById(focus) is not null) chipIds.Add(focus);
-        var chips = chipIds.Count > 1 || focus is not null
+        var chips = sectionPage is null && (chipIds.Count > 1 || focus is not null)
             ? chipIds.Select(id =>
             {
                 var s = Sections.ById(id);
@@ -173,22 +184,28 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
             }).ToList()
             : new List<ChipView>();
         // AI 를 고르면 하위 칩(모델·연구·정책·투자·보안) 한 줄 더
-        var subChips = focus == Sections.Ai
+        // 분야 지면 'AI' 는 그 분류 기사가 있는 하위 칩만 건수와 함께('기타'까지 — 칩 숫자의 합이 실린 수와 같게, 맥 AISubChips)
+        var subChips = sectionPage == Sections.Ai
+            ? Categories.All.Select(c => (c, n: (r.Cover is { } c1 ? new[] { c1.Item } : []).Concat(r.Sections.SelectMany(p => p.Items)).Count(i => i.Category.Raw() == c.Raw())))
+                .Where(x => x.n > 0).Select(x => { var (l, d) = Tint(x.c.Color()); return new ChipView(x.c.Raw(), x.c.Label(), x.c.Glyph(), l, d, x.n); }).ToList()
+            : focus == Sections.Ai
             ? Categories.All.Where(c => !c.IsOther()).Select(c => { var (l, d) = Tint(c.Color()); return new ChipView(c.Raw(), c.Label(), c.Glyph(), l, d, 0); }).ToList()
             : new List<ChipView>();
 
-        // 한 분야만 볼 때는 표지 없이 그 분야 지면만(AI 하위 칩이면 그 분류만)
-        var pages = focus is null ? r.Sections
+        // 한 분야만 볼 때는 표지 없이 그 분야 지면만(AI 하위 칩이면 그 분류만). 분야 지면은 표지째 하위 칩으로 거른다
+        var pages = sectionPage is not null
+            ? r.Sections.Select(p => (p.Section, Items: sub is null ? p.Items : p.Items.Where(i => i.Category.Raw() == sub).ToList())).Where(p => p.Items.Count > 0).ToList()
+            : focus is null ? r.Sections
             : r.Sections.Where(p => p.Section.SectionId == focus)
                 .Select(p => (p.Section, Items: sub is null ? p.Items : p.Items.Where(i => i.Category.Raw() == sub).ToList()))
                 .Where(p => p.Items.Count > 0).ToList();
-        var cover = focus is null && r.Cover is { } cs ? new CoverView(View(cs.Item, now), cs.Cluster, built.size) : null;
+        var cover = focus is null && r.Cover is { } cs && (sub is null || cs.Item.Category.Raw() == sub) ? new CoverView(View(cs.Item, now), cs.Cluster, built.size) : null;
         // M-12: 표지가 없으면 빈 지면 안내(첫 호를 엮는 중이면 그 안내)
         EmptyView? empty = null;
-        if (focus is not null)
+        if ((focus ?? sectionPage) is { } one && (focus is not null || cover is null))
         {
             if (pages.Count == 0)
-                empty = new EmptyView(false, live ? $"이번 호에는 아직 {Sections.Name(focus)} 소식이 없습니다" : $"이 호에는 {Sections.Name(focus)} 소식이 없습니다",
+                empty = new EmptyView(false, live ? $"이번 호에는 아직 {Sections.Name(one)} 소식이 없습니다" : $"이 호에는 {Sections.Name(one)} 소식이 없습니다",
                     "새 소식이 들어오는 대로 지면이 채워집니다.");
         }
         else if (cover is null)
@@ -205,7 +222,7 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
             var items = Sort(p.Items, order);
             // 분야 지면: 분야 고르기와 같은 유리 띠(구독 채널 지면·그 밖의 소식은 예전 머리 그대로)
             GlassView? glass = null;
-            if (p.Section.Kind is null && p.Section.SectionId is { } sid && Sections.ById(sid) is not null)
+            if (sectionPage is null && p.Section.Kind is null && p.Section.SectionId is { } sid && Sections.ById(sid) is not null)
             {
                 glassIds.Add(sid);
                 glass = new GlassView(SectionPhotos.English(sid), $"{items.Count}건 · " + (items.FirstOrDefault()?.DisplayTitle ?? ""), PhotoUrl(sid));
@@ -220,7 +237,7 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
         var today = source == "today" && focus is null
             ? Today(TodayIssue.Keys(r.Cover?.Item.Key, r.Sections, model.ChosenSections), now) : null;
         // 저녁 정리(N-26): 오늘 호의 한 분야 지면 맨 위
-        var brief = source == "today" && focus is not null ? BriefData(focus) : null;
+        var brief = (source == "today" ? focus : sectionPage) is { } bsec ? BriefData(bsec) : null;
 
         var all = (r.Cover is { } c0 && cover is not null ? new[] { c0.Item } : []).Concat(pages.SelectMany(p => p.Items)).ToList();
         // 해외·국내가 섞인 스토리의 카드에 두 줄(출처 이름 3곳까지)
@@ -231,9 +248,18 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
                 var (intl, kr) = Magazine.SplitByRegion(story);
                 if (intl.Count > 0 && kr.Count > 0) regions[it.Key] = new RegionLines(Names(intl, 3), Names(kr, 3));
             }
-        return new IssueView(r.Issue.Id, r.Issue.Title, live, r.Issue.Count, r.Issue.Sections.Count, order, cover, empty, sections, r.Clusters,
+        // 머리: 왼쪽 목록에서 고른 것과 같은 이름, 숫자는 지면에 실린 것 기준(맥 IssueView.headTitle·kicker·subtitle)
+        var shownCount = (cover is null ? 0 : 1) + pages.Sum(p => p.Items.Count);
+        var head = sectionPage is { } sp
+            ? Magazine.Subtitle(r.Issue.Count, shownCount, 0, Sections.Name(sp) + " 소식") + $" · 출처 {all.Select(i => i.SourceId).Distinct().Count()}곳"
+            : Magazine.Subtitle(r.Issue.Count, shownCount, pages.Count(p => p.Section.Kind is null));
+        var title = sectionPage is { } sp2 ? Sections.Name(sp2) : source == "week" ? r.Issue.Title.Replace("주간 · ", "이번 주 · ") : r.Issue.Title;
+        var kicker = sectionPage is not null ? "오늘 호의 분야 지면 · " + r.Issue.Title.Replace(" 호", "")
+            : source switch { "today" => "오늘", "week" => "이번 주", _ => "지난 호" };
+        return new IssueView(r.Issue.Id, title, live, r.Issue.Count, r.Issue.Sections.Count, order, cover, empty, sections, r.Clusters,
             built.rev, built.img, built.lay, preparing, focus, sub, chips, subChips, Topics(all), regions,
-            today, source == "today" && TodayIssue.IsMarkedDone(now), brief);
+            today, source == "today" && TodayIssue.IsMarkedDone(now), brief,
+            head, kicker, sectionPage, source == "today" && focus is null);
     }
 
     // MARK: 오늘 호 완독(M-23) — 맥 TodayProgressView 와 같은 판단
@@ -291,11 +317,19 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
     private StoryCard Card(Database.Cluster c, List<NewsItem> items, DateTimeOffset now)
     {
         var photo = items.Select(i => i.Image).FirstOrDefault(i => i is not null && !ImageKey.IsJunk(i));
-        var lead = items.FirstOrDefault(i => i.Tier == "lab") ?? items.FirstOrDefault();
         var sources = items.GroupBy(i => i.SourceName).Take(6)
             .Select(g => new SourceChip(g.Key, g.First().Initial, ItemView.SafeColor(model.SourceById(g.First().SourceId)?.Color))).ToList();
-        return new StoryCard(c.Id, c.Title, c.Size, model.UnseenReports(c), model.IsFollowing(c.Id), photo, lead is null ? null : Topic(lead), sources,
+        return new StoryCard(c.Id, c.Title, c.Size, model.UnseenReports(c), model.IsFollowing(c.Id), photo, StoryTopicView(items), sources,
             $"첫 보도 {RelativeTime.Format(c.First, now)} · 최근 {RelativeTime.Format(c.Last, now)}");
+    }
+
+    // 스토리의 분야 표시(M-26): 묶인 보도들의 다수결(대표 기사 하나의 AI 하위 분류를 그대로 쓰면 IT 소식이 'AI·모델'이 됐다 — 맥과 같음)
+    public static TopicView? StoryTopicView(IReadOnlyList<NewsItem> items)
+    {
+        if (Magazine.StoryTopic(items, i => i.Section()) is not { } t) return null;
+        var ns = Sections.ById(t.Section);
+        var (l, d) = Tint(t.Category is { } c ? c.Color() : ns is null ? DualColor.Gray : DualColor.Fixed(ns.Color));
+        return new TopicView(t.Category is { } c2 ? "AI·" + c2.Label() : Sections.Name(t.Section), t.Category?.Glyph() ?? ns?.Icon ?? "cat.other", l, d);
     }
 
     // 한 스토리: 보도 줄기(먼저 보도한 곳부터, 간격·날짜·첫 문장) · 해외·국내 두 칸 · 팔로우. 열면 새 보도를 본 것으로
@@ -393,7 +427,20 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
         var now = model.Now();
         var groups = order.Select(k => new ScrapGroup(View(map[k][0].Item, now),
             map[k].OrderBy(s => s.Created).Select(s => new ScrapView(s.Id, s.Quote, s.QuoteOriginal, s.Memo, s.Collection)).ToList())).ToList();
-        return new ScrapbookView(f, book.Collections.Select(c => new FolderView(c, scraps.Count(s => s.Collection == c))).ToList(), scraps.Count, groups);
+        return new ScrapbookView(f, book.Collections.Select(c => new FolderView(c, scraps.Count(s => s.Collection == c))).ToList(), scraps.Count, groups, Weekly(scraps, now));
+    }
+
+    // 이번 주 모은 문장(M-27 — 맥 WeeklyQuotes): 일요일 저녁이 아니거나 고를 문장이 없으면 null
+    public WeeklyView? Weekly(IReadOnlyList<Scrap> scraps, DateTimeOffset now)
+    {
+        if (!WeeklyQuotes.IsSundayEvening(now)) return null;
+        var list = WeeklyQuotes.Pick(scraps, now);
+        if (list.Count == 0) return null;
+        return new WeeklyView($"{list.Count}개 · 지난 7일", list.Select(s =>
+        {
+            var v = View(s.Item, now);   // 두 번 누르면 읽기 창(화면에 보낸 기사로 기억)
+            return new WeeklyQuote(v.Key, s.Quote ?? "", v.Source, v.Title, v.Color);
+        }).ToList());
     }
 
     // 카드의 읽음·저장 표시만 다시(지면을 다시 엮지 않고)
@@ -511,6 +558,12 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
                 return null;
             }
             case "saved": return await SavedData();
+            // 저장 목록 위 '주소로 추가…'(I-05): 피드에 없는 기사 주소를 나중에 읽기로
+            case "addUrl":
+            {
+                var r = await SaveLink.SaveAsync(model, a.Str("url"));
+                return new { ok = r.Ok, message = r.Item is { } it ? "저장함 · " + it.DisplayTitle : SaveLink.Message(r.Error ?? SaveLink.Failure.NotUrl) };
+            }
             case "search": return await SearchData(a.Str("q"), a.Bool("submit"));
             case "scrapbook": return ScrapbookData(a.StrOrNull("folder"), a.Bool("repick"));
             case "marks": return Marks((a["keys"] as JsonArray ?? new()).Select(n => n?.GetValue<string>() ?? ""));

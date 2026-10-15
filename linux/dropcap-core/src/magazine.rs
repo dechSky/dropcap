@@ -157,10 +157,20 @@ pub struct Editorial {
 }
 
 pub fn make_issue(db: &Database, kind: IssueKind, from: DateTime<Utc>, to: DateTime<Utc>, id: &str, ed: &Editorial) -> Issue {
+    make_issue_in(db, kind, from, to, id, ed, None)
+}
+
+// only: 분야 지면(그 분야 칩이 달린 기사만, 구독 채널 지면 없이 — 맥 Editor.makeIssue(only:))
+pub fn make_issue_in(db: &Database, kind: IssueKind, from: DateTime<Utc>, to: DateTime<Utc>, id: &str, ed: &Editorial, only: Option<&str>) -> Issue {
     // 기사와 구독 채널 글을 따로(논문이 많아도 기사가 잘리지 않게). 숨긴 출처는 스토리 대표를 고르기 전에 뺀다.
     let mut stored = db.items_kind(from, Some(to), 4000, KindFilter::Articles);
-    stored.extend(db.items_kind(from, Some(to), 800, KindFilter::Channels));
+    if only.is_none() {
+        stored.extend(db.items_kind(from, Some(to), 800, KindFilter::Channels));
+    }
     stored.retain(|s| !ed.hidden.contains(&s.item.source_id) && ed.filter.shows(&s.item.source_id));
+    if let Some(sec) = only {
+        stored.retain(|s| s.item.in_section(sec));
+    }
     // 같은 스토리는 대표 하나만 지면에(점수 높은 것)
     let mut sizes: HashMap<String, i64> = HashMap::new();
     for s in &stored {
@@ -191,7 +201,10 @@ pub fn make_issue(db: &Database, kind: IssueKind, from: DateTime<Utc>, to: DateT
     let ranked_items: Vec<NewsItem> = picked.iter().map(|r| r.0.item.clone()).collect();
     let cover = crate::photo_quality::pick_cover(&ranked_items, &photo_scores).or_else(|| picked.first().map(|r| r.0.item.key()));
     let articles: Vec<StoredItem> = picked.iter().filter(|r| Some(r.0.item.key()) != cover).map(|r| r.0.clone()).collect();
-    let mut sections = section_pages(&articles, &stored, ed.chosen.as_deref(), ed.limits, if kind == IssueKind::Weekly { 8 } else { 12 }, &sections::META);
+    let only_pick: Option<Vec<String>> = only.map(|s| vec![s.to_string()]);
+    let chosen = if only.is_some() { only_pick.as_deref() } else { ed.chosen.as_deref() };
+    let per_section = if only.is_some() { SECTION_PAGE_LIMIT } else if kind == IssueKind::Weekly { 8 } else { 12 };
+    let mut sections = section_pages(&articles, &stored, chosen, ed.limits, per_section, &sections::META);
     // 구독 채널 지면: 종류별, 채널 하나당 4개까지(논문처럼 많은 곳이 지면을 덮지 않게)
     for k in [ItemKind::Video, ItemKind::Release, ItemKind::Paper, ItemKind::Podcast, ItemKind::Post] {
         let mut per: HashMap<String, usize> = HashMap::new();
@@ -222,6 +235,9 @@ fn coverage_of(s: &StoredItem, outlets: &HashMap<String, HashMap<String, String>
     let m = s.cluster.as_ref().and_then(|c| outlets.get(c).cloned()).unwrap_or_else(own);
     Coverage { kr: m.values().filter(|r| *r == "kr").count() as i64, intl: m.values().filter(|r| *r != "kr").count() as i64 }
 }
+
+// 분야 지면 한 장에 싣는 기사 수(맥 perSection 40)
+pub const SECTION_PAGE_LIMIT: usize = 40;
 
 // 분야 지면: 주요 뉴스(국내 n곳·해외 n곳 넘게 보도된 소식) → 고른 분야 → 나머지 분야 → 그 밖의 소식(G-10).
 // 기사는 한 지면에만(고른 분야에 걸린 칩이 있으면 그 분야, 없으면 대표 분야).
@@ -334,6 +350,13 @@ pub fn live_daily(db: &Database, interest: &Editorial) -> Issue {
     let now = Utc::now();
     let start = start_of_day(now);
     make_issue(db, IssueKind::Daily, start - Duration::hours(6), now + Duration::seconds(60), "live-daily", interest)
+}
+
+// 분야 지면(옆 목록의 분야, M-25): 오늘 호 기간의 그 분야 칩이 달린 기사만으로 엮은 지면(표지·건수도 그 분야 기준)
+pub fn live_section(db: &Database, interest: &Editorial, id: &str) -> Issue {
+    let now = Utc::now();
+    let start = start_of_day(now);
+    make_issue_in(db, IssueKind::Daily, start - Duration::hours(6), now + Duration::seconds(60), &format!("live-section-{id}"), interest, Some(id))
 }
 
 pub fn live_weekly(db: &Database, interest: &Editorial) -> Issue {
@@ -547,3 +570,95 @@ pub fn story_groups(db: &Database, now: DateTime<Utc>, filter: &crate::source_fi
     all.into_iter().partition(|c| c.last >= cut)
 }
 
+
+// MARK: 지면 규칙(옆 목록과 오른쪽 화면이 같은 기준을 쓰게 — 맥 Magazine · SidebarRuleTests)
+
+// 머리 아래 숫자: 모은 소식 중 지면에 실은 수(표지 포함). 다 실었으면 한 숫자만
+pub fn subtitle(total: i64, shown: i64, sections: usize, noun: &str) -> String {
+    let head = if shown >= total { format!("{noun} {total}건") } else { format!("{noun} {total}건 중 {shown}건 실음") };
+    if sections > 0 {
+        format!("{head} · 분야 {sections}개")
+    } else {
+        head
+    }
+}
+
+// 분야 지면 머리: "IT 소식 N건 중 M건 실음 · 출처 K곳"(실린 기사 기준)
+pub fn section_subtitle(id: &str, total: i64, shown: &[NewsItem]) -> String {
+    let outlets: HashSet<&str> = shown.iter().map(|i| i.source_id.as_str()).collect();
+    format!("{} · 출처 {}곳", subtitle(total, shown.len() as i64, 0, &format!("{} 소식", sections::name(id))), outlets.len())
+}
+
+// 분야 지면의 AI 하위 칩: 실린 기사에 있는 하위 분류만, 분류 순서대로('기타'까지 — 칩 숫자의 합이 실린 수와 같게)
+pub fn sub_chip_counts(items: &[NewsItem]) -> Vec<(NewsCategory, usize)> {
+    let mut counts: HashMap<NewsCategory, usize> = HashMap::new();
+    for it in items {
+        *counts.entry(it.category()).or_default() += 1;
+    }
+    NewsCategory::all().into_iter().filter_map(|c| counts.get(&c).map(|n| (c, *n))).collect()
+}
+
+// 스토리의 분야: 묶인 보도들의 대표 분야 다수결(같으면 분야 순서 앞). AI 면 AI 안 하위 분류도 다수결
+pub fn story_topic(items: &[NewsItem], place: impl Fn(&NewsItem) -> String) -> Option<(String, Option<NewsCategory>)> {
+    if items.is_empty() {
+        return None;
+    }
+    let secs: Vec<String> = items.iter().map(&place).collect();
+    let mut votes: HashMap<&str, usize> = HashMap::new();
+    for s in &secs {
+        *votes.entry(s.as_str()).or_default() += 1;
+    }
+    let sec = votes.iter().max_by(|a, b| a.1.cmp(b.1).then_with(|| sections::order(b.0).cmp(&sections::order(a.0)))).map(|(k, _)| k.to_string())?;
+    if sec != sections::AI {
+        return Some((sec, None));
+    }
+    let mut cats: HashMap<NewsCategory, usize> = HashMap::new();
+    for (it, s) in items.iter().zip(&secs) {
+        if s == sections::AI {
+            *cats.entry(it.category()).or_default() += 1;
+        }
+    }
+    let cat = cats.into_iter().max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.sort_order().cmp(&a.0.sort_order()))).map(|(c, _)| c);
+    Some((sec, cat))
+}
+
+// 화면에 보이는 스토리 분야(이름·아이콘·색): AI 면 'AI·하위 분류'
+pub fn story_topic_label(topic: &(String, Option<NewsCategory>), dark: bool) -> (String, &'static str, String) {
+    match topic.1 {
+        Some(c) => (format!("AI·{}", c.label()), c.icon(), c.color(dark).to_string()),
+        None => {
+            let s = sections::by_id(&topic.0);
+            (sections::name(&topic.0), s.map(|s| s.icon()).unwrap_or("view-app-grid-symbolic"), s.map(|s| s.color.clone()).unwrap_or_else(|| "#8E8E93".into()))
+        }
+    }
+}
+
+// 스토리의 새 보도 수: 지금 보도 수 − 마지막으로 본 보도 수(본 적 없으면 0)
+pub fn unseen_reports(size: i64, seen: Option<i64>) -> i64 {
+    (size - seen.unwrap_or(size)).max(0)
+}
+
+// MARK: 이번 주 모은 문장(M-27, 맥 UI/WeeklyQuotes.swift)
+// 일요일 저녁(17시부터)에만 스크랩북 첫머리에
+pub fn is_sunday_evening<Tz: TimeZone>(d: &DateTime<Tz>) -> bool {
+    if crate::test_hooks::var("DROPCAP_TEST_WEEKLY").is_some() {
+        return true; // 시험용
+    }
+    d.weekday() == chrono::Weekday::Sun && d.hour() >= 17
+}
+
+// 지난 7일 동안 문단으로 스크랩한 글: 최근 것부터, 같은 문장은 한 번만
+pub fn pick_weekly_quotes(scraps: &[crate::scrapbook::Scrap], now: DateTime<Utc>, limit: usize) -> Vec<crate::scrapbook::Scrap> {
+    let mut seen = HashSet::new();
+    let mut v: Vec<crate::scrapbook::Scrap> = scraps
+        .iter()
+        .filter(|s| {
+            let Some(q) = s.quote.as_ref().filter(|q| !q.is_empty()) else { return false };
+            (now - s.created).num_seconds() < 7 * 86400 && s.created <= now + Duration::seconds(60) && seen.insert(q.clone())
+        })
+        .cloned()
+        .collect();
+    v.sort_by(|a, b| b.created.cmp(&a.created));
+    v.truncate(limit);
+    v
+}

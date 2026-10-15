@@ -1,5 +1,7 @@
 # Dropcap 리눅스 판
 
+관심 분야(정치·경제·IT·AI 등)의 새 소식을 분야별 알림 정책(즉시·묶음·매거진만)에 따라 화면 위쪽에서 물방울처럼 알려 주고, 하루·한 주의 소식을 매거진으로 엮어 보여 주는 트레이 앱입니다.
+
 맥 앱(`mac/`)과 같은 기능·문구·수치를 GTK4 · libadwaita 네이티브로 옮긴 판입니다. 기능 목록과 상태는 `docs/FEATURES.md` 의 "리" 열.
 
 - Rust · GTK4(4.14 이상) · libadwaita(1.5 이상)
@@ -51,6 +53,8 @@ cd linux && cargo run -p dropcap-gtk     # 리눅스 전용 기능 없이 빌드
 설정(`native-state.json`)·화면 설정(`prefs.json`)·매거진 기록(`magazine.sqlite`)·출처 건강(`source-health.json`)·기사·사진 캐시. 파일 모양은 맥 판과 같습니다. 상태 파일이 깨지면 `.bak` 에서 되살리고, 깨진 파일은 `.broken.json` 으로 남깁니다.
 
 ## 시험용 환경 변수
+
+개발 빌드(`cargo build`·`cargo run`)에서만 듣습니다. 배포 빌드(`--release`)에서 쓰려면 `--features test-hooks` 를 더합니다(`DROPCAP_SECTIONS`·`DROPCAP_CATEGORIES` 도 같음).
 
 ```bash
 DROPCAP_TEST_TOAST=1 dropcap                 # 실행하자마자 알림 미리 보기
@@ -107,3 +111,9 @@ DROPCAP_TEST_EXTRAS2=/tmp/e dropcap          # 내 기록 내보내기→가져�
 14. 상단바 창을 열자마자 ↓/J·↑/K·Enter·S·O·M 이 듣는지, 검색칸에서 ↓ 로 목록으로 내려가는지, 매거진 Ctrl+[ · Ctrl+], 읽기 창 J·K·Esc
 15. 설정 › 일반 › 내 기록: 내보내기·가져오기 파일 대화상자(포털), 맥·윈도우에서 내보낸 파일을 가져오면 저장·스크랩·구독이 더해지는지, '마지막 가져오기 되돌리기'
 16. 지켜볼 낱말 정리 알림(시스템 알림 방식)을 누르면 매거진 검색이 그 낱말로 열리는지
+17. `xdg-open 'dropcap://save?url=https%3A%2F%2Fexample.com%2Fa'` — 앱이 떠 있을 때·꺼져 있을 때 모두 확인 창 → '나중에 읽기에 저장했어요', 설정 › 스크랩북의 북마클릿(Firefox·Chromium)
+18. `dropcap --save <주소>`·`dropcap --magazine` 이 떠 있는 앱으로 넘어가는지, `dropcap --latest 5 --section 연구`·`--json` 이 창 없이 출력하는지
+19. 데스크톱 검색: `packaging/io.github.dechsky.Dropcap.search-provider.ini` 를 `/usr/share/gnome-shell/search-providers/` 에(D-Bus `.service` 는 `/usr/share/dbus-1/services/`) 두면 GNOME 검색에 저장·스크랩 기사가 나오고 누르면 읽기 창 · KDE 는 `.krunner.desktop` 을 `~/.local/share/krunner/dbusplugins/` 에. AppImage 는 이 파일들의 사본을 `usr/share/dropcap/integration/` 에 담음(D-Bus 로 처음 깨울 때 첫 질문이 빈 결과일 수 있음)
+20. 설정 › 스크랩북 노트 폴더: 포털 폴더 고르기(Flatpak 경로 포함), Obsidian 보관함에 `<폴더>.md` 가 생기고 폴더 이름을 바꾸면 예전 파일이 휴지통으로, 폴더가 없어지면 '다시 골라 주세요'
+21. 상단바 '저장' 탭·매거진 '저장' 의 '주소로 추가…' 칸
+22. 읽기 창 사진 도구: 마우스 올림 단추·오른쪽 클릭, tesseract(kor·eng 등) 설치 시 사진 속 글자 번역 창, 없을 때 설치 안내 · Ctrl+F 찾기

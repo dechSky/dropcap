@@ -16,11 +16,13 @@ public sealed class Database : IDisposable
     private readonly SqliteConnection db;
     private readonly object gate = new();
     public string FilePath { get; }
+    public bool Recreated { get; }        // 이번 실행에서 깨진 파일을 치우고 새로 만들었는가
+    public int SalvagedScraps { get; }    // 그때 깨진 파일에서 건진 스크랩 수
 
     public Database(string file)
     {
         FilePath = file;
-        db = OpenOrRecreate(file);
+        (db, Recreated) = OpenOrRecreate(file);
         Exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;");
         Exec("""
         CREATE TABLE IF NOT EXISTS items(
@@ -42,11 +44,50 @@ public sealed class Database : IDisposable
           url TEXT PRIMARY KEY, score REAL NOT NULL, text REAL NOT NULL, colors REAL NOT NULL, flat REAL NOT NULL, updated REAL NOT NULL);
         """);
         Exec($"PRAGMA user_version={SchemaVersion};");
+        if (Recreated)
+        {
+            // 스크랩은 사용자가 만든 것이라 다시 쌓이지 않는다 → 치운 파일에서 읽을 수 있는 만큼 옮겨 온다
+            SalvagedScraps = ImportScraps(BrokenPath(file));
+            if (SalvagedScraps > 0) Console.Error.WriteLine($"[DB] 깨진 파일에서 스크랩 {SalvagedScraps}개를 옮겨 왔습니다");
+        }
+    }
+
+    private static string BrokenPath(string file) => Path.ChangeExtension(file, null) + ".broken.sqlite";
+
+    // 깨진(치운) DB 의 scraps 표를 읽기 전용으로 열어, 읽히는 줄까지 이 DB 로 옮긴다(시험·손 복구에도 씀)
+    public int ImportScraps(string other)
+    {
+        if (!File.Exists(other)) return 0;
+        var rows = new List<(string Id, string Collection, double Created, string Json)>();
+        try
+        {
+            using var old = new SqliteConnection($"Data Source={other};Mode=ReadOnly;Pooling=False");
+            old.Open();
+            using var cmd = old.CreateCommand();
+            cmd.CommandText = "SELECT id, collection, created, json FROM scraps";
+            using var r = cmd.ExecuteReader();
+            while (true)
+            {
+                try { if (!r.Read()) break; } catch (SqliteException) { break; } // 중간에 깨진 쪽을 만나면 거기까지
+                try
+                {
+                    if (r.IsDBNull(0) || r.IsDBNull(3)) continue;
+                    var json = r.GetString(3);
+                    if (Json.Decode<Scrap>(json) is null) continue;
+                    rows.Add((r.GetString(0), r.IsDBNull(1) ? Scrapbook.DefaultCollection : r.GetString(1), r.IsDBNull(2) ? 0 : r.GetDouble(2), json));
+                }
+                catch (Exception e) when (e is SqliteException or InvalidCastException or FormatException) { }
+            }
+        }
+        catch (SqliteException) { }
+        foreach (var x in rows)
+            Run("INSERT OR IGNORE INTO scraps(id,collection,created,json) VALUES(?,?,?,?)", [x.Id, x.Collection, x.Created, x.Json]);
+        return rows.Count;
     }
 
     // SQLite 는 깨진 파일도 열어 준다 — 첫 문장에서 '데이터베이스가 아님(26)/깨짐(11)'이 나오면 그때 옆으로 치운다
     // (그대로 두면 모든 읽기·쓰기가 조용히 실패해 새 스크랩까지 사라졌다 — 맥 감사 A 와 같음)
-    private static SqliteConnection OpenOrRecreate(string file)
+    private static (SqliteConnection, bool Recreated) OpenOrRecreate(string file)
     {
         var c = new SqliteConnection($"Data Source={file};Pooling=False");
         try
@@ -55,7 +96,7 @@ public sealed class Database : IDisposable
             using var probe = c.CreateCommand();
             probe.CommandText = "PRAGMA schema_version;";
             probe.ExecuteScalar();
-            return c;
+            return (c, false);
         }
         catch (SqliteException e) when (e.SqliteErrorCode is 26 or 11)
         {
@@ -63,12 +104,12 @@ public sealed class Database : IDisposable
             foreach (var ext in new[] { "", "-wal", "-shm" }) // 남은 WAL 이 새 파일에 섞이지 않게 함께 치운다
             {
                 var from = file + ext;
-                var broken = Path.ChangeExtension(file, null) + ".broken.sqlite" + ext;
+                var broken = BrokenPath(file) + ext;
                 try { if (File.Exists(from)) { File.Delete(broken); File.Move(from, broken); } } catch { }
             }
             var fresh = new SqliteConnection($"Data Source={file};Pooling=False");
             fresh.Open();
-            return fresh;
+            return (fresh, true);
         }
     }
 

@@ -292,18 +292,26 @@ enum OnboardingController {
 enum SectionStartup {
     static func run() {
         let env0 = ProcessInfo.processInfo.environment
+        #if DEBUG // 시험 장치(M9): 배포 빌드에서는 DROPCAP_TEST_* 를 읽지 않는다
+        let testOnboard = env0["DROPCAP_TEST_ONBOARD"] != nil
         if let d = env0["DROPCAP_TEST_PERF"] { PerfHarness.run(dir: d) } // 시험용: 메인 막힘 측정
         if let picks = env0["DROPCAP_TEST_SECTIONS"] { // 시험용: 고르기 화면 없이 분야를 고른 것으로
             AppModel.shared.chooseSections(picks.split(separator: ",").map(String.init))
         }
+        #else
+        let testOnboard = false
+        #endif
         // 처음 실행이면 관심 분야부터 고른다(시험 폴더 실행은 DROPCAP_TEST_ONBOARD 일 때만 띄움)
-        if AppModel.shared.needsOnboarding, env0["DROPCAP_DATA_DIR"] == nil || env0["DROPCAP_TEST_ONBOARD"] != nil {
+        if AppModel.shared.needsOnboarding, env0["DROPCAP_DATA_DIR"] == nil || testOnboard {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { OnboardingController.open() }
+            #if DEBUG
             if let dir = env0["DROPCAP_TEST_SHOT_DIR"], env0["DROPCAP_TEST_ONBOARD"] != nil {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) { OnboardingController.snapshot(to: "\(dir)/onboarding.png") }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 15) { OnboardingController.snapshot(to: "\(dir)/onboarding-15s.png") } // 사진이 채워진 뒤
             }
+            #endif
         }
+        #if DEBUG
         if let sec = env0["DROPCAP_TEST_BUNDLE"] { // 시험용: 묶음 알림 견본
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                 let items = (1...7).map { i in
@@ -316,5 +324,6 @@ enum SectionStartup {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 5) { ToastCenter.shared.snapshot(to: "\(dir)/bundle.png") }
             }
         }
+        #endif
     }
 }

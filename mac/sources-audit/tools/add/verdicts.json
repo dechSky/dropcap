@@ -1,0 +1,384 @@
+{
+ "reuters": {
+  "add": true,
+  "verdict": "좋음",
+  "observed": "유료벽 없음(앱 느린 길로 본문 전체). 헤드리스 Chromium 은 401(봇 차단)이라 사이트 글자 수는 못 잼",
+  "why": "세계 3대 통신사. 공식 RSS 가 없어 공개 뉴스 사이트맵(구글 뉴스용, 최근 이틀·lastmod 있음)을 씀. 앱 느린 길로 2.8~5.4천 자",
+  "feedNote": "사이트맵이라 제목·요약·사진은 앱이 기사 페이지를 한 번 받아 채움(fillTitle). 거르기 정규식으로 world·business·markets·technology·sustainability·science·legal 기사만(영상·사진·라이브 뺌). 하루 약 200여 건",
+  "rules": [
+   "빠른 길은 401/403 — 느린 길이 늘 필요(기사당 3~5초). 출처 규칙에 '바로 느린 길' 표시가 있으면 빠른 길 시도를 건너뛰어 요청을 줄일 수 있음",
+   "fillTitle 의 꼬리 떼기(' | Reuters')는 지금 Anthropic 만 — og:title 은 깨끗해서 당장은 필요 없음"
+  ]
+ },
+ "ft": {
+  "add": true,
+  "verdict": "나쁨(유료)",
+  "observed": "hard 맞음 — 앱이 받은 것은 구독 권유 페이지(Paywall.looksBlocked 참), 사이트도 'unlock this article'",
+  "why": "공신력 최상위 경제지지만 하드 유료. paywall=hard 로 넣어 목록에서 유료 표시만 보이게(기본 꺼짐). 넣을지는 결정필요",
+  "rules": [
+   "빠른 길 406 → 느린 길도 구독 권유만 — 제목·요약(피드)만 쓰는 출처로 보는 것이 맞음"
+  ]
+ },
+ "economist": {
+  "add": true,
+  "verdict": "나쁨(유료)",
+  "observed": "hard 맞음 — 빠른 길 403, 느린 길은 첫 문단·목차 일부(0.5~1천 자). 헤드리스도 403",
+  "why": "하드 유료. 피드 제목·한 줄 요약은 좋음. paywall=hard 로 넣음, 넣을지는 결정필요",
+  "feedNote": "피드 300건(며칠치), 요약은 짧은 부제(중앙값 70자), 사진 없음",
+  "rules": [
+   "팟캐스트 글(/podcasts/)이 섞여 들어옴 — 피드 쪽 거르기 기능이 생기면 빼는 것을 제안"
+  ]
+ },
+ "bloomberg-markets": {
+  "add": true,
+  "verdict": "나쁨(유료)",
+  "observed": "hard 맞음 — 앱 빠른 길이 받은 것은 첫 문단·요점 목록(0.5~1.2천 자), 헤드리스 403",
+  "why": "하드 유료·봇 차단. 영상·뉴스레터 글이 섞임. paywall=hard 로 넣음, 넣을지는 결정필요",
+  "feedNote": "피드에 /news/videos/ · /news/newsletters/ 글이 섞임. 사진 없음",
+  "rules": [
+   "앱이 막힘으로 판정하지 못함(Paywall.looksBlocked 거짓) — paywall=hard 값으로만 표시됨"
+  ]
+ },
+ "bloomberg-tech": {
+  "add": true,
+  "verdict": "나쁨(유료)",
+  "observed": "hard 맞음 — bloomberg-markets 와 같음(0.6~1.2천 자, 헤드리스 403)",
+  "why": "bloomberg-markets 와 같음. 넣을지는 결정필요",
+  "rules": [
+   "bloomberg-markets 와 같음"
+  ]
+ },
+ "axios": {
+  "add": true,
+  "verdict": "좋음",
+  "observed": "유료 없음(본문 상자 이름이 gated-content 지만 열려 있음)",
+  "why": "미국 정치·정책 단신. 본문 108~114%(앱이 요점 목록 머리까지 담음)",
+  "rules": [
+   "없음"
+  ]
+ },
+ "atlantic": {
+  "add": true,
+  "verdict": "좋음",
+  "observed": "metered 맞음(이번 3건은 열림)",
+  "why": "본문 3.4~7.8천 자 모두 얻음. 사이트 측정은 선택자가 본문 일부만 잡아 % 가 100 을 넘음(앱이 더 많음 = 빠진 것 없음)",
+  "rules": [
+   "없음"
+  ]
+ },
+ "nikkei-asia": {
+  "add": true,
+  "verdict": "나쁨(유료)",
+  "observed": "hard 로 고침 — 앱이 받은 것은 앞 2~3문단(8~13%), 나머지는 로그인 뒤. Paywall.knownDomains 도 asia.nikkei.com=hard",
+  "why": "아시아 경제 1차 보도. 하드 유료로 넣고 넣을지는 결정필요",
+  "feedNote": "RDF(RSS 1.0) 피드, 요약·사진 없음",
+  "rules": [
+   "앱이 막힘으로 판정하지 못함 — paywall=hard 값으로만 표시됨"
+  ]
+ },
+ "scmp": {
+  "add": false,
+  "verdict": "나쁨",
+  "observed": "metered(사이트는 열림 5.7~14.6천 자) — 앱 빠른 길은 앞 4문단만(5~11%)",
+  "why": "나머지 본문을 스크립트로 붙이는 페이지라 빠른 길이 일부만 얻고도 '글이 많은 페이지'로 보고 멈춤. 느린 길 강제 규칙이 생기면 다시 보기",
+  "rules": [
+   "빠른 길 결과가 피드 요약보다 조금 긴 정도면 느린 길로 넘기는 규칙(또는 출처별 '느린 길' 표시)"
+  ]
+ },
+ "lemonde-en": {
+  "add": true,
+  "verdict": "좋음",
+  "observed": "metered 맞음 — 3건 중 1건은 구독자 전용(앱이 막힘으로 판정)",
+  "why": "프랑스 대표 일간지 영어판. 앱 1.4~4.7천 자. 헤드리스 Chromium 은 봇 확인 창이 떠서 사이트 글자 수는 못 잼",
+  "rules": [
+   "없음"
+  ]
+ },
+ "france24": {
+  "add": true,
+  "verdict": "좋음",
+  "observed": "유료 없음",
+  "why": "프랑스 공영 국제방송(AFP 기사 다수 실음). 본문 100~109%",
+  "rules": [
+   "없음"
+  ]
+ },
+ "pbs-newshour": {
+  "add": true,
+  "verdict": "좋음",
+  "observed": "유료 없음",
+  "why": "미국 공영방송 뉴스. 본문 105~109%",
+  "rules": [
+   "없음"
+  ]
+ },
+ "propublica": {
+  "add": true,
+  "verdict": "좋음",
+  "observed": "유료 없음",
+  "why": "탐사보도 비영리(퓰리처 다수). 긴 기사(4~28천 자)를 100~117% 로 얻음. 하루 2건 남짓",
+  "rules": [
+   "없음"
+  ]
+ },
+ "nature": {
+  "add": false,
+  "verdict": "실패",
+  "observed": "metered",
+  "why": "앱 받기가 형식 오류(badFormat) — 쿠키가 필요한 로그인 서버 리다이렉트(303→302→302)를 거쳐 앱에는 피드가 오지 않음. 이전(일반 뉴스 전환)에도 같은 사유로 뺌. 피드에 논문 초록이 뉴스와 섞이는 문제도 있음",
+  "rules": [
+   "뺌"
+  ]
+ },
+ "science-news": {
+  "add": false,
+  "verdict": "차단",
+  "observed": "—",
+  "why": "빠른 길·느린 길 모두 403(봇 확인 페이지, 108자). 피드는 받아지지만 본문을 못 얻음",
+  "rules": [
+   "뺌"
+  ]
+ },
+ "sciam": {
+  "add": true,
+  "verdict": "부분",
+  "observed": "metered(이번 3건은 열림)",
+  "why": "본문은 다 얻지만 꼬리에 '구독으로 과학 저널리즘 지원' 상자(소제목 2·문단 3)가 섞임",
+  "rules": [
+   "본문 뒤 'On supporting science journalism' 이후를 잘라 내는 규칙(작업자 Reader 몫)"
+  ]
+ },
+ "ieee-spectrum": {
+  "add": true,
+  "verdict": "좋음",
+  "observed": "유료 없음",
+  "why": "IEEE 기술 전문지. 본문 83~97%(빠진 것은 사진 설명 일부)",
+  "rules": [
+   "없음"
+  ]
+ },
+ "restofworld": {
+  "add": false,
+  "verdict": "실패",
+  "observed": "유료 없음",
+  "why": "피드 XML 이 깨짐(사진 주소의 & 를 이스케이프하지 않음) — 앱 파서가 12건 중 1건만 읽음. 본문 추출은 좋음(6천 자)",
+  "rules": [
+   "앱 파서가 깨진 & 를 너그럽게 읽게 되면 다시 넣기"
+  ]
+ },
+ "guardian-tech": {
+  "add": true,
+  "verdict": "좋음",
+  "observed": "유료 없음",
+  "why": "기존 Guardian 출처의 빠진 분야(IT). 본문 99~106%",
+  "rules": [
+   "없음"
+  ]
+ },
+ "kbs-news": {
+  "add": false,
+  "verdict": "좋음(본문) · 보류(받기 부담)",
+  "observed": "유료 없음",
+  "why": "공영방송 1위지만 RSS 가 없고, 사이트맵이 1.5MB·3천5백 건(하루 약 1천 건)이라 5분마다 받기와 새 글마다 페이지 받기(fillTitle) 부담이 큼. 본문 추출은 좋음(0.5~0.6천 자 방송 기사)",
+  "rules": [
+   "분야별 사이트맵·피드를 찾거나, 사이트맵 출처의 받기 간격을 따로 둘 수 있으면 넣기(결정필요)"
+  ]
+ },
+ "jtbc-news": {
+  "add": true,
+  "verdict": "좋음",
+  "observed": "유료 없음",
+  "why": "종편 보도 1위권. 새 피드(news-ex)는 살아 있음(예전 fs.jtbc 피드는 2024년에 멈춤). 느린 길(1.7~15초)로 본문 100%",
+  "feedNote": "속보 피드 10건, 하루 10여 건",
+  "rules": [
+   "빠른 길에서 글이 거의 없는 페이지(스크립트로 그림) — 느린 길이 늘 필요"
+  ]
+ },
+ "ytn": {
+  "add": false,
+  "verdict": "좋음(본문) · 보류(받기 부담)",
+  "observed": "유료 없음",
+  "why": "RSS 없음. 사이트맵 1천 건·날짜(lastmod) 없음·380KB 라 새 글 판단을 맨 위 글 바뀜에만 기대야 함. 본문 추출은 좋음",
+  "rules": [
+   "KBS 와 같음(결정필요)"
+  ]
+ },
+ "joongang": {
+  "add": true,
+  "verdict": "좋음",
+  "observed": "유료 없음(중앙 플러스 글은 거르기 정규식 밖)",
+  "why": "보수 종합지 3대지 중 빠져 있던 곳. RSS 는 2024년 종료, 최근 기사 사이트맵(lastmod 있음, 150KB)을 씀. 본문 93~100%",
+  "feedNote": "사이트맵이라 제목·요약·사진은 fillTitle 로 채움. 하루 약 300건",
+  "rules": [
+   "없음"
+  ]
+ },
+ "hankook": {
+  "add": true,
+  "verdict": "좋음",
+  "observed": "유료 없음",
+  "why": "중도 종합지. RSS 없음, 최근 기사 사이트맵을 씀. 본문 100%",
+  "feedNote": "사이트맵에 lastmod 가 없고 news:publication_date 만 있음 — 앱은 lastmod 만 읽어서 날짜가 없음(FeedDates.repair 가 처음 본 시각으로 채움). 하루 약 230건",
+  "rules": [
+   "앱 parseSitemap 이 news:publication_date 도 읽게(한국일보·문화일보 날짜) — 앱 코드 담당에게 제안"
+  ]
+ },
+ "munhwa": {
+  "add": true,
+  "verdict": "부분",
+  "observed": "유료 없음",
+  "why": "보수 석간 종합지. RSS 없음, 사이트맵을 씀. 앱 64~75% — 앱 블록을 보면 기사 문단은 다 있고, 사이트 쪽 측정에 사진 설명·기자 줄이 더 들어간 차이로 보임",
+  "feedNote": "lastmod 없음(한국일보와 같음). 하루 약 300건",
+  "rules": [
+   "한국일보와 같음(news:publication_date)"
+  ]
+ },
+ "kmib": {
+  "add": true,
+  "verdict": "좋음",
+  "observed": "유료 없음",
+  "why": "중도 종합지. 짧은 기사(0.1~0.6천 자) 그대로. 꼬리의 기자 줄·저작권 줄은 BodyCleanup 이 숨김",
+  "rules": [
+   "없음"
+  ]
+ },
+ "segye": {
+  "add": false,
+  "verdict": "좋음(본문) · 분야 피드로 바꿈",
+  "observed": "유료 없음",
+  "why": "전체 최신 피드는 하루 6백 건 꼴이라 정치 분야 피드(segye-politics)로 넣음",
+  "rules": [
+   "segye-politics 를 볼 것"
+  ]
+ },
+ "seoul": {
+  "add": true,
+  "verdict": "부분",
+  "observed": "유료 없음",
+  "why": "중도 종합지(가장 오래된 일간지). 본문은 다 얻지만 꼬리에 'AI 퀴즈'·'기사 반응' 상자, 앞에 '이미지 확대' 글자가 섞임",
+  "rules": [
+   "꼬리 '기사를 끝까지 읽으셨나요?' 이후 자르기, '이미지 확대' 한 줄 빼기(작업자 Reader 몫)"
+  ]
+ },
+ "news1": {
+  "add": false,
+  "verdict": "나쁨",
+  "observed": "유료 없음",
+  "why": "앱이 기사 대신 사이트 바닥글(회사 정보)을 본문으로 얻음(17~32%). 피드는 좋음(구글 뉴스용 RSS)",
+  "rules": [
+   "본문 선택자(#articleBodyContent) 규칙이 생기면 다시 넣기"
+  ]
+ },
+ "newsis": {
+  "add": false,
+  "verdict": "좋음(본문) · 분야 피드로 바꿈",
+  "observed": "유료 없음",
+  "why": "속보 피드는 하루 수천 건 꼴이라 정치 분야 피드(newsis-politics)로 넣음",
+  "rules": [
+   "newsis-politics 를 볼 것"
+  ]
+ },
+ "pressian": {
+  "add": true,
+  "verdict": "좋음",
+  "observed": "유료 없음",
+  "why": "진보 성향 인터넷 신문(정파 균형). 본문 103~109%",
+  "feedNote": "링크에 '&amp;ref=rss' 가 그대로 남은 채 옴(두 번 이스케이프) — 열리기는 함",
+  "rules": [
+   "없음"
+  ]
+ },
+ "ohmynews": {
+  "add": false,
+  "verdict": "좋음(본문) · 분야 피드로 바꿈",
+  "observed": "유료 없음",
+  "why": "전체 피드는 하루 5백 건 꼴(시민기자 글 포함)이라 주요기사 피드(ohmynews-top)로 넣음",
+  "rules": [
+   "ohmynews-top 을 볼 것"
+  ]
+ },
+ "hani-politics": {
+  "add": true,
+  "verdict": "좋음",
+  "observed": "유료 없음",
+  "why": "기존 한겨레 출처의 빠진 분야(정치). 본문 113~123%(앱이 사진 설명까지 셈)",
+  "feedNote": "한겨레 다른 분야처럼 글 날짜가 없음(FeedDates.repair). 요약도 없음",
+  "rules": [
+   "mac LiveSourceDatesTests 의 '날짜 없는 피드' 목록에 hani-politics·hani-economy 를 더해야 함(시험 파일 담당에게 인계)"
+  ]
+ },
+ "hani-economy": {
+  "add": true,
+  "verdict": "좋음",
+  "observed": "유료 없음",
+  "why": "기존 한겨레 출처의 빠진 분야(경제). 본문 104~107%",
+  "feedNote": "hani-politics 와 같음(날짜·요약 없음)",
+  "rules": [
+   "hani-politics 와 같음"
+  ]
+ },
+ "edaily": {
+  "add": false,
+  "verdict": "좋음(본문) · 분야 피드로 바꿈",
+  "observed": "유료 없음",
+  "why": "전체 피드는 하루 수천 건 꼴이라 경제 분야 피드(edaily-economy)로 넣음",
+  "rules": [
+   "edaily-economy 를 볼 것"
+  ]
+ },
+ "mt": {
+  "add": false,
+  "verdict": "좋음(본문) · 보류(분량)",
+  "observed": "유료 없음",
+  "why": "본문 92~114% 로 좋지만 살아 있는 피드는 전체(하루 1천6백 건 꼴)뿐이고 분야 피드는 2025-09 에 멈춤. 경제 분야에 국내 출처가 이미 많음",
+  "rules": [
+   "분야 피드가 살아나면 다시 보기"
+  ]
+ },
+ "bok-stats": {
+  "add": false,
+  "verdict": "나쁨",
+  "observed": "유료 없음",
+  "why": "피드는 좋지만(통계 보도자료, 요약에 핵심 수치) 기사 페이지 본문은 요약 몇 줄과 첨부(PDF·HWP)라 3건 중 2건 추출 실패. 공식 발표 출처 가치는 있음 — 읽기 창이 피드 요약을 본문 대신 보여 주는 길이 생기면 넣기",
+  "feedNote": "한국은행 '보도자료 통계' 게시판 RSS(정책브리핑 RSS 는 2026-07 종료, 통계청은 RSS 없음)",
+  "rules": [
+   "피드 요약을 본문으로 쓰는 출처 표시(앱 코드 담당에게 제안)"
+  ]
+ },
+ "newsis-politics": {
+  "add": true,
+  "verdict": "좋음",
+  "observed": "유료 없음",
+  "why": "민영 통신사 정치 분야(속보 피드 대신). 본문 1.5~1.8천 자, 꼬리 '공감언론 뉴시스' 기자 줄. 사이트 측정은 선택자가 빗나가 앱 블록을 직접 확인함(기사 문단만)",
+  "rules": [
+   "없음"
+  ]
+ },
+ "segye-politics": {
+  "add": true,
+  "verdict": "좋음",
+  "observed": "유료 없음",
+  "why": "중도보수 종합지 정치 분야(전체 피드 대신). 본문 0.8~1.3천 자, 사이트와 100% 안팎. 꼬리 저작권 줄",
+  "rules": [
+   "없음"
+  ]
+ },
+ "edaily-economy": {
+  "add": true,
+  "verdict": "부분",
+  "observed": "유료 없음",
+  "why": "경제지 경제 분야(전체 피드 대신). 기사 문단은 다 얻지만 앞에 '등록 시각'·'가 가'(글자 크기 단추) 목록 2줄, 끝에 '주요뉴스' 한 줄이 섞임. 사이트 측정은 선택자가 빗나가 앱 블록을 직접 확인함",
+  "rules": [
+   "'가 가' 글자 크기 단추·'등록 …' 줄·꼬리 '주요뉴스' 빼기(작업자 Reader 몫)"
+  ]
+ },
+ "ohmynews-top": {
+  "add": true,
+  "verdict": "좋음",
+  "observed": "유료 없음",
+  "why": "진보 성향 인터넷 신문 주요기사(전체 피드 대신, 하루 20여 건). 본문 1.4~4.7천 자. 맨 앞에 '모든 시민은 기자다' 안내 문단이 섞이는 기사가 있음(시민기자 글)",
+  "rules": [
+   "시민기자 글 머리 안내 문단 빼기(작은 문제)"
+  ]
+ }
+}

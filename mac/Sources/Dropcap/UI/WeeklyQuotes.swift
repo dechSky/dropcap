@@ -6,7 +6,9 @@ struct WeeklyQuotes: View {
     var now = Date()
 
     nonisolated static func isSundayEvening(_ d: Date, calendar: Calendar = .current) -> Bool {
+        #if DEBUG
         if ProcessInfo.processInfo.environment["DROPCAP_TEST_WEEKLY"] != nil { return true } // 시험용
+        #endif
         let c = calendar.dateComponents([.weekday, .hour], from: d)
         return c.weekday == 1 && (c.hour ?? 0) >= 17
     }

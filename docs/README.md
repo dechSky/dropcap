@@ -42,6 +42,6 @@
 
 ## 자료 파일
 
-- `shared/sources.json` — 기본 출처 120곳(분야·지역·유료 표시 포함), 세 판 공용
+- `shared/sources.json` — 기본 출처 148곳(분야·지역·유료 표시 포함), 세 판 공용
 - `shared/categories.json` — 분야 12개(이름·기호·색)
 - 맥 사용자 기록 위치: `~/Library/Application Support/Dropcap/` (윈도우 `%LOCALAPPDATA%\Dropcap\`) — 자세한 것은 루트 README '번역과 개인정보'

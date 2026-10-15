@@ -56,6 +56,36 @@ internal sealed class Platform(Shell shell) : IPlatform
         Clipboard.Flush();
     }
 
+    // 사진 복사(R-20): 클립보드에 그림
+    // (화면 스레드에서 불리고, 쓰기를 기다린 뒤에도 화면 스레드로 돌아와 클립보드에 넣는다)
+    public async void CopyImage(byte[] data)
+    {
+        try
+        {
+            var ms = new Windows.Storage.Streams.InMemoryRandomAccessStream();
+            await ms.WriteAsync(System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions.AsBuffer(data));
+            ms.Seek(0);
+            var p = new DataPackage();
+            p.SetBitmap(Windows.Storage.Streams.RandomAccessStreamReference.CreateFromStream(ms));
+            Clipboard.SetContent(p);
+            Clipboard.Flush();
+        }
+        catch { }
+    }
+
+    // 사진 저장…(R-20): PNG·JPEG 저장 대화상자. encode: 고른 확장자 → 그 형식의 바이트
+    public async Task<bool> SaveImageFile(string suggestedName, Func<string, byte[]?> encode)
+    {
+        var picker = new FileSavePicker { SuggestedFileName = Path.GetFileNameWithoutExtension(suggestedName) };
+        picker.FileTypeChoices.Add("PNG 그림", [".png"]);
+        picker.FileTypeChoices.Add("JPEG 그림", [".jpg", ".jpeg"]);
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, shell.OwnerHwnd());
+        var file = await picker.PickSaveFileAsync();
+        if (file is null || encode(file.FileType) is not { } bytes) return false;
+        await Windows.Storage.FileIO.WriteBytesAsync(file, bytes);
+        return true;
+    }
+
     public async Task<bool> SaveTextFile(string suggestedName, string text)
     {
         var picker = new FileSavePicker { SuggestedFileName = Path.GetFileNameWithoutExtension(suggestedName) };
@@ -149,4 +179,37 @@ internal sealed class Platform(Shell shell) : IPlatform
         Fonts.Reset();
         shell.SendAppearance();
     }
+
+    // 노트 폴더 고르기(I-06): 폴더 고르는 창(취소면 null)
+    public async Task<string?> PickFolder()
+    {
+        var picker = new FolderPicker { SuggestedStartLocation = PickerLocationId.DocumentsLibrary };
+        picker.FileTypeFilter.Add("*");
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, shell.OwnerHwnd());
+        var folder = await picker.PickSingleFolderAsync();
+        return folder?.Path;
+    }
+
+    // 휴지통으로(I-06 — 스크랩 폴더 이름을 바꾸면 예전 이름의 파일을 지우지 않고 되살릴 수 있게)
+    public static void MoveToRecycleBin(string path)
+    {
+        var op = new SHFILEOPSTRUCT { wFunc = FO_DELETE, pFrom = path + "\0\0", fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI };
+        _ = SHFileOperation(ref op);
+    }
+
+    private const uint FO_DELETE = 3;
+    private const ushort FOF_SILENT = 0x4, FOF_NOCONFIRMATION = 0x10, FOF_ALLOWUNDO = 0x40, FOF_NOERRORUI = 0x400;
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct SHFILEOPSTRUCT
+    {
+        public nint hwnd;
+        public uint wFunc;
+        public string pFrom;
+        public string? pTo;
+        public ushort fFlags;
+        public int fAnyOperationsAborted;
+        public nint hNameMappings;
+        public string? lpszProgressTitle;
+    }
+    [DllImport("shell32", CharSet = CharSet.Unicode)] private static extern int SHFileOperation(ref SHFILEOPSTRUCT op);
 }

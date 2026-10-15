@@ -28,13 +28,9 @@ enum IntentLogic {
         return Array(sorted.filter { section == nil || $0.category == section }.prefix(count))
     }
 
-    // 저장할 주소: 공개 http(s) 만. 스킴 없이 넣은 'example.com/a' 는 https 로.
-    static func savableURL(_ raw: String) -> URL? {
-        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !s.isEmpty, !s.contains("://") { s = "https://" + s }
-        guard let u = URL(string: s), URLSafety.isPublicHTTP(u) else { return nil }
-        return u
-    }
+    // 저장할 주소: 공개 http(s) 만. 스킴 없이 넣은 'example.com/a' 는 https 로. 아이디·암호가 든 주소는 받지 않는다.
+    // 서비스 메뉴·dropcap:// 저장과 같은 규칙(SaveLink.normalize)을 쓴다.
+    static func savableURL(_ raw: String) -> URL? { SaveLink.normalize(raw) }
 
     // 주소만으로 나중에 읽기 항목을 만든다(제목은 페이지에서 읽어 오고, 못 읽으면 주소)
     static func savedItem(_ url: URL, title: String?, now: Date = Date()) -> NewsItem {

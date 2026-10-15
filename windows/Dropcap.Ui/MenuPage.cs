@@ -106,6 +106,9 @@ public sealed class MenuPage(AppModel model, IPlatform platform) : IPage
         public string TopicIcon { get; init; } = "";
         public string TopicLight { get; init; } = "";
         public string TopicDark { get; init; } = "";
+        // 낱말로 강하게 걸린 다른 분야(G-02) — 목록 줄·첫 소식에 칩 하나 더(없으면 null)
+        public string? ExtraLabel { get; init; }
+        public string? ExtraColor { get; init; }
     }
 
     public static List<Row> Rows(AppModel m, IReadOnlyList<NewsItem> list, string sort, DateTimeOffset now)
@@ -133,6 +136,8 @@ public sealed class MenuPage(AppModel model, IPlatform platform) : IPage
                 TopicIcon = it.TopicIcon(),
                 TopicLight = ItemView.SafeColor(tc.Light),
                 TopicDark = ItemView.SafeColor(tc.Dark),
+                ExtraLabel = it.ExtraTopic() is { } x ? Sections.Name(x) : null,
+                ExtraColor = it.ExtraTopic() is { } y ? ItemView.SafeColor(Sections.ById(y)?.Color ?? "#8E8E93") : null,
             });
         }
         return rows;

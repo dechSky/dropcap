@@ -26,7 +26,12 @@ final class SpotlightIndexer {
     // 테스트 실행(DROPCAP_DATA_DIR)은 실제 Spotlight 를 건드리지 않는다(DROPCAP_TEST_SPOTLIGHT 로만 켠다)
     var enabled: Bool {
         let env = ProcessInfo.processInfo.environment
-        if env["DROPCAP_DATA_DIR"] != nil, env["DROPCAP_TEST_SPOTLIGHT"] == nil { return false }
+        #if DEBUG
+        let testOn = env["DROPCAP_TEST_SPOTLIGHT"] != nil
+        #else
+        let testOn = false
+        #endif
+        if env["DROPCAP_DATA_DIR"] != nil, !testOn { return false }
         return UserDefaults.standard.object(forKey: Self.enabledKey) as? Bool ?? true
     }
     private var file: URL { Store.dir.appendingPathComponent("spotlight-index.json") }

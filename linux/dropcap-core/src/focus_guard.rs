@@ -88,7 +88,7 @@ pub struct FocusMonitor {
 pub static MONITOR: Lazy<FocusMonitor> = Lazy::new(|| {
     let m = FocusMonitor { cached: Mutex::new(None), fullscreen: Mutex::new(None), override_: Mutex::new(None) };
     // 시험용: DROPCAP_TEST_FOCUS=fullscreen|sharing|calendar|none
-    if let Ok(v) = std::env::var("DROPCAP_TEST_FOCUS") {
+    if let Some(v) = crate::test_hooks::var("DROPCAP_TEST_FOCUS") {
         *m.override_.lock().unwrap() = Some(FocusReason::from_raw(&v));
     }
     m

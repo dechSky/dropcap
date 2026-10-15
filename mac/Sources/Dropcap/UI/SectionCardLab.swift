@@ -15,6 +15,7 @@ enum SectionCardLab {
         return out
     }
 
+    #if DEBUG // 시험 장치(M9)
     @MainActor static func render(to dir: String) async {
         let ph = await photos()
         NSLog("[카드 시험] 사진 있는 분야 %d/%d", ph.count, Sections.all.count)
@@ -36,6 +37,7 @@ enum SectionCardLab {
         }
         NSLog("[카드 시험] 끝")
     }
+    #endif
 
     @ViewBuilder static func card(_ s: NewsSection, _ p: (NewsItem, NSImage)?, style: Int, selected: Bool) -> some View {
         let t = s.tint

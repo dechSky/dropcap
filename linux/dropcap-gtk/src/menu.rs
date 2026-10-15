@@ -223,7 +223,20 @@ fn build() -> Rc<RefCell<Menu>> {
     stack.add_named(&scroll, Some("list"));
     stack.add_named(&empty, Some("empty"));
     stack.set_size_request(WIDTH, LIST_HEIGHT);
-    root.append(&stack);
+    // '저장' 탭에서만: 목록 위 '주소로 추가…' 칸(I-05)
+    let add_bar = crate::add_url_bar::build(true);
+    add_bar.set_margin_start(10);
+    add_bar.set_margin_end(10);
+    add_bar.set_margin_top(6);
+    add_bar.set_visible(false);
+    // 칸이 보여도 창 높이는 그대로(목록 자리를 나눠 씀)
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    body.set_size_request(WIDTH, LIST_HEIGHT);
+    stack.set_size_request(WIDTH, -1);
+    stack.set_vexpand(true);
+    body.append(&add_bar);
+    body.append(&stack);
+    root.append(&body);
     root.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
 
     // 바닥(U-07)
@@ -333,8 +346,10 @@ fn build() -> Rc<RefCell<Menu>> {
     for (t, b) in m.borrow().tabs.iter() {
         let m2 = m.clone();
         let t = *t;
+        let add_bar = add_bar.clone();
         b.connect_toggled(move |b| {
             if b.is_active() {
+                add_bar.set_visible(t == Tab::Saved);
                 m2.borrow_mut().tab = t;
                 refresh(&m2);
             }
@@ -746,6 +761,17 @@ fn topic(it: &NewsItem) -> gtk::Label {
     l
 }
 
+// 출처 분야와 다른데 낱말이 강하게 걸린 분야 칩 하나 더(예: 정치 출처의 기준금리 기사 → 정치 · 경제)
+fn extra_topic(it: &NewsItem) -> Option<gtk::Label> {
+    let x = it.extra_topic()?;
+    let l = label(&sections::name(&x), 10.5, 600, &[]);
+    l.set_wrap(false);
+    let hex = sections::by_id(&x).map(|s| s.color.clone()).unwrap_or_else(|| "#8E8E93".into());
+    let (r, g, b) = dropcap_core::models::hex_rgb(&hex);
+    css(&l, &format!("label {{ color: rgb({},{},{}); }}", (r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8));
+    Some(l)
+}
+
 fn unread_dot(it: &NewsItem, size: i32) -> gtk::DrawingArea {
     let dot = gtk::DrawingArea::builder().content_width(size).content_height(size).valign(gtk::Align::Center).build();
     let color = widgets::source_color(&it.source_id);
@@ -799,6 +825,14 @@ fn hero_card(it: &NewsItem, read: bool, seq: &[NewsItem]) -> gtk::Widget {
     let (r, g, b) = dropcap_core::models::hex_rgb(&it.topic_color(crate::theme::is_dark()));
     css(&chip, &format!("label {{ color: white; background: rgba({},{},{},0.85); border-radius: 99px; padding: 2px 7px; }}", (r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8));
     meta.append(&chip);
+    if let Some(x) = it.extra_topic() {
+        let c2 = label(&sections::name(&x), 10.5, 700, &[]);
+        c2.set_wrap(false);
+        let hex = sections::by_id(&x).map(|s| s.color.clone()).unwrap_or_else(|| "#8E8E93".into());
+        let (r, g, b) = dropcap_core::models::hex_rgb(&hex);
+        css(&c2, &format!("label {{ color: white; background: rgba({},{},{},0.85); border-radius: 99px; padding: 2px 7px; }}", (r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8));
+        meta.append(&c2);
+    }
     let src = label(&format!("{} · {}", it.source_name, widgets::time_text(it)), 11.0, 500, &[]);
     src.set_wrap(false);
     src.set_opacity(0.85);
@@ -877,6 +911,9 @@ fn card_row(it: &NewsItem, read: bool, saved: bool, seq: &[NewsItem]) -> gtk::Wi
         meta.append(&p);
     }
     meta.append(&topic(it));
+    if let Some(x) = extra_topic(it) {
+        meta.append(&x);
+    }
     let tl = label(&widgets::time_text(it), 10.5, 400, &["dc-tertiary"]);
     tl.set_wrap(false);
     meta.append(&tl);

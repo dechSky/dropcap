@@ -23,7 +23,11 @@ actor FeedService {
     }()
     private let allowLocal: Bool // 시험에서만: 내 Mac 안의 시험 서버(127.0.0.1)를 받게
 
+    #if DEBUG
     init(allowLocalForTests: Bool = false) { allowLocal = allowLocalForTests }
+    #else
+    init() { allowLocal = false } // 배포 빌드에는 시험 서버 허용 스위치가 없다(M9)
+    #endif
 
     func fetch(_ url: String, conditional: Bool = false, limit: FetchLimit = .feed) async throws -> Data? {
         try await fetchWithEncoding(url, conditional: conditional, limit: limit)?.data
@@ -181,7 +185,7 @@ enum Gzip {
 }
 
 // 요청 하나를 지킨다: 내부망으로 넘기는 리다이렉트는 따라가지 않고, 실제 접속한 IP 를 확인한다.
-// 확인할 수 없으면 막는다(fail closed). 프록시를 거친 연결은 IP 가 프록시 것이라 이름 확인에만 맡긴다.
+// 확인할 수 없으면 막는다(fail closed). 프록시를 거친 연결은 IP 가 프록시 것이라 연결 전 이름 확인에만 맡긴다(judge).
 final class RequestGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     private let lock = NSLock()
     private var verdict: Bool?            // nil = 아직 측정값 없음, true = 안전, false = 막음
@@ -203,18 +207,35 @@ final class RequestGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable 
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
+        let hops = metrics.transactionMetrics.filter { $0.resourceFetchType == .networkLoad }
+            .map { Hop(proxied: $0.isProxyConnection, remote: $0.remoteAddress) }
+        let (safe, seen) = Self.judge(hops, systemProxy: hops.contains(where: \.proxied) && Self.systemProxyConfigured)
+        lock.lock()
+        verdict = safe
+        lastIP = seen
+        let w = waiter
+        waiter = nil
+        lock.unlock()
+        w?.resume()
+    }
+
+    // 연결 하나(리다이렉트마다 하나씩)
+    struct Hop: Equatable { var proxied: Bool; var remote: String? }
+
+    // 판정(시험 대상). 직접 연결은 실제 접속 IP 가 공개 주소여야 하고, 확인한 연결이 하나라도 있어야 통과.
+    // 프록시를 거친 연결은 IP 가 프록시 것이라 볼 수 없어, 시스템에 프록시가 실제로 설정된 경우에만 연결 전 이름 확인
+    // (resolvesPublic · 리다이렉트마다)에 맡긴다. 프록시가 이름을 다시 풀어 내부망으로 갈 위험은 받아들임(AUDIT.md §7 M7).
+    static func judge(_ hops: [Hop], systemProxy: Bool) -> (safe: Bool, seen: String?) {
         var safe = true
-        var verified = false   // 실제로 IP 를 확인한 연결이 하나라도 있어야 통과
-        var proxied = false
+        var verified = false
         var seen: String?
-        for t in metrics.transactionMetrics where t.resourceFetchType == .networkLoad {
-            if t.isProxyConnection {
-                // 프록시를 거친 연결: 시스템에 프록시가 실제로 설정된 경우에만 이름 확인 단계에 맡긴다
-                if Self.systemProxyConfigured { proxied = true } else { safe = false }
+        for t in hops {
+            if t.proxied {
+                if systemProxy { verified = true } else { safe = false }
                 continue
             }
             verified = true
-            guard let ip = t.remoteAddress else { safe = false; continue } // 모르면 막음
+            guard let ip = t.remote else { safe = false; continue } // 모르면 막음
             seen = ip
             let bare = ip.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
             if let v4 = URLSafety.parseV4(bare) {
@@ -225,13 +246,7 @@ final class RequestGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable 
                 safe = false // 알아볼 수 없는 주소도 막음
             }
         }
-        lock.lock()
-        verdict = safe && (verified || proxied)
-        lastIP = seen
-        let w = waiter
-        waiter = nil
-        lock.unlock()
-        w?.resume()
+        return (safe && verified, seen)
     }
 
     // 잠금은 동기 함수 안에서만(비동기 문맥에서 직접 잠그지 않는다)

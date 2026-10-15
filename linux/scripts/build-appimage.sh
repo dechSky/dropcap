@@ -23,6 +23,10 @@ cp resources/icons/dropcap-newspaper*-symbolic.svg "$APPDIR/usr/share/icons/hico
 cp resources/icons/io.github.dechsky.Dropcap.svg "$APPDIR/usr/share/icons/hicolor/scalable/apps/"
 cp packaging/io.github.dechsky.Dropcap.desktop "$APPDIR/usr/share/applications/"
 cp packaging/io.github.dechsky.Dropcap.metainfo.xml "$APPDIR/usr/share/metainfo/"
+# 데스크톱 검색(GNOME 검색 공급자·KRunner)·D-Bus 실행 파일: AppImage 는 시스템에 설치되지 않으므로 사본만 담는다(README 의 설치 안내)
+mkdir -p "$APPDIR/usr/share/dropcap/integration"
+cp packaging/io.github.dechsky.Dropcap.search-provider.ini packaging/io.github.dechsky.Dropcap.service \
+  packaging/io.github.dechsky.Dropcap.krunner.desktop "$APPDIR/usr/share/dropcap/integration/"
 cp ../THIRD_PARTY_NOTICES.md ../LICENSE "$APPDIR/usr/share/dropcap/" 2>/dev/null || true
 
 # 256px PNG 아이콘(일부 데스크톱은 PNG 만 읽음)

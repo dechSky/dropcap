@@ -1,6 +1,9 @@
 import AppKit
 import SwiftUI
 
+// 시험 장치(M9): 디버그 빌드(swift build·swift test·e2e·clicksweep)에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
+#if DEBUG
+
 // 화면 단추 하나하나 실제 클릭 시험(DROPCAP_TEST_E2E_PHASE=clicks, mac/scripts/clicksweep.sh).
 // 창의 손쉬운 사용 나무에서 누를 수 있는 것(단추·링크·체크·팝업·탭…)을 모두 찾아, 각각의 가운데에 진짜 마우스 누름·뗌을 보내고
 // ① 그 자리를 실제로 맞은 것이 그 단추인가(다른 것이 덮고 있지 않은가) ② 눌렀더니 무엇이 일어났는가(창·지면·메뉴·물방울·상태·그림 변화)를 적는다.
@@ -553,3 +556,5 @@ final class E2EClickSweep {
         try? md.write(to: r.out.appendingPathComponent("CLICKS-run.md"), atomically: true, encoding: .utf8)
     }
 }
+
+#endif

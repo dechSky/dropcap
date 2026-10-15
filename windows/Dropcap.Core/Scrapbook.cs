@@ -27,11 +27,17 @@ public sealed class Scrapbook
     public IReadOnlyList<string> Collections { get; private set; } = [];
     public event Action? Changed;
 
-    public Scrapbook(Database db) { this.db = db; Reload(); }
+    public Scrapbook(Database db)
+    {
+        this.db = db;
+        RestoreFromCopyIfNeeded();
+        Reload();
+    }
 
     public void Reload()
     {
         Scraps = db.Scraps();
+        WriteCopy();
         var used = Scraps.Select(s => s.Collection).ToHashSet();
         var extra = Prefs.Get("scrapCollections", new List<string>()).Where(c => !used.Contains(c));
         var all = new List<string>();
@@ -76,6 +82,52 @@ public sealed class Scrapbook
         if (LastCollection == from) Prefs.Set("lastScrapCollection", n);
         Reload();
         return true;
+    }
+
+    // MARK: JSON 사본(scraps.json, M-17)
+    // 스크랩은 매거진 DB 안에 있어, DB 가 통째로 못 읽히면 함께 사라졌다(맥 E2E 12-다). 바뀔 때마다 전부를 사본으로 원자적으로 쓰고,
+    // DB 가 새로 만들어졌거나(깨짐) 비어 있는데 사본에 있으면 사본에서 되살린다.
+    // - 예전 판(사본 없음): 첫 실행의 Reload 가 DB 내용으로 사본을 만든다.
+    // - 되돌리기: 예전 판은 이 파일을 모르고 무시한다. 끄기: prefs.json scrapsCopyOff = true.
+    // - 기기 이동: 데이터 폴더(DB 옆)에 함께 있어 폴더째 옮기면 따라간다.
+    public sealed record Copy(int Version, List<Scrap> Scraps);
+    public static string CopyFile(string dir) => Path.Combine(dir, "scraps.json");
+    private string CopyPath => CopyFile(Path.GetDirectoryName(db.FilePath) ?? Store.Dir);
+    private static bool CopyOff => Prefs.Get("scrapsCopyOff", false);
+
+    public static List<Scrap>? ReadCopy(string file)
+    {
+        try { return File.Exists(file) ? Json.Decode<Copy>(File.ReadAllText(file))?.Scraps : null; } catch { return null; }
+    }
+    public static void WriteCopy(IReadOnlyList<Scrap> list, string file)
+    {
+        try { Store.AtomicWrite(file, Json.Encode(new Copy(1, list.ToList()))); } catch { }
+    }
+
+    // 사본에 있고 DB 에 없는 스크랩을 DB 로(같은 id 는 DB 쪽을 그대로 둠)
+    public static List<Scrap> RestoreList(IReadOnlyList<Scrap> db, IReadOnlyList<Scrap> copy)
+    {
+        var have = db.Select(s => s.Id).ToHashSet();
+        return copy.Where(s => !have.Contains(s.Id)).ToList();
+    }
+
+    private void RestoreFromCopyIfNeeded()
+    {
+        if (CopyOff || ReadCopy(CopyPath) is not { Count: > 0 } copy) return;
+        var inDB = db.Scraps();
+        // 평소에 사용자가 다 지운 것은 되살리지 않는다: DB 를 새로 만들었거나(깨짐·삭제) 기사도 하나 없는 빈 DB 일 때만
+        if (!(db.Recreated || (inDB.Count == 0 && db.ItemCount == 0))) return;
+        var missing = RestoreList(inDB, copy);
+        foreach (var s in missing) db.SaveScrap(s);
+        if (missing.Count > 0) Console.Error.WriteLine($"[스크랩] 사본(scraps.json)에서 {missing.Count}개를 되살렸습니다");
+    }
+
+    private void WriteCopy()
+    {
+        if (CopyOff) return;
+        // DB 가 깨져 새로 만들었는데 아무것도 못 건졌으면, 그 빈 목록으로 사본을 덮지 않는다
+        if (Scraps.Count == 0 && db.Recreated) return;
+        WriteCopy(Scraps, CopyPath);
     }
 
     public bool IsScrapped(NewsItem item, string? quote = null) =>

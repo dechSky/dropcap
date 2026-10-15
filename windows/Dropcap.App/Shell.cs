@@ -51,6 +51,7 @@ internal sealed class Shell : IAppUi
         // 회의·발표 중 자동 조용히(N-25) 감지 · 사진 점수(M-24): 글자 인식은 윈도우 OCR, 표지·분야 사진 고르기에 씀
         Model.Focus.Probe = new FocusProbe();
         PhotoScorer.TextRatio = PhotoOcr.TextRatioAsync;
+        ImageTools.Attach(platform);   // 기사 속 사진 도구(R-20): 글자 인식·클립보드·저장 대화상자
         Magazine.PhotoScorer = PhotoScorer.ScoreAsync;
         PaywallBook.Shared = new PaywallBook(db);   // 유료 기사 표시(G-14): 출처별 본문 추리기 기록
         ExternalLink.Opener = u => { _ = Windows.System.Launcher.LaunchUriAsync(u); return true; };

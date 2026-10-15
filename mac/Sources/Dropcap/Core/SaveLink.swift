@@ -188,9 +188,11 @@ enum SaveLink {
     }
 
     // 아무 웹 페이지나 dropcap:// 를 부를 수 있으므로(브라우저의 '항상 허용' 뒤에는 묻지 않음) 저장 전에 한 번 묻는다.
-    // 서비스 메뉴는 사용자가 직접 고른 것이라 묻지 않는다. 시험(DROPCAP_TEST_SCHEME)에서는 묻지 않음.
+    // 서비스 메뉴는 사용자가 직접 고른 것이라 묻지 않는다. 시험(DROPCAP_TEST_SCHEME, 디버그 빌드만)에서는 묻지 않음.
     @MainActor static func confirm(_ url: URL, title: String?) -> Bool {
+        #if DEBUG
         if ProcessInfo.processInfo.environment["DROPCAP_TEST_SCHEME"] != nil { return true }
+        #endif
         let a = NSAlert()
         a.messageText = "이 페이지를 나중에 읽기에 저장할까요?"
         a.informativeText = [title, url.host, String(url.absoluteString.prefix(300))].compactMap { $0 }.joined(separator: "\n")

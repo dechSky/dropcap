@@ -292,6 +292,7 @@ public sealed class ArticleService
             var idx = Enumerable.Range(0, blocks.Count).Where(i => blocks[i].Text is not null && blocks[i].Type != BlockKind.Pre).ToList();
             var chunks = new[] { idx.Take(8).ToList(), idx.Skip(8).ToList() };
             var engine = Translator.EngineNone;
+            int done = 0, total = 0; // 실제로 바뀐(번역된) 문단 수 — 번역이 모두 실패하면 원문이 그대로 돌아온다
             for (var n = 0; n < 2; n++)
             {
                 var chunk = chunks[n];
@@ -302,15 +303,12 @@ public sealed class ArticleService
                 var title = a.Title;
                 if (n == 0) { title = outs[0]; outs.RemoveAt(0); }
                 var nb = a.Blocks.ToList();
-                for (var k = 0; k < chunk.Count; k++)
-                {
-                    var i = chunk[k];
-                    nb[i] = nb[i] with { Original = art.Blocks[i].Text, Text = outs[k] };
-                }
-                a = a with { Title = title, Blocks = nb, Translated = true };
+                var (d, t) = MergeTranslated(nb, art.Blocks, chunk, outs);
+                done += d; total += t;
+                a = a with { Title = title, Blocks = nb, Translated = done > 0 };
                 Emit(item.Link, a);
             }
-            a = a with { Engine = engine };
+            a = a with { Engine = EngineLabel(done, total, engine) };
         }
         else
         {
@@ -333,6 +331,29 @@ public sealed class ArticleService
     {
         if (item.Id == AppModel.PreviewId) return;
         try { RecordExtract(item, failed, blocked); } catch { }
+    }
+
+    // 번역 결과를 문단에 넣는다. 외국어 문단만 세고(total), 실제로 바뀐 문단만 번역으로(done) — 번역 안 된 문단은 원문 그대로(원문 보기 대상 아님)
+    internal static (int Done, int Total) MergeTranslated(List<Block> blocks, IReadOnlyList<Block> source, IReadOnlyList<int> chunk, IReadOnlyList<string> outs)
+    {
+        int done = 0, total = 0;
+        for (var k = 0; k < chunk.Count && k < outs.Count; k++)
+        {
+            var i = chunk[k];
+            if (source[i].Text is not { } src || !Translator.LooksForeign(src)) continue;
+            total++;
+            if (outs[k] == src) continue;
+            done++;
+            blocks[i] = blocks[i] with { Original = src, Text = outs[k] };
+        }
+        return (done, total);
+    }
+
+    // 읽기 창의 번역 표시: 번역된 문단이 없으면 표시 없음, 일부만 됐으면 '일부 번역'(맥과 같음)
+    public static string EngineLabel(int done, int total, string engine)
+    {
+        if (done <= 0) return "";
+        return done < total ? engine + " · 일부 번역" : engine;
     }
 
     // 웹 문서 제목 끝의 사이트 이름(" - AI타임스", " | The Verge")은 출처가 이미 위에 보이므로 뗀다(맥과 같음)

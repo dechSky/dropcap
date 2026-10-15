@@ -2,6 +2,9 @@ import AppKit
 import Combine
 import SwiftUI
 
+// 시험 장치(M9): 디버그 빌드(swift build·swift test·e2e·clicksweep)에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
+#if DEBUG
+
 // 사용자 흐름 시나리오 시험(끝에서 끝까지). DROPCAP_TEST_E2E=<결과 폴더> 일 때만 돈다(mac/scripts/e2e/run.sh).
 // 사람이 쓰는 순서대로 단계를 밟으며 단계마다 기대값을 검사하고(통과/실패) 스냅샷·로그를 남긴다.
 // - 피드: E2EFeeds(견본, 네트워크 없음) · 시계: fakeclock.dylib(DROPCAP_CLOCK_FILE 의 초만큼 앞당김)
@@ -311,3 +314,5 @@ enum E2EStories {
     // 12) 복구 뒤 새 글
     static let after = E2EStory(id: "r1", base: "항공업계 겨울 성수기 증편 계획 발표 환율", tails: koTails, sources: krVisible)
 }
+
+#endif

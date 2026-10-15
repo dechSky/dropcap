@@ -92,7 +92,7 @@ fn english_keywords_use_word_boundaries() {
 fn input(mode: NotifyMode, kr: i64, intl: i64, lab: bool, star: bool, followed: bool, sec: i64, total: i64, chosen: bool) -> Input {
     Input {
         chosen,
-        policy: SectionPolicy { mode, bundle_hour: 18, daily_cap: 3 },
+        policy: SectionPolicy { mode, bundle_hour: 18, daily_cap: 3, less: false },
         coverage: Coverage { kr, intl },
         lab,
         important: star,

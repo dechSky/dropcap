@@ -141,7 +141,7 @@ struct MenuView: View {
             // 열자마자 검색칸이 아니라 목록이 키를 받게(↑↓·J/K 로 바로 고르기)
             DispatchQueue.main.async {
                 listFocused = true
-                if let n = ProcessInfo.processInfo.environment["DROPCAP_TEST_SELECT"].flatMap(Int.init), items.indices.contains(n) { selected = items[n].key } // 시험용: 선택 테두리 보기
+                if let n = TestEnv.get("SELECT").flatMap(Int.init), items.indices.contains(n) { selected = items[n].key } // 시험용: 선택 테두리 보기
             }
         }
     }

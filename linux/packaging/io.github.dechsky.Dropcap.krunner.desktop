@@ -1,0 +1,13 @@
+# KDE KRunner(I-03): 저장한 기사·스크랩. ~/.local/share/krunner/dbusplugins/ 또는 /usr/share/krunner/dbusplugins/ 에 둔다
+[Desktop Entry]
+Name=Dropcap
+Comment=저장한 기사·스크랩 찾기
+Icon=io.github.dechsky.Dropcap
+X-KDE-ServiceTypes=Plasma/Runner
+Type=Service
+X-KDE-PluginInfo-Name=io.github.dechsky.Dropcap
+X-KDE-PluginInfo-EnabledByDefault=true
+X-Plasma-API=DBus
+X-Plasma-DBusRunner-Service=io.github.dechsky.Dropcap
+X-Plasma-DBusRunner-Path=/io/github/dechsky/Dropcap/KRunner
+X-Plasma-Runner-Min-Letter-Count=2

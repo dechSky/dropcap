@@ -3,6 +3,9 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
+// 시험 장치(M9): 디버그 빌드(swift build·swift test·e2e·clicksweep)에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
+#if DEBUG
+
 // 시나리오 시험(DROPCAP_TEST_E2E)용 견본 피드. 실제 네트워크 없이 같은 결과를 재현한다.
 // - 기본 출처(sources.json)의 피드 주소로 요청이 오면 그 출처의 견본 피드(국내는 RSS, 해외는 Atom)를 돌려준다.
 //   처음 받을 때 출처마다 '이미 있던 글' 3건을 만들고, 그 뒤로는 시나리오가 post() 로 올린 글이 맨 위에 붙는다.
@@ -247,3 +250,5 @@ enum E2EFeeds {
         "Rail operator adds quiet carriages", "Chess club hosts junior tournament", "Gardeners share tips for autumn bulbs",
     ]
 }
+
+#endif

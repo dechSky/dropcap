@@ -20,6 +20,7 @@ tray = ["dep:ksni"]                       # StatusNotifierItem 트레이
 x11 = ["dep:x11rb"]                       # 작업 영역·클릭 통과·전역 단축키(X11)
 notify = ["dep:notify-rust"]              # 시스템 알림(org.freedesktop.Notifications)
 speech = []                               # speech-dispatcher(spd-say) 소리 내어 읽기
+test-hooks = ["dropcap-core/test-hooks"]  # 배포 빌드에서도 DROPCAP_TEST_* 시험 훅을 켬(보통은 개발 빌드에서만)
 
 [dependencies]
 dropcap-core = { path = "../dropcap-core" }

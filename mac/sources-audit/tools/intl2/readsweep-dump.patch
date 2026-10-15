@@ -1,0 +1,38 @@
+diff --git a/mac/Sources/Dropcap/Reader/ReadSweep.swift b/mac/Sources/Dropcap/Reader/ReadSweep.swift
+index 7470149..9d32f9a 100644
+--- a/mac/Sources/Dropcap/Reader/ReadSweep.swift
++++ b/mac/Sources/Dropcap/Reader/ReadSweep.swift
+@@ -33,6 +33,9 @@ enum ReadSweep {
+         var coverFrom = ""          // feed · og · none
+         var coverSize: String?      // 가로×세로(픽셀)
+         var coverNote: String?      // 기자 사진·로고로 보이는 까닭
++        var dump: [Block]?          // [srcaudit 임시] 추린 블록 전체
++        var hidden: [Int]?          // [srcaudit 임시] 읽기 창이 숨기는 블록 번호
++        var byline: String?
+     }
+ 
+     // 실패(또는 느림) 까닭을 사람이 읽는 말로
+@@ -165,6 +168,8 @@ enum ReadSweep {
+         if let u = URL(string: t.link) { art = await x.extract(u, allowScripts: true) }
+         var row = Row(target: t, ok: art != nil, seconds: Date().timeIntervalSince(t0), trace: x.trace)
+         if let art {
++            row.dump = art.blocks
++            row.byline = BodyCleanup.analyze(art.blocks).byline
+             row.chars = art.blocks.compactMap(\.text).joined().count
+             row.blocks = art.blocks.filter { $0.text != nil }.count
+             row.images = art.blocks.filter { $0.type == .img }.count
+@@ -192,6 +197,14 @@ enum ReadSweep {
+     @MainActor
+     static func measure(_ r: Row) async -> Row {
+         var row = r
++        if let blocks = row.dump { // [srcaudit 임시] ReaderView.hiddenBlocks 와 같은 규칙
++            var out = BodyCleanup.analyze(blocks).skip
++            let c = row.cover ?? blocks.first { $0.type == .img && !ImageKey.isJunk($0.src) }?.src
++            if let c, let dup = blocks.firstIndex(where: { $0.type == .img && ImageKey.same($0.src, c) }) { out.insert(dup) }
++            for (i, b) in blocks.enumerated() where b.type == .img && ImageKey.isJunk(b.src) { out.insert(i) }
++            for i in out where i + 1 < blocks.count && blocks[i].type == .img && blocks[i + 1].type == .cap { out.insert(i + 1) }
++            row.hidden = out.sorted()
++        }
+         if let c = row.cover {
+             var w: Int?, h: Int?
+             if let img = await ImageLoader.shared.image(c) {

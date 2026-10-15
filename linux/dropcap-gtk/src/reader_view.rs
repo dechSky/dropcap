@@ -3,6 +3,7 @@
 use crate::app::{bg, copy_text, open_external, ui};
 use crate::reader::Origin;
 use crate::reader_find;
+use crate::reader_image;
 use crate::reader_speech::{self, Speaker};
 use crate::widgets::{self, load_texture, monogram};
 use crate::{motion, theme};
@@ -10,6 +11,7 @@ use adw::prelude::*;
 use chrono::{Datelike, Local, Timelike};
 use dropcap_core::app_model::UiEvent;
 use dropcap_core::article::{self, body_cleanup, image_key, Block, BlockKind, PreparedArticle, Stage};
+use dropcap_core::cover_pick;
 use dropcap_core::models::{resources, NewsItem};
 use dropcap_core::paywall::{self, PaywallKind};
 use dropcap_core::translator::looks_foreign;
@@ -457,30 +459,51 @@ impl ReaderWindow {
 
     // 상단바 목록의 기사 정보에는 대표 사진이 비어 있을 수 있다(매거진만 기사 머리에서 찾아 둠).
     // 그때 본문의 첫 그림(기자 프로필 등)을 표지로 쓰던 문제가 있어, 대표 사진을 먼저 찾는다(맥 ReaderModel.findCover).
+    // 피드 사진이 작은 미리보기(가로 400px 미만)거나 받지 못하면 기사 머리 대표 사진(og:image)으로 바꾸고,
+    // 대신할 것도 없으면 깨진 자리를 지운다(R-22 · cover_pick::choose)
     fn find_cover(self: &Rc<Self>) {
         let junk = |u: &str| image_key::is_junk(Some(u));
-        if let Some(i) = self.item().image.clone().filter(|i| !junk(i)) {
-            self.model.borrow_mut().cover = Some(i);
-            return;
+        let known = self.item().image.clone().filter(|i| !junk(i)).or_else(|| ui().core.db.image(&self.item().key()).filter(|i| !junk(i)));
+        if let Some(k) = &known {
+            self.model.borrow_mut().cover = Some(k.clone());
         }
-        if let Some(s) = ui().core.db.image(&self.item().key()).filter(|i| !junk(i)) {
-            self.model.borrow_mut().cover = Some(s);
-            return;
-        }
-        if self.item().link.is_empty() {
-            return;
-        }
+        let key = self.item().key();
         let link = self.item().link.clone();
         let w = Rc::downgrade(self);
-        bg(async move { dropcap_core::feed_service::SHARED.og_image(&link).await }, move |og| {
-            let Some(og) = og.filter(|o| !image_key::is_junk(Some(o))) else { return };
-            if let Some(me) = w.upgrade() {
-                if me.alive.get() {
-                    me.model.borrow_mut().cover = Some(og);
-                    me.render();
-                }
+        let then = move |known: Option<String>, known_width: Option<u32>| {
+            if !cover_pick::needs_og(known.as_deref(), known_width) {
+                return;
             }
-        });
+            let decide = move |og: Option<String>, og_width: Option<u32>| {
+                let Some(me) = w.upgrade() else { return };
+                if !me.alive.get() || me.item().key() != key {
+                    return; // J/K 로 다른 기사로 바뀜
+                }
+                let choice = cover_pick::choose(known.as_deref(), known_width, og.as_deref(), og_width, |u| image_key::is_junk(Some(u)));
+                let next = match choice {
+                    cover_pick::CoverChoice::Keep => return,
+                    cover_pick::CoverChoice::Use(u) => Some(u),
+                    cover_pick::CoverChoice::Remove => None,
+                };
+                me.model.borrow_mut().cover = next;
+                me.render();
+            };
+            if link.is_empty() {
+                decide(None, None);
+                return;
+            }
+            bg(async move { cover_pick::og_image_for(&link).await }, move |og| match og {
+                Some(o) => {
+                    let o2 = o.clone();
+                    load_texture(&o, move |tex| decide(Some(o2), tex.map(|t| t.width().max(0) as u32)));
+                }
+                None => decide(None, None),
+            });
+        };
+        match known {
+            Some(k) => load_texture(&k.clone(), move |tex| then(Some(k), tex.map(|t| t.width().max(0) as u32))),
+            None => then(None, None),
+        }
     }
 
     pub fn load(self: &Rc<Self>) {
@@ -592,20 +615,9 @@ impl ReaderWindow {
         m.cover.clone().or_else(|| m.blocks.iter().find(|b| b.kind == BlockKind::Img && !image_key::is_junk(b.src.as_deref())).and_then(|b| b.src.clone()))
     }
 
-    // 본문에서 빼는 블록: 기자 줄·짝 잃은 설명 문구, 표지와 같은 사진(주소가 같거나 크기 표기만 다른 것) 처음 한 번, 잡그림
+    // 본문에서 빼는 블록: 기자 줄·짝 잃은 설명 문구, 표지와 같은 사진 처음 한 번과 그 설명, 잡그림(body_cleanup::hidden)
     fn hidden_blocks(&self, blocks: &[Block]) -> std::collections::HashSet<usize> {
-        let (mut out, _) = body_cleanup::analyze(blocks);
-        if let Some(c) = self.cover_url() {
-            if let Some(dup) = blocks.iter().position(|b| b.kind == BlockKind::Img && image_key::same(b.src.as_deref(), Some(&c))) {
-                out.insert(dup);
-            }
-        }
-        for (i, b) in blocks.iter().enumerate() {
-            if b.kind == BlockKind::Img && image_key::is_junk(b.src.as_deref()) {
-                out.insert(i); // 기자 프로필·로고 같은 잡그림은 싣지 않음
-            }
-        }
-        out
+        body_cleanup::hidden(blocks, self.cover_url().as_deref())
     }
 
     fn font_size(&self) -> f64 {
@@ -732,7 +744,7 @@ impl ReaderWindow {
         }
         self.refresh_scrap_marks();
         // 시험용(DROPCAP_TEST_FIND=낱말): 찾기 막대를 연 채로(맥과 같은 변수)
-        if let Ok(q) = std::env::var("DROPCAP_TEST_FIND") {
+        if let Some(q) = dropcap_core::test_hooks::var("DROPCAP_TEST_FIND") {
             if !q.is_empty() && !self.find_bar.is_search_mode() {
                 self.find_bar.set_search_mode(true);
                 self.find_entry.set_text(&q);
@@ -775,11 +787,13 @@ impl ReaderWindow {
         pic.set_opacity(0.0);
         frame.add_overlay(&pic);
         let f2 = frame.clone();
+        let u2 = url.to_string();
         load_texture(url, move |tex| match tex {
             Some(t) => {
                 spin.set_visible(false);
                 pic.set_paintable(Some(&t));
                 widgets::fade_in(&pic, 350);
+                reader_image::attach_tools(&f2, &t, &u2, ""); // 표지에도 사진 도구(맥 CoverImage.imageActions)
             }
             None => f2.set_visible(false), // 표지 사진을 못 받으면 자리째 숨김
         });
@@ -968,7 +982,7 @@ impl ReaderWindow {
                 sw.set_margin_bottom(18);
                 (sw.upcast(), None)
             }
-            BlockKind::Img => (article_image(b.src.as_deref().unwrap_or("")), None),
+            BlockKind::Img => (reader_image::article_image(b.src.as_deref().unwrap_or("")), None),
             BlockKind::Cap => {
                 let l = text(t, 13.0, 400, 0.0, false, false);
                 l.add_css_class("dc-secondary");
@@ -1571,45 +1585,6 @@ impl ReaderWindow {
         t.set_timeout(2);
         self.toasts.add_toast(t);
     }
-}
-
-// 기사 속 사진(안전 로더, 원래 비율, R-18). 불러오는 동안 옅은 상자, 못 받으면 숨김.
-fn article_image(url: &str) -> gtk::Widget {
-    let stack = gtk::Stack::new();
-    stack.set_margin_top(6);
-    stack.set_margin_bottom(18);
-    stack.set_transition_type(gtk::StackTransitionType::Crossfade);
-    stack.set_transition_duration(if motion::enabled() { 300 } else { 0 });
-    let ph = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    ph.set_height_request(180);
-    style(&ph, "border-radius: 12px; background-color: alpha(@window_fg_color, 0.05);");
-    let spin = gtk::Spinner::new();
-    spin.start();
-    spin.set_vexpand(true);
-    spin.set_valign(gtk::Align::Center);
-    ph.append(&spin);
-    stack.add_named(&ph, Some("wait"));
-    let pic = gtk::Picture::new();
-    pic.set_content_fit(gtk::ContentFit::Contain);
-    pic.set_can_shrink(true);
-    pic.set_overflow(gtk::Overflow::Hidden);
-    style(&pic, "border-radius: 12px;");
-    stack.add_named(&pic, Some("img"));
-    let s2 = stack.clone();
-    if url.is_empty() {
-        stack.set_visible(false);
-    } else {
-        load_texture(url, move |tex| match tex {
-            Some(t) => {
-                // 원래 비율 유지: 너비에 맞추되 원본보다 키우지 않음
-                pic.set_paintable(Some(&t));
-                pic.set_size_request(-1, (t.height() as f64 * (660.0 / t.width().max(1) as f64).min(1.0)) as i32);
-                s2.set_visible_child_name("img");
-            }
-            None => s2.set_visible(false),
-        });
-    }
-    stack.upcast()
 }
 
 // 불러오는 동안 글 모양 자리표시 + 은은하게 흐르는 빛(R-13). 움직임 줄이기면 멈춘 채로.

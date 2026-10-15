@@ -56,6 +56,8 @@ impl ExtractStat {
 pub struct Database {
     conn: Mutex<Connection>,
     pub file: PathBuf,
+    pub recreated: bool,        // 이번 실행에서 깨진 파일을 치우고 새로 만들었는가
+    pub salvaged_scraps: usize, // 그때 깨진 파일에서 건진 스크랩 수
 }
 
 fn ts(d: DateTime<Utc>) -> f64 {
@@ -89,9 +91,11 @@ CREATE TABLE IF NOT EXISTS image_scores(
 impl Database {
     pub fn open(dir: &Path) -> Database {
         let file = dir.join("magazine.sqlite");
+        let mut recreated = false;
         let conn = match Self::try_open(&file) {
             Ok(c) => c,
             Err(e) => {
+                recreated = true;
                 log::warn!("[DB] 열기 실패, 새로 만듭니다: {e}");
                 // 남은 WAL 이 새 파일에 섞이지 않게 -wal·-shm 도 함께 치운다
                 for ext in ["", "-wal", "-shm"] {
@@ -105,7 +109,36 @@ impl Database {
         };
         let _ = conn.execute_batch(SCHEMA);
         let _ = conn.execute_batch(&format!("PRAGMA user_version={SCHEMA_VERSION};"));
-        Database { conn: Mutex::new(conn), file }
+        let mut db = Database { conn: Mutex::new(conn), file, recreated, salvaged_scraps: 0 };
+        if recreated {
+            // 스크랩은 사용자가 만든 것이라 다시 쌓이지 않는다 → 치운 파일에서 읽을 수 있는 만큼 옮겨 온다
+            db.salvaged_scraps = db.import_scraps(&dir.join("magazine.broken.sqlite"));
+            if db.salvaged_scraps > 0 {
+                log::warn!("[DB] 깨진 파일에서 스크랩 {}개를 옮겨 왔습니다", db.salvaged_scraps);
+            }
+        }
+        db
+    }
+
+    // 다른(깨진·치운) DB 파일의 scraps 표를 읽기 전용으로 열어, 읽히는 줄까지 이 DB 로 옮긴다. 시험·손 복구에도 쓴다.
+    pub fn import_scraps(&self, other: &Path) -> usize {
+        let Ok(old) = Connection::open_with_flags(other, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) else { return 0 };
+        let Ok(mut st) = old.prepare("SELECT id, collection, created, json FROM scraps") else { return 0 };
+        let Ok(mut rows) = st.query([]) else { return 0 };
+        let c = self.conn.lock().unwrap();
+        let mut n = 0;
+        // 중간에 깨진 쪽을 만나면 거기까지
+        while let Ok(Some(r)) = rows.next() {
+            let (Ok(id), Ok(json)) = (r.get::<_, String>(0), r.get::<_, String>(3)) else { continue };
+            if serde_json::from_str::<Scrap>(&json).is_err() {
+                continue;
+            }
+            let col: Option<String> = r.get(1).ok();
+            let created: f64 = r.get(2).unwrap_or(0.0);
+            let _ = c.execute("INSERT OR IGNORE INTO scraps(id,collection,created,json) VALUES(?,?,?,?)", params![id, col, created, json]);
+            n += 1;
+        }
+        n
     }
 
     fn try_open(file: &Path) -> rusqlite::Result<Connection> {
@@ -120,7 +153,7 @@ impl Database {
     pub fn in_memory() -> Database {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(SCHEMA).unwrap();
-        Database { conn: Mutex::new(conn), file: PathBuf::from(":memory:") }
+        Database { conn: Mutex::new(conn), file: PathBuf::from(":memory:"), recreated: false, salvaged_scraps: 0 }
     }
 
     // MARK: 기사

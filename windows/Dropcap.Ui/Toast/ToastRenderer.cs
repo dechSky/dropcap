@@ -429,15 +429,20 @@ public sealed class ToastRenderer(ToastEngine engine)
         var time = RelativeTime.Format(it.Date);
         using var timeFont = Font(11, 400, time);
         var timeW = timeFont.MeasureText(time);
+        // 칩·'외 N곳'은 줄지 않게(좁으면 출처 이름이 먼저 줄어든다 — 예전엔 칩이 밀려 잘렸다, 맥 e2e-fix)
+        var chipW = ChipWidth(it.TopicLabel());
+        var more = it.Related is { Count: > 0 } rel ? $"외 {rel.Count}곳" : null;
+        float moreW = 0;
+        if (more is not null) using (var mf = Font(10.5f, 500, more)) moreW = mf.MeasureText(more) + 6;
         using (var sf = Font(11.5f, 600, it.SourceName))
         {
-            var name = TextLayout.Ellipsize(it.SourceName, sf, Math.Max(40, tw - timeW - 120));
+            var room = tx + tw - timeW - 4 - mx - 6 - chipW - 6 - moreW;
+            var name = TextLayout.Ellipsize(it.SourceName, sf, Math.Max(24, room));
             DrawText(c, name, mx, by, 11.5f, 600, Primary, rise1);
             mx += sf.MeasureText(name) + 6;
         }
         mx += DrawChip(c, it.TopicLabel(), it.TopicIcon(), Hex(it.TopicColor().For(Dark)), mx, y0, rise1) + 6;
-        if (it.Related is { Count: > 0 } rel && mx < tx + tw - timeW - 30)
-            DrawText(c, $"외 {rel.Count}곳", mx, by, 10.5f, 500, Secondary, rise1);
+        if (more is not null) DrawText(c, more, mx, by, 10.5f, 500, Secondary, rise1);
         DrawText(c, time, tx + tw - timeW, by, 11, 400, Tertiary, rise1);
         // 한국어 제목(2줄) · 원제목(1줄)
         var ty = y0 + MetaH + 3;
@@ -459,10 +464,16 @@ public sealed class ToastRenderer(ToastEngine engine)
     }
 
     // 분야 칩(N-05): 분야 이름, AI 분야 글은 'AI·모델'처럼 하위 분류까지
+    private float ChipWidth(string label)
+    {
+        using var f = Font(10.5f, 600, label);
+        return 6 + 10.5f + 3 + f.MeasureText(label) + 6;
+    }
+
     private float DrawChip(SKCanvas c, string label, string icon, SKColor color, float x, float top, double rise)
     {
         using var f = Font(10.5f, 600, label);
-        var w = 6 + 10.5f + 3 + f.MeasureText(label) + 6;
+        var w = ChipWidth(label);
         if (rise <= 0.001) return w;
         c.Save();
         c.Translate(0, (float)(5 * (1 - rise)));

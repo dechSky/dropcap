@@ -41,7 +41,7 @@ impl CategoryTable {
 }
 
 pub static TABLE: Lazy<CategoryTable> = Lazy::new(|| {
-    if let Ok(p) = std::env::var("DROPCAP_CATEGORIES") {
+    if let Some(p) = crate::test_hooks::var("DROPCAP_CATEGORIES") {
         if let Ok(s) = std::fs::read_to_string(&p) {
             match CategoryTable::parse(&s) {
                 Ok(t) => return t,

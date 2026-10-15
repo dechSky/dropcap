@@ -63,6 +63,15 @@ public sealed class ImageLoader
         return img;
     }
 
+    // 받은 사진의 가로 크기(줄인 뒤 — 맥도 1400px 로 줄인 사진의 크기를 본다). 못 받으면 null(R-22 표지 고르기)
+    public async Task<int?> WidthAsync(string url)
+    {
+        var bytes = await JpegAsync(url);
+        if (bytes is null) return null;
+        using var codec = SKCodec.Create(new MemoryStream(bytes));
+        return codec is null ? null : codec.Info.Width;
+    }
+
     public SKImage? Cached(string url) { lock (memory) return memory.TryGetValue(url, out var m) ? m.Image : null; }
 
     private async Task<byte[]?> LoadAsync(string url)

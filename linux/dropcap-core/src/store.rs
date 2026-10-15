@@ -495,6 +495,8 @@ pub struct Prefs {
     pub story_rule_version: i64, // 같은 소식 판정 기준 버전(바뀌면 한 번 다시 묶음)
     #[serde(rename = "todayIssueDone", skip_serializing_if = "Option::is_none")]
     pub today_issue_done: Option<String>, // 오늘 호를 다 읽은 날(M-23)
+    #[serde(rename = "scrapsCopyOff", skip_serializing_if = "std::ops::Not::not")]
+    pub scraps_copy_off: bool, // 스크랩 사본(scraps.json) 끄기(M-17, 맥 scrapsCopyOff)
 }
 
 impl Default for Prefs {
@@ -509,6 +511,7 @@ impl Default for Prefs {
             launch_at_login: false,
             story_rule_version: 0,
             today_issue_done: None,
+            scraps_copy_off: false,
         }
     }
 }
@@ -528,6 +531,7 @@ impl<'de> Deserialize<'de> for Prefs {
             launch_at_login: field(m, "launchAtLogin").unwrap_or(false),
             story_rule_version: field(m, "storyRuleVersion").unwrap_or(0),
             today_issue_done: field(m, "todayIssueDone"),
+            scraps_copy_off: field(m, "scrapsCopyOff").unwrap_or(false),
         })
     }
 }

@@ -149,6 +149,11 @@ pub fn group_same_story(items: Vec<NewsItem>, recent: &mut [NewsItem], now: Date
 }
 
 // 자정을 넘는 구간(예: 23시~7시)도 처리
+// 알림을 정할 때 쓰는 분야: 고른 분야에 걸린 칩이 있으면 그것, 없으면 대표 분야
+pub fn notify_section_of(it: &NewsItem, chosen: &[String]) -> String {
+    it.section_chips().into_iter().find(|c| chosen.contains(c)).unwrap_or_else(|| it.section())
+}
+
 pub fn in_quiet(hour: i64, start: i64, end: i64) -> bool {
     if start == end {
         return false;
@@ -479,16 +484,18 @@ impl AppModel {
     }
     pub fn set_policy(&self, section: &str, change: impl FnOnce(&mut SectionPolicy)) {
         let mut p = self.policy(section);
+        let was_instant = p.mode == NotifyMode::Instant;
         change(&mut p);
+        if p.mode == NotifyMode::Instant && !was_instant {
+            p.less = false; // 설정에서 즉시로 되돌리면 '덜 받기'도 풂
+        }
         self.mutate(|s| {
             s.section_policy.insert(section.to_string(), p);
         });
     }
 
-    // 알림을 정할 때 쓰는 분야: 고른 분야에 걸린 칩이 있으면 그것, 없으면 대표 분야
     pub fn notify_section(&self, it: &NewsItem) -> String {
-        let chosen = self.chosen_sections();
-        it.section_chips().into_iter().find(|c| chosen.contains(c)).unwrap_or_else(|| it.section())
+        notify_section_of(it, &self.chosen_sections())
     }
 
     fn sent_today(st: &AppState, section: Option<&str>, now: DateTime<Utc>) -> i64 {
@@ -742,7 +749,12 @@ impl AppModel {
         self.send(UiEvent::Layout);
     }
     pub fn less_of(&self, section: &str) {
-        self.set_policy(section, |p| p.mode = if p.mode == NotifyMode::Instant { NotifyMode::Bundle } else { NotifyMode::Magazine });
+        self.set_policy(section, |p| {
+            p.mode = if p.mode == NotifyMode::Instant { NotifyMode::Bundle } else { NotifyMode::Magazine };
+            p.less = true;
+        });
+        let title = if self.policy(section).mode == NotifyMode::Bundle { "이 분야는 저녁 묶음으로 모아 드릴게요" } else { "이 분야는 매거진에만 실을게요" };
+        self.send(UiEvent::Info { title: title.into(), sub: format!("{} · 설정 › 분야에서 되돌리기", sections::name(section)) });
     }
     pub fn mute_word(self: &Arc<Self>, word: &str) {
         let w = word.trim().to_string();
@@ -1037,8 +1049,8 @@ impl AppModel {
         });
     }
     pub fn unseen_reports(&self, c: &crate::database::Cluster) -> i64 {
-        let seen = self.state.lock().unwrap().story_seen.get(&c.id).cloned().unwrap_or(c.size);
-        (c.size - seen).max(0)
+        let seen = self.state.lock().unwrap().story_seen.get(&c.id).cloned();
+        magazine::unseen_reports(c.size, seen)
     }
 
     // 스크랩(읽기 창의 문단·기사 스크랩)

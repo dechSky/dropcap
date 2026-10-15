@@ -1,6 +1,9 @@
 import AppKit
 import Foundation
 
+// 시험 장치(M9): 디버그 빌드(swift build·swift test·e2e·clicksweep)에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
+#if DEBUG
+
 // 읽기 창 본문 성공률 전수 점검(mac/READSWEEP.md). 실제 기록을 건드리지 않게 DROPCAP_DATA_DIR 와 함께 쓴다.
 //  DROPCAP_TEST_READSWEEP=<결과 폴더>       기본 출처 전부의 최신 기사를 받아 본문을 추리고 표로 남긴 뒤 앱을 닫는다
 //  DROPCAP_TEST_READSWEEP_LABEL=before|after  결과 파일 이름(sweep-<이름>.md · .json)
@@ -203,3 +206,5 @@ enum ReadSweep {
         return row
     }
 }
+
+#endif

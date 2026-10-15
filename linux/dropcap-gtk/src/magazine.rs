@@ -302,7 +302,7 @@ impl Magazine {
             Page::Today | Page::Week | Page::Section(_) | Page::Issue(_) => {
                 let (src, focus) = match &p {
                     Page::Week => (IssueSource::Week, None),
-                    Page::Section(s) => (IssueSource::Today, Some(s.clone())),
+                    Page::Section(s) => (IssueSource::Section(s.clone()), None), // 분야 지면(M-25): 그 분야 기사만으로 엮은 지면
                     Page::Issue(i) => (IssueSource::Fixed(i.clone()), None),
                     _ => (IssueSource::Today, None),
                 };

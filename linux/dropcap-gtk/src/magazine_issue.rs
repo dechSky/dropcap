@@ -18,6 +18,7 @@ use std::rc::Rc;
 pub enum IssueSource {
     Today,
     Week,
+    Section(String), // 옆 목록의 분야: 오늘 호 기간의 그 분야 기사만(M-25)
     Fixed(Issue),
 }
 
@@ -194,6 +195,7 @@ impl IssuePage {
                 let issue = match source {
                     IssueSource::Today => magazine::live_daily(&core.db, &ed),
                     IssueSource::Week => magazine::live_weekly(&core.db, &ed),
+                    IssueSource::Section(id) => magazine::live_section(&core.db, &ed, &id),
                     IssueSource::Fixed(i) => i,
                 };
                 let r = magazine::resolve(&core.db, &issue, &ed.filter);
@@ -220,10 +222,29 @@ impl IssuePage {
         }
     }
 
-    // 분야 칩으로 거른 지면
+    fn section_id(&self) -> Option<&str> {
+        match &self.source {
+            IssueSource::Section(id) => Some(id.as_str()),
+            _ => None,
+        }
+    }
+
+    // 분야 칩으로 거른 지면(분야 지면에서는 AI 하위 칩만)
     fn shown(&self, d: &Built) -> Vec<(Section, Vec<NewsItem>)> {
-        let Some(f) = self.focus.borrow().clone() else { return d.r.sections.clone() };
         let sub = *self.sub.borrow();
+        if self.section_id().is_some() {
+            let Some(c) = sub else { return d.r.sections.clone() };
+            return d
+                .r
+                .sections
+                .iter()
+                .filter_map(|(s, items)| {
+                    let items: Vec<NewsItem> = items.iter().filter(|i| i.category() == c).cloned().collect();
+                    (!items.is_empty()).then(|| (s.clone(), items))
+                })
+                .collect();
+        }
+        let Some(f) = self.focus.borrow().clone() else { return d.r.sections.clone() };
         d.r.sections
             .iter()
             .filter(|(s, _)| s.section.as_deref() == Some(f.as_str()))
@@ -232,6 +253,43 @@ impl IssuePage {
                 (!items.is_empty()).then(|| (s.clone(), items))
             })
             .collect()
+    }
+
+    // 표지는 칩으로 거르지 않았을 때만(AI 하위 칩을 고르면 그 분류 기사만)
+    fn shown_cover(&self, d: &Built) -> Option<dropcap_core::database::StoredItem> {
+        if self.focus.borrow().is_some() {
+            return None;
+        }
+        let c = d.r.cover.clone()?;
+        match *self.sub.borrow() {
+            Some(sub) if c.item.category() != sub => None,
+            _ => Some(c),
+        }
+    }
+
+    // 머리: 옆 목록에서 고른 것과 같은 이름, 숫자는 지면에 실린 것 기준(M-25)
+    fn head_title(&self, d: &Built) -> String {
+        match &self.source {
+            IssueSource::Section(id) => dropcap_core::sections::name(id),
+            _ => d.r.issue.title(),
+        }
+    }
+    fn kicker(&self, d: &Built) -> String {
+        match &self.source {
+            IssueSource::Today => "오늘".into(),
+            IssueSource::Week => "이번 주".into(),
+            IssueSource::Section(_) => format!("오늘 호의 분야 지면 · {}", d.r.issue.title().replace(" 호", "")),
+            IssueSource::Fixed(_) => "지난 호".into(),
+        }
+    }
+    fn subtitle(&self, d: &Built, pages: &[(Section, Vec<NewsItem>)]) -> String {
+        let cover = self.shown_cover(d);
+        if let Some(id) = self.section_id() {
+            let shown: Vec<NewsItem> = cover.map(|c| c.item).into_iter().chain(pages.iter().flat_map(|(_, i)| i.clone())).collect();
+            return magazine::section_subtitle(id, d.r.issue.count, &shown);
+        }
+        let n = cover.is_some() as i64 + pages.iter().map(|(_, i)| i.len() as i64).sum::<i64>();
+        magazine::subtitle(d.r.issue.count, n, pages.iter().filter(|(s, _)| s.kind.is_none()).count(), "소식")
     }
 
     fn render(self: &Rc<Self>) {
@@ -245,7 +303,8 @@ impl IssuePage {
         let sort = MagSort::from_raw(&ui().prefs.borrow().mag_sort);
         let width = self.width() - 56;
         let pages: Vec<(Section, Vec<NewsItem>)> = self.shown(&d).into_iter().map(|(sec, items)| { let it = sort.apply(&items, &d.coverage); (sec, it) }).collect();
-        let seq: Vec<NewsItem> = d.r.cover.iter().filter(|_| self.focus.borrow().is_none()).map(|c| c.item.clone()).chain(pages.iter().flat_map(|(_, i)| i.clone())).collect();
+        let shown_cover = self.shown_cover(&d);
+        let seq: Vec<NewsItem> = shown_cover.iter().map(|c| c.item.clone()).chain(pages.iter().flat_map(|(_, i)| i.clone())).collect();
         *self.seq.borrow_mut() = seq.clone();
 
         // 머리(M-06)
@@ -254,7 +313,7 @@ impl IssuePage {
         head.set_margin_bottom(22);
         head.set_margin_start(36);
         head.set_margin_end(36);
-        head.append(&masthead(&d.r.issue, live, appeared));
+        head.append(&masthead(&self.head_title(&d), &self.kicker(&d), &self.subtitle(&d, &pages), live, appeared));
         let sort = gtk::DropDown::from_strings(&MagSort::ALL.map(|m| m.label()));
         let current = MagSort::from_raw(&ui().prefs.borrow().mag_sort);
         sort.set_selected(MagSort::ALL.iter().position(|m| *m == current).unwrap_or(0) as u32);
@@ -286,7 +345,41 @@ impl IssuePage {
         }
         // 분야 칩 줄(G-09): 지면이 있는 분야(건수)
         let chips: Vec<String> = d.r.sections.iter().filter_map(|(s, _)| s.section.clone()).collect();
-        if chips.len() > 1 || self.focus.borrow().is_some() {
+        if let Some(id) = self.section_id() {
+            // 분야 지면: '전체'·다른 분야 칩 없이, AI 면 그 안의 하위 칩만(기타까지 — 칩 숫자의 합 = 실린 수)
+            if id == dropcap_core::sections::AI {
+                let all: Vec<NewsItem> = d.r.cover.iter().map(|c| c.item.clone()).chain(d.r.sections.iter().flat_map(|(_, i)| i.clone())).collect();
+                let row = self.ai_sub_chips(&magazine::sub_chip_counts(&all));
+                row.set_margin_start(36);
+                row.set_margin_end(36);
+                row.set_margin_bottom(18);
+                self.content.append(&row);
+            }
+            if let Some(b) = ui().core.brief(id) {
+                let bx = evening_brief_box(&b);
+                bx.set_margin_start(36);
+                bx.set_margin_end(36);
+                bx.set_margin_bottom(18);
+                self.content.append(&bx);
+            }
+        } else if self.source == IssueSource::Today && chips.len() > 1 {
+            // 오늘 호의 분야 칩은 옆 목록의 분야 지면으로 간다(칩과 목록 선택이 늘 같게). 건수는 가는 곳과 달라 달지 않는다
+            let bar = ChipBar::new(
+                &chips,
+                &HashMap::new(),
+                None,
+                None,
+                Rc::new(move |f, _| {
+                    if let Some(id) = f {
+                        glib::idle_add_local_once(move || crate::magazine::open_section(&id));
+                    }
+                }),
+            );
+            bar.root.set_margin_start(36);
+            bar.root.set_margin_end(36);
+            bar.root.set_margin_bottom(18);
+            self.content.append(&bar.root);
+        } else if chips.len() > 1 || self.focus.borrow().is_some() {
             let mut counts: HashMap<String, usize> = HashMap::new();
             for (s, items) in &d.r.sections {
                 if let Some(id) = &s.section {
@@ -313,18 +406,10 @@ impl IssuePage {
             bar.root.set_margin_bottom(18);
             self.content.append(&bar.root);
         }
-        // 분야 지면 맨 위: 저녁 정리(N-26) — 오늘 만든 것만
-        if let (IssueSource::Today, Some(f)) = (&self.source, self.focus.borrow().clone()) {
-            if let Some(b) = ui().core.brief(&f) {
-                let bx = evening_brief_box(&b);
-                bx.set_margin_start(36);
-                bx.set_margin_end(36);
-                self.content.append(&bx);
-            }
-        }
-        // 표지(M-07) — 분야만 보고 있으면 표지 없이 그 지면만
-        if self.focus.borrow().is_none() {
-            match &d.r.cover {
+        // 표지(M-07) — 칩으로 분야만 보고 있으면 표지 없이 그 지면만
+        let has_cover = shown_cover.is_some();
+        {
+            match &shown_cover {
                 Some(c) => {
                     let cover = cover_story(&c.item, c.cluster.clone(), d.cover_size, self.on_story.clone(), seq.clone());
                     cover.set_margin_start(28);
@@ -336,13 +421,15 @@ impl IssuePage {
                     }
                     self.content.append(&cover);
                 }
-                None => self.content.append(&empty_issue(live)),
+                None if pages.is_empty() => self.content.append(&empty_issue(live)),
+                None => {}
             }
         }
-        // 분야 지면(G-10). 읽기 창 J/K 순서 = 표지 + 지면 순서
-        for (sec, items) in pages {
-            let block = self.section_block(&sec, &items, &d.r, width, &seq);
-            block.set_margin_top(38);
+        // 분야 지면(G-10). 읽기 창 J/K 순서 = 표지 + 지면 순서. 분야 지면은 머리가 이미 분야 이름이므로 유리 띠를 다시 달지 않는다
+        let header = self.section_id().is_none();
+        for (si, (sec, items)) in pages.into_iter().enumerate() {
+            let block = self.section_block(&sec, &items, &d.r, width, &seq, header);
+            block.set_margin_top(if si == 0 && !has_cover { 6 } else { 38 });
             self.content.append(&block);
         }
         // 다시 그려도 고른 카드는 그대로
@@ -362,8 +449,35 @@ impl IssuePage {
         self.content.append(&foot);
     }
 
-    fn section_block(self: &Rc<Self>, sec: &Section, items: &[NewsItem], r: &Resolved, width: i32, seq: &[NewsItem]) -> gtk::Box {
+    // AI 분야 지면의 하위 칩(맥 AISubChips): 실린 기사에 있는 분류만, 건수와 함께. 누르면 그 분류만, 다시 누르면 전부
+    fn ai_sub_chips(self: &Rc<Self>, counts: &[(NewsCategory, usize)]) -> gtk::ScrolledWindow {
+        let scroll = gtk::ScrolledWindow::builder().vscrollbar_policy(gtk::PolicyType::Never).hscrollbar_policy(gtk::PolicyType::Automatic).build();
+        scroll.set_propagate_natural_height(true);
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+        let sub = *self.sub.borrow();
+        for (c, n) in counts.iter().cloned() {
+            let on = sub == Some(c);
+            let b = crate::magazine_card::chip_button(c.label(), c.icon(), c.color(theme::is_dark()), on, Some(n), false);
+            let weak = Rc::downgrade(self);
+            b.connect_clicked(move |_| {
+                if let Some(me) = weak.upgrade() {
+                    *me.sub.borrow_mut() = if on { None } else { Some(c) };
+                    let me2 = me.clone();
+                    glib::idle_add_local_once(move || me2.render());
+                }
+            });
+            row.append(&b);
+        }
+        scroll.set_child(Some(&row));
+        scroll
+    }
+
+    fn section_block(self: &Rc<Self>, sec: &Section, items: &[NewsItem], r: &Resolved, width: i32, seq: &[NewsItem], header: bool) -> gtk::Box {
         let b = gtk::Box::new(gtk::Orientation::Vertical, 14);
+        if !header {
+            self.append_cards(&b, items, r, width, seq);
+            return b;
+        }
         // 분야 지면: 분야 고르기와 같은 유리 띠(오늘의 사진 · 기사 수 · 첫 기사 제목)
         if let (Some(ns), None) = (sec.section.as_deref().and_then(dropcap_core::sections::by_id), &sec.kind) {
             let sub = format!("{}건 · {}", items.len(), items.first().map(|i| i.display_title()).unwrap_or(""));
@@ -561,7 +675,7 @@ pub fn balanced_columns(fit: usize, count: usize) -> usize {
 }
 
 // 머리: DROPCAP 로고(D 크게)·"매거진"·발행 중·호 제목·소식 수·분야 수, 줄이 그어지며 나타남(M-06)
-fn masthead(issue: &Issue, live: bool, appeared: bool) -> gtk::Box {
+fn masthead(title_text: &str, kicker: &str, subtitle: &str, live: bool, appeared: bool) -> gtk::Box {
     let v = gtk::Box::new(gtk::Orientation::Vertical, 6);
     v.set_hexpand(true);
     let top = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -570,6 +684,9 @@ fn masthead(issue: &Issue, live: bool, appeared: bool) -> gtk::Box {
     logo.set_valign(gtk::Align::Baseline);
     top.append(&logo);
     top.append(&label(crate::strings::MAGAZINE, 11.5, 500, &["dc-secondary"]));
+    if !kicker.is_empty() {
+        top.append(&label(&format!("· {kicker}"), 11.5, 500, &["dc-secondary"]));
+    }
     if live {
         let l = gtk::Label::new(Some("발행 중"));
         l.add_css_class("dc-live");
@@ -577,9 +694,9 @@ fn masthead(issue: &Issue, live: bool, appeared: bool) -> gtk::Box {
         top.append(&l);
     }
     v.append(&top);
-    let title = label(&issue.title(), 38.0, 700, &["dc-display"]);
+    let title = label(title_text, 38.0, 700, &["dc-display"]);
     v.append(&title);
-    v.append(&label(&format!("소식 {}건 · 분야 {}개", issue.count, issue.sections.len()), 13.0, 400, &["dc-secondary"]));
+    v.append(&label(subtitle, 13.0, 400, &["dc-secondary"]));
     // 줄이 그어지며 나타남
     let progress = Rc::new(Cell::new(if appeared && motion::enabled() { 0.0 } else { 1.0 }));
     let line = gtk::DrawingArea::builder().content_height(2).hexpand(true).build();

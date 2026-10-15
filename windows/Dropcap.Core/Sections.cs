@@ -104,7 +104,8 @@ public static class Sections
     // MARK: 기사의 분야(G-02)
     // 대표 분야 하나 + 칩 여러 개. 출처의 분야가 1순위, 출처가 '주요'·모름이면 낱말 규칙으로 보충.
     // AI 는 다른 분야 글에서도 끌어온다(aiPattern).
-    public sealed record Placement(string Primary, List<string> Chips);
+    // Strong: 출처 분야와 다른데 낱말이 강하게 걸린 분야(목록에 칩을 하나 더 보임)
+    public sealed record Placement(string Primary, List<string> Chips, string? Strong = null);
 
     public static Placement Place(NewsItem it, Dictionary<string, SourceMeta>? m = null, Regex? aiRegex = null)
     {
@@ -115,7 +116,20 @@ public static class Sections
         var chips = new List<string> { primary };
         if (primary != Ai && aiRegex.IsMatch(text)) chips.Add(Ai);
         if (primary != Top && Classify(text) is { } g && g != primary && !chips.Contains(g) && g != Ai) chips.Add(g);
-        return new Placement(primary, chips);
+        // 출처 분야가 정한 대표와 달리 다른 분야 낱말이 2개 이상(그리고 대표 분야 낱말보다 많이) 걸리면 그 분야를 '강한' 칩으로
+        string? strong = null;
+        if (primary != Top)
+        {
+            var h = Hits(text);
+            var best = h.Where(kv => kv.Key != primary && kv.Key != Ai)
+                        .OrderByDescending(kv => kv.Value).ThenBy(kv => Order(kv.Key)).FirstOrDefault();
+            if (best.Key is not null && best.Value >= 2 && best.Value > h.GetValueOrDefault(primary))
+            {
+                strong = best.Key;
+                if (!chips.Contains(best.Key)) chips.Add(best.Key);
+            }
+        }
+        return new Placement(primary, chips, strong);
     }
 
     // 기사마다 한 번만 정해 기억한다(목록·지면을 그릴 때마다 다시 계산하지 않게)
@@ -156,6 +170,21 @@ public static class Sections
         return (r.Section, english.Count == 0 ? null : new Regex(pattern, RegexOptions.CultureInvariant), korean);
     }).ToArray();
 
+    // 분야마다 걸린 낱말 수(서로 다른 낱말)
+    public static Dictionary<string, int> Hits(string text)
+    {
+        var t = text.ToLowerInvariant();
+        var o = new Dictionary<string, int>();
+        foreach (var (sec, re, korean) in Compiled)
+        {
+            var found = new HashSet<string>(StringComparer.Ordinal);
+            if (re is not null) foreach (Match m in re.Matches(t)) found.Add(m.Value);
+            foreach (var k in korean) if (t.Contains(k, StringComparison.Ordinal)) found.Add(k);
+            if (found.Count > 0) o[sec] = found.Count;
+        }
+        return o;
+    }
+
     public static string? Classify(string text)
     {
         var t = text.ToLowerInvariant();
@@ -172,6 +201,8 @@ public static class NewsItemSections
     // 이 기사에 다는 분야 칩(대표 포함)
     public static List<string> SectionChips(this NewsItem it) => Sections.CachedPlace(it).Chips;
     public static bool InSection(this NewsItem it, string id) => it.SectionChips().Contains(id);
+    // 대표 분야 말고 낱말로 강하게 걸린 분야(목록에 칩을 하나 더)
+    public static string? ExtraTopic(this NewsItem it) => Sections.CachedPlace(it).Strong;
 
     // 화면에 보이는 '분야' 표시(N-05): AI 분야 글은 그 안의 하위 분류(모델·연구…)까지, 나머지는 분야 이름
     public static string TopicLabel(this NewsItem it) => it.Section() == Sections.Ai ? "AI·" + it.Category.Label() : Sections.Name(it.Section());

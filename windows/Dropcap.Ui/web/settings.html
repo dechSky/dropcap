@@ -16,6 +16,7 @@
   <button data-tab="sections"><span data-sic="grid"></span><span>분야</span></button>
   <button data-tab="sources"><span data-sic="antenna"></span><span>구독</span></button>
   <button data-tab="filters"><span data-sic="filter.circle"></span><span>거르기</span></button>
+  <button data-tab="scrapbook"><span data-sic="scissors"></span><span>스크랩북</span></button>
 </nav>
 <main id="pane">
   <!-- 일반(P-01~P-05) -->
@@ -121,6 +122,23 @@
     <h3>같은 소식 묶기</h3>
     <div class="group">
       <div class="row note">여러 곳이 같은 소식을 다루면 한 번만 알리고 "외 N곳"으로 표시합니다. 공식 발표를 먼저 고릅니다.</div>
+    </div>
+  </section>
+
+  <!-- 스크랩북(I-05·I-06, 맥 ScrapbookSettingsView): 노트 폴더 자동 저장 · 아무 주소나 나중에 읽기로 보내는 방법 -->
+  <section class="tab" data-tab="scrapbook" hidden>
+    <h3>노트 폴더로 내보내기</h3>
+    <div class="group">
+      <label class="row"><span class="lb">스크랩할 때마다 노트 폴더에 Markdown 으로 저장</span><input type="checkbox" class="switch" id="scrapExport"></label>
+      <div class="row"><span class="lb">폴더</span><span class="val path" id="scrapFolder"></span><button class="btn" id="chooseScrapFolder"></button><button class="ib" id="forgetScrapFolder" title="폴더 잊기(자동 저장 꺼짐)" hidden><span data-sic="xmark.circle"></span></button></div>
+      <div class="row warn-row" id="scrapError" hidden></div>
+      <div class="row"><span class="note grow" id="scrapNote"></span><button class="btn" id="scrapExportNow">지금 저장</button></div>
+    </div>
+    <h3>아무 웹 주소나 나중에 읽기로</h3>
+    <div class="group">
+      <div class="row"><span class="lb">매거진</span><span class="val" id="addUrlHow"></span></div>
+      <div class="row"><span class="lb">브라우저 북마클릿</span><button class="btn" id="copyBookmarklet"></button></div>
+      <div class="row note" id="bookmarkletNote"></div>
     </div>
   </section>
 </main>

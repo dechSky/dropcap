@@ -114,8 +114,13 @@ struct ReaderView: View {
     @AppStorage(ReaderLook.fontKey) private var faceRaw = ""
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorSchemeFallback
+    #if DEBUG
     @State private var findOpen = ProcessInfo.processInfo.environment["DROPCAP_TEST_FIND"] != nil // 시험용: 찾기 막대를 연 채로
     @State private var findQuery = ProcessInfo.processInfo.environment["DROPCAP_TEST_FIND"] ?? ""
+    #else
+    @State private var findOpen = false
+    @State private var findQuery = ""
+    #endif
     @State private var findIndex = 0
     @StateObject private var speaker = Speaker()
     @ObservedObject private var scrapbook = Scrapbook.shared

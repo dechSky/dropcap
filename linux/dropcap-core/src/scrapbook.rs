@@ -89,6 +89,38 @@ pub fn render_at(list: &[Scrap], collection: &str, now: DateTime<Utc>) -> String
     out
 }
 
+// MARK: JSON 사본(scraps.json) — 맥 Scrapbook.writeCopy 와 같은 모양
+// 스크랩은 매거진 DB 안에 있어, DB 가 통째로 못 읽히면 함께 사라졌다(맥 E2E 12-다). 바뀔 때마다 전부를 사본으로 원자적으로 쓴다.
+// - 예전 판(사본 없음): 첫 실행의 reload 가 DB 내용으로 사본을 만든다.
+// - 되돌리기: 예전 판은 이 파일을 모르고 무시한다. 끄기: prefs.json 의 scrapsCopyOff = true.
+// - 기기 이동: 데이터 폴더에 함께 있어 폴더째 옮기면 따라간다.
+#[derive(Serialize, Deserialize)]
+struct Copy {
+    version: i64,
+    scraps: Vec<Scrap>,
+}
+
+pub fn copy_file(dir: &std::path::Path) -> PathBuf {
+    dir.join("scraps.json")
+}
+
+pub fn read_copy(file: &std::path::Path) -> Option<Vec<Scrap>> {
+    let d = std::fs::read(file).ok()?;
+    serde_json::from_slice::<Copy>(&d).ok().map(|c| c.scraps)
+}
+
+pub fn write_copy(list: &[Scrap], file: &std::path::Path) {
+    if let Ok(d) = serde_json::to_vec(&Copy { version: 1, scraps: list.to_vec() }) {
+        let _ = crate::store::write_atomic(file, &d);
+    }
+}
+
+// 사본에 있고 DB 에 없는 스크랩(같은 id 는 DB 쪽을 그대로 둠)
+pub fn restore_list(db: &[Scrap], copy: &[Scrap]) -> Vec<Scrap> {
+    let have: std::collections::HashSet<&str> = db.iter().map(|s| s.id.as_str()).collect();
+    copy.iter().filter(|s| !have.contains(s.id.as_str())).cloned().collect()
+}
+
 // 화면이 쓰는 스크랩북(폴더 목록·마지막 폴더는 prefs.json 에)
 pub struct Scrapbook {
     db: Arc<Database>,
@@ -100,12 +132,45 @@ pub struct Scrapbook {
 impl Scrapbook {
     pub fn new(db: Arc<Database>, dir: PathBuf) -> Scrapbook {
         let mut s = Scrapbook { db, dir, scraps: vec![], collections: vec![] };
+        s.restore_from_copy_if_needed();
         s.reload();
         s
     }
 
+    // DB 를 새로 만들었거나(깨짐·삭제) 기사도 하나 없는 빈 DB 인데 사본에 있으면 사본에서 되살린다.
+    // 평소에 사용자가 다 지운 것은 되살리지 않는다.
+    fn restore_from_copy_if_needed(&mut self) {
+        if Prefs::load(&self.dir).scraps_copy_off {
+            return;
+        }
+        let Some(copy) = read_copy(&copy_file(&self.dir)).filter(|c| !c.is_empty()) else { return };
+        let in_db = self.db.scraps(None);
+        if !(self.db.recreated || (in_db.is_empty() && self.db.item_count() == 0)) {
+            return;
+        }
+        let missing = restore_list(&in_db, &copy);
+        for s in &missing {
+            self.db.save_scrap(s);
+        }
+        if !missing.is_empty() {
+            log::warn!("[스크랩] 사본(scraps.json)에서 {}개를 되살렸습니다", missing.len());
+        }
+    }
+
+    fn write_copy(&self) {
+        if Prefs::load(&self.dir).scraps_copy_off {
+            return;
+        }
+        // DB 가 깨져 새로 만들었는데 아무것도 못 건졌으면, 그 빈 목록으로 사본을 덮지 않는다
+        if self.scraps.is_empty() && self.db.recreated {
+            return;
+        }
+        write_copy(&self.scraps, &copy_file(&self.dir));
+    }
+
     pub fn reload(&mut self) {
         self.scraps = self.db.scraps(None);
+        self.write_copy();
         let prefs = Prefs::load(&self.dir);
         let mut used: Vec<String> = self.scraps.iter().map(|s| s.collection.clone()).collect();
         used.sort();

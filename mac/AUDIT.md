@@ -93,3 +93,18 @@
 - **A-31 고침**: guid·link 가 모두 빈 글은 제목+날짜로 만든 고정 id(`noid-…`).
 - **A-32 고침**: 예전 폴더 옮기기 중 `.migrating` 표시를 두고, 실패하면 다음 실행에서 빠진 것만 다시 옮김(덮어쓰지 않음). 이미 옮긴 폴더는 건드리지 않음.
 - **A-37**: 이미 고쳐져 있음(읽기 창이 공개 http(s) 주소일 때만 공유 단추를 보임) — 표시만.
+
+## 7. 보안 점검 낮음 등급(wt/security-low · 2026-10-15)
+
+항목마다 고치기 전 실패하는 시험을 먼저 두고(`SecurityLowTests`), 고친 뒤 통과를 확인했다.
+
+- **M7 받아들인 위험 — 프록시를 거친 응답**: 시스템 프록시를 거친 연결은 접속 IP 가 프록시 것이라 볼 수 없어, 예전처럼 연결 전 이름 확인(`URLSafety.resolvesPublic` — 요청과 리다이렉트마다 공개 대역인지)에만 맡긴다. 설정된 프록시가 없는데 프록시 연결이면 막는 것도 그대로. 판정만 `RequestGuard.judge` 순수 함수로 떼어 시험(`proxiedHopJudgedByNameCheckOnly`).
+  - 남은 위험: 프록시가 이름을 다시 풀면(확인 뒤 DNS 응답을 바꾸는 공격) 요청이 프록시 쪽 내부망으로 갈 수 있다. 응답 내용은 피드·기사·사진으로만 쓰이고, 공격자가 이름 확인 시점을 맞춰야 한다.
+  - 받아들인 까닭: 막으려고 '출처 피드 도메인만 받기'를 해 보니(1차 커밋) 회사 Mac 처럼 프록시를 쓰는 사용자의 사진 CDN(다른 도메인)·기사 빠른 길(출처 밖 링크)·새 채널 찾기·번역 요청이 모두 막혔다. 낮음 등급 위험에 비해 정상 기능 손실이 커서 되돌림. 미리 푼 IP 로 직접 붙는 길은 URLSession 의 TLS 이름 확인(SNI·인증서) 때문에 쓸 수 없다. 리눅스·윈도우의 프록시 처리도 같은 방향(연결 전 이름 확인)으로 맞춘다.
+- **M8 고침 — 느린 길 WKWebView**: content rule 에 내부망·내 Mac 주소 규칙을 더함(127/8 · 10/8 · 0/8 · 192.168/16 · 169.254/16 · 172.16/12 · 100.64/10 · localhost · *.localhost · *.local · [::] · [::1] · fc00::/7 · fe80::/10 · ::ffff:). 종류와 상관없이 막아 페이지 스크립트의 fetch·XHR 도 나가지 못함. WebKit 규칙 정규식은 `|` 를 못 써서 하나씩. 컴파일한 규칙은 id 로 디스크에 남으므로 id 를 `ainews-fast-2`·`ainews-full-2` 로 올림. 규칙이 실제로 컴파일되는지도 시험.
+- **M9 고침 — 시험 장치를 배포 빌드에서 뺌**: `E2E/*` · `ReaderSaveTestHooks` · `ExtrasTestHooks` · `ReadSweep` · `PerfHarness` · `SectionIconLab` · `SectionCardLab.render` · 위젯 시험 훅과 App.swift 의 시험 블록을 `#if DEBUG` 로 감쌈. 흩어진 `DROPCAP_TEST_*` 읽기도 `#if DEBUG` 또는 `TestEnv.get`(배포 빌드는 늘 nil)으로. `DROPCAP_TEST_SCHEME`(dropcap://save 확인 창 건너뛰기)·`FeedService(allowLocalForTests:)` 도 디버그 빌드에만 있음. 배포 빌드에는 `E2EFeeds` 자리만 '꺼짐'으로 남김(`E2E/E2EOff.swift`).
+  - e2e·clicksweep·문서의 시험은 모두 `.build/debug/Dropcap`(swift build) 을 쓰므로 그대로 돈다. `swift test` 도 디버그 빌드.
+  - 확인: `scripts/check-release-hooks.sh` — release 로 빌드해 실행 파일에 `DROPCAP_TEST_`·시험 훅 이름이 하나도 없는지 본다. 디버그 실행 파일을 주면 실패(고치기 전 상태와 같음).
+  - 그대로 둔 것: `DROPCAP_DATA_DIR`(데이터 폴더 바꾸기 — 바꿔도 다른 폴더에 쓸 뿐)·`DROPCAP_DEBUG_EXTRACT`·`DROPCAP_DEBUG_DRIP`(진단 로그·색)는 시험 장치가 아니라 남김.
+- **M10 고침 — 단축어 저장**: `IntentLogic.savableURL` 이 `SaveLink.normalize` 를 그대로 씀. 아이디·암호가 든 주소를 거르고, 조각(#…)·꺾쇠·따옴표 정리도 서비스 메뉴·dropcap:// 저장과 같아짐.
+- **M11 고침 — 사진 압축 폭탄**: `ImageLoader.decode` 가 풀기 전에 머리의 가로·세로를 읽어 4천만 픽셀(약 8000×5000) 또는 한 변 10만을 넘거나 크기를 모르면 풀지 않음. 시험은 진짜로 풀리는 8000×8000 PNG(수십 KB).

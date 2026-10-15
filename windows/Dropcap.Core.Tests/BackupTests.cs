@@ -99,6 +99,7 @@ public class BackupTests : IDisposable
             "economy" : {
               "bundleHour" : 17,
               "dailyCap" : 3,
+              "less" : false,
               "mode" : "bundle"
             }
           },

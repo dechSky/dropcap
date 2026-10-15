@@ -1,6 +1,9 @@
 import AppKit
 import SwiftUI
 
+// 시험 장치(M9): 디버그 빌드(swift build·swift test·e2e·clicksweep)에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
+#if DEBUG
+
 // 클릭 시험 단계: 견본 자료를 채운 뒤 화면마다(분야 고르기·상단바·매거진 지면들·읽기 창·설정 탭·물방울) 누를 것을 모두 누른다.
 @MainActor
 enum E2EClickPhase {
@@ -246,3 +249,5 @@ enum E2EClickPhase {
 extension E2EClickSweep {
     func append(_ row: Row) { appendRow(row) }
 }
+
+#endif

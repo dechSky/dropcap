@@ -44,6 +44,7 @@
       + (d.phase === 'translating' ? `<div class="working pulse">${ic('translate')}<span>한국어로 바꾸는 중 — 위에서부터 차례로 바뀝니다</span></div>` : '')
       + `<div class="body"${firstBody ? '' : ' style="animation:none"'}>${blocks()}</div>`;
     hookImages(c);
+    if (find.open) applyFind(false); // 번역이 바뀌어 다시 그려도 찾은 자리는 그대로
   }
 
   function drawBar() {
@@ -74,7 +75,7 @@
     box.dataset.src = src;
     const url = bridge.img(src);
     box.className = url ? 'cover' + (loaded.has(src) ? ' loaded' : '') : '';
-    box.innerHTML = url ? `<img alt="" src="${esc(url)}" data-src="${esc(src)}">` : '';
+    box.innerHTML = url ? `<img alt="" src="${esc(url)}" data-src="${esc(src)}">${imageTools()}` : '';
     hookImages(box);
   }
 
@@ -106,10 +107,11 @@
         ${d.date ? `<span class="dim">${esc(d.date)}</span>` : ''}
         ${min ? `<span class="dim" title="읽는 시간(한국어 분당 약 500자 기준)">${ic('clock')}약 ${min}분</span>` : ''}
       </div>
-      <h1>${esc(title)}</h1>
+      <h1><span class="tx">${esc(title)}</span></h1>
       ${!showOriginal && d.originalTitle !== d.title ? `<div class="orig">${esc(d.originalTitle)}</div>` : ''}
       ${d.byline ? `<div class="byline">${esc(d.byline)}</div>` : ''}
       ${d.translated && d.engine ? `<span class="engine">${ic('translate')}${esc(d.engine)}</span>` : ''}`;
+    if (find.open) applyFind(false);
   }
 
   // 같은 소식을 무료로 읽기(G-15, 맥 FreeAlternativesBox): 막힌 기사면 같은 스토리의 열리는 보도를 먼저 권한다. 원문 링크는 그대로.
@@ -153,7 +155,7 @@
         if (!b.src || broken.has(b.src)) return '';
         const url = bridge.img(b.src);
         if (!url) return '';
-        return `<div class="blk img"><div class="figure${loaded.has(b.src) ? ' loaded' : ''}"><img alt="" src="${esc(url)}" data-src="${esc(b.src)}"></div></div>`;
+        return `<div class="blk img"><div class="figure${loaded.has(b.src) ? ' loaded' : ''}"><img alt="" src="${esc(url)}" data-src="${esc(b.src)}">${imageTools()}</div></div>`;
       }
       const text = textOf(b);
       const can = b.scrap && text.length > 0;
@@ -161,9 +163,9 @@
       const cls = ['blk', b.type, can ? 'can' : '', scrapped ? 'scrapped' : '', b.type === 'li' && n > 0 && list[n - 1].type === 'li' ? 'cont' : ''].join(' ');
       const cut = can ? `<button class="cut" title="${scrapped ? '스크랩한 문단 — 눌러서 폴더·메모 바꾸기' : '이 문단 스크랩'}">${ic('scissors')}</button>` : '';
       let inner;
-      if (b.type === 'pre') inner = `<pre>${esc(text)}</pre>`;
-      else if (b.type === 'li') inner = `<span class="dot"></span><span>${esc(text)}</span>`;
-      else inner = esc(text);
+      if (b.type === 'pre') inner = `<pre class="tx">${esc(text)}</pre>`;
+      else if (b.type === 'li') inner = `<span class="dot"></span><span class="tx">${esc(text)}</span>`;
+      else inner = `<span class="tx">${esc(text)}</span>`;
       return `<div class="${cls}" data-i="${b.i}"><div class="in">${cut}${inner}</div></div>`;
     }).join('');
   }
@@ -325,6 +327,22 @@
       { label: '복사', icon: 'copy', run: () => send('copy', { text: sel }) },
       { label: '선택한 부분 스크랩 (Ctrl+Shift+S)', icon: 'scissors', run: scrapSelection },
     ] : [];
+    // 사진 위: 사진 속 글자 번역·복사·저장(불러온 사진만) · 사진 주소 복사(R-20)
+    const fig = e.target.closest('.figure, #cover');
+    const im = fig && fig.querySelector('img[data-src]');
+    if (im) {
+      const src = im.dataset.src;
+      if (items.length) items.push('sep');
+      if (fig.classList.contains('loaded')) {
+        items.push(
+          { label: '사진 속 글자 번역', icon: 'translate', run: () => openPhoto(src) },
+          'sep',
+          { label: '사진 복사', icon: 'copy', run: () => send('imageCopy', { src }) },
+          { label: '사진 저장…', icon: 'download', run: () => send('imageSave', { src }) },
+        );
+      }
+      items.push({ label: '사진 주소 복사', icon: 'link', run: () => send('copy', { text: src }) });
+    }
     const blk = e.target.closest('.blk.can');
     if (blk) {
       const b = doc.blocks.find((x) => x.i === +blk.dataset.i);
@@ -383,6 +401,251 @@
 
   const typing = (t) => t && (t.isContentEditable || !!t.closest('input, textarea, select'));
 
+  // MARK: 찾기(R-19, 맥 ReaderFind): 지금 보이는 글(번역이든 원문이든)에서 대소문자·악센트·전각 구별 없이 찾고,
+  // F3 / Ctrl+G 다음 · Shift+F3 / Ctrl+Shift+G 이전(끝에서 처음으로 돌아감). 조각은 제목과 본문 블록(사진 빼고, 뺀 블록은 화면에 없음)
+  const find = { open: false, query: '', index: 0, count: 0 };
+  const fq = $('#findq');
+
+  // 글자 하나씩 접는다(악센트 떼기·소문자·전각→반각). 한글 음절은 자모로 풀었다가 다시 붙여 그대로 둔다(‘하’가 ‘한’ 안에서 찾아지지 않게).
+  // map·ends: 접은 글자마다 원래 글의 시작·끝 자리
+  function fold(s) {
+    let f = '';
+    const map = [], ends = [];
+    for (let i = 0; i < s.length;) {
+      const ch = String.fromCodePoint(s.codePointAt(i));
+      const g = ch.normalize('NFKD').replace(/\p{M}/gu, '').normalize('NFC').toLowerCase();
+      for (let k = 0; k < g.length; k++) { map.push(i); ends.push(i + ch.length); }
+      f += g;
+      i += ch.length;
+    }
+    return { f, map, ends };
+  }
+
+  // 글 안에서 찾은 자리들 [시작, 끝)
+  function ranges(text, query) {
+    const q = fold(query.trim()).f;
+    if (!q || !text) return [];
+    const { f, map, ends } = fold(text);
+    const out = [];
+    for (let at = f.indexOf(q); at >= 0; at = f.indexOf(q, at + q.length)) out.push([map[at], ends[at + q.length - 1]]);
+    return out;
+  }
+
+  // 화면에 보이는 글 조각(나오는 순서대로)
+  const pieces = () => [...document.querySelectorAll('#head h1 .tx, #content .blk .tx')];
+
+  // 찾은 곳을 칠하고(지금 고른 것은 주황), 개수·단추를 고친다. scroll: 고른 곳을 화면 가운데로
+  function applyFind(scroll) {
+    let n = 0;
+    const query = find.open ? find.query : '';
+    const per = pieces().map((el) => {
+      const r = ranges(el.textContent, query); // 칠한 뒤에도 textContent 는 원래 글 그대로
+      n += r.length;
+      return { el, r };
+    });
+    find.count = n;
+    if (find.index >= n) find.index = Math.max(0, n - 1);
+    let k = 0;
+    let cur = null;
+    for (const { el, r } of per) {
+      const text = el.textContent;
+      if (!r.length) { if (el.querySelector('mark')) el.textContent = text; continue; }
+      let html = '';
+      let at = 0;
+      for (const [a, b] of r) {
+        html += esc(text.slice(at, a)) + `<mark class="hit${k === find.index ? ' cur' : ''}">${esc(text.slice(a, b))}</mark>`;
+        at = b;
+        k++;
+      }
+      el.innerHTML = html + esc(text.slice(at));
+      cur = cur || el.querySelector('mark.cur');
+    }
+    const q = find.query.trim();
+    const label = $('#findn');
+    label.textContent = !q ? '' : n === 0 ? '없음' : `${find.index + 1}/${n}`;
+    label.classList.toggle('none', !!q && n === 0);
+    $('#findPrev').disabled = $('#findNext').disabled = n === 0;
+    if (scroll && cur) window.ui.scrollToCenter(cur);
+  }
+
+  function openFind() {
+    const bar = $('#find');
+    if (!find.open) { find.open = true; bar.hidden = false; applyFind(true); }
+    fq.focus();
+    fq.select();
+  }
+  function closeFind() {
+    find.open = false;
+    find.query = '';
+    find.index = 0;
+    fq.value = '';
+    $('#find').hidden = true;
+    applyFind(false);
+  }
+  // 다음·이전. 찾기 칸이 닫혀 있으면 열기만
+  function findStep(forward) {
+    if (!find.open) { openFind(); return; }
+    const n = find.count;
+    if (!n) return;
+    find.index = ((find.index + (forward ? 1 : -1)) % n + n) % n;
+    applyFind(true);
+  }
+  fq.addEventListener('input', () => { find.query = fq.value; find.index = 0; applyFind(true); });
+  $('#findPrev').addEventListener('click', () => findStep(false));
+  $('#findNext').addEventListener('click', () => findStep(true));
+  $('#findClose').addEventListener('click', closeFind);
+
+  // Ctrl+F 찾기 칸, F3·Ctrl+G 다음, Shift+F3·Ctrl+Shift+G 이전, 찾기 칸에서 Enter 다음·Esc 닫기.
+  // 다른 입력 칸(새 폴더 이름·메모)에 글을 칠 때는 쓰지 않는다. J/K·Esc 처리보다 먼저 본다.
+  document.addEventListener('keydown', (e) => {
+    const inFind = e.target === fq;
+    const k = (e.key || '').toLowerCase();
+    const other = typing(e.target) && !inFind;
+    if (e.ctrlKey && !e.altKey && !e.shiftKey && k === 'f') {
+      if (other || document.querySelector('.photo-veil')) return;
+      e.preventDefault(); e.stopPropagation(); openFind(); return;
+    }
+    if (e.key === 'F3' || (e.ctrlKey && !e.altKey && k === 'g')) {
+      if (other || document.querySelector('.photo-veil')) return;
+      e.preventDefault(); e.stopPropagation(); findStep(!e.shiftKey); return;
+    }
+    if (!inFind) return;
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeFind(); }
+    else if (e.key === 'Enter') { e.preventDefault(); findStep(true); }
+  }, true);
+
+  // MARK: 기사 속 사진 도구(R-20, 맥 ImageTools): 마우스를 올리면 오른쪽 위에 작은 단추, 오른쪽 클릭 메뉴에도 같은 기능
+  function imageTools() {
+    return `<div class="itools">
+      <button data-img="translate" title="사진 속 글자 번역">${ic('translate')}</button>
+      <button data-img="copy" title="사진 복사">${ic('copy')}</button>
+      <button data-img="save" title="사진 저장…">${ic('download')}</button></div>`;
+  }
+  $('#page').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-img]');
+    if (!b) return;
+    e.stopPropagation();
+    const im = b.closest('.figure, #cover').querySelector('img[data-src]');
+    if (!im) return;
+    const src = im.dataset.src;
+    if (b.dataset.img === 'translate') openPhoto(src);
+    else if (b.dataset.img === 'copy') send('imageCopy', { src });
+    else send('imageSave', { src });
+  }, true);
+
+  // 사진 번역(맥은 따로 창, 여기는 읽기 창 위에 띄운 판): 사진 위 번역문 · 읽은 글자 목록 · 아래 막대(진행·번역/원본·복사·저장)
+  function openPhoto(src) {
+    const url = bridge.img(src);
+    if (!url) return;
+    closeMenu();
+    const v = document.createElement('div');
+    v.className = 'veil photo-veil';
+    v.innerHTML = `<div class="photo" role="dialog" aria-label="사진 번역">
+      <div class="ph-head"><b>사진 번역</b><span class="grow"></span><button class="tb" data-p="close" title="닫기 (Esc)">${ic('xmark')}</button></div>
+      <div class="ph-scroll">
+        <div class="ph-pic"><img alt="" src="${esc(url)}"><div class="ph-over"></div></div>
+        <div class="ph-list" hidden></div>
+      </div>
+      <div class="ph-bar">
+        <span class="ph-stage"></span><span class="grow"></span>
+        <span class="ph-done" hidden>
+          <nav class="seg"><button data-p="tr" class="on">번역</button><button data-p="orig">원본</button></nav>
+          <button class="btn" data-p="copyText">번역문 복사</button>
+        </span>
+        <button class="btn" data-p="copy">사진 복사</button>
+        <button class="btn" data-p="save">저장…</button>
+      </div></div>`;
+    document.body.appendChild(v);
+    const $p = (s) => v.querySelector(s);
+    const img = $p('.ph-pic img');
+    let lines = [];
+    let showTr = true;
+    let closed = false;
+
+    const stage = (name) => {
+      const done = lines.filter((l) => l.translated != null).length;
+      $p('.ph-stage').innerHTML = {
+        reading: '<span class="spin"></span>사진 속 글자를 읽는 중…',
+        translating: '<span class="spin"></span>번역하는 중…',
+        noText: `${ic('search')}사진에서 글자를 찾지 못했습니다`,
+        korean: `${ic('check')}이미 한국어 글자입니다`,
+        done: `${ic('translate')}${done}줄 번역`,
+      }[name];
+      $p('.ph-done').hidden = name !== 'done';
+    };
+
+    // 원래 글자 자리를 사진 색으로 덮고 그 위에 번역문(상자에 맞춰 글자 크기를 줄임)
+    const fit = () => {
+      const H = img.clientHeight;
+      v.querySelectorAll('.ph-t').forEach((el) => {
+        const base = Math.max(9, +el.dataset.h * H * 0.78);
+        let size = base;
+        el.style.fontSize = size + 'px';
+        while (size > base * 0.3 && (el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1)) {
+          size *= 0.9;
+          el.style.fontSize = size + 'px';
+        }
+      });
+    };
+    const overlay = () => {
+      $p('.ph-over').innerHTML = !showTr ? '' : lines.filter((l) => l.translated != null).map((l) =>
+        `<div class="ph-t${l.light ? '' : ' dark'}" data-h="${l.h}" style="left:calc(${l.x * 100}% - 2px);top:calc(${l.y * 100}% - 2px);`
+        + `width:calc(${l.w * 100}% + 6px);height:calc(${l.h * 100}% + 4px);background:${esc(l.bg)}">${esc(l.translated)}</div>`).join('');
+      fit();
+    };
+    const list = () => {
+      const box = $p('.ph-list');
+      box.hidden = !lines.length;
+      box.innerHTML = '<div class="hd">읽은 글자</div>' + lines.map((l) =>
+        `<div class="ln"><div>${esc(l.translated != null ? l.translated : l.text)}</div>${l.translated != null ? `<div class="o">${esc(l.text)}</div>` : ''}</div>`).join('');
+    };
+
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      v.remove();
+      removeEventListener('resize', fit);
+      document.removeEventListener('keydown', onKey);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } };
+    document.addEventListener('keydown', onKey);
+    addEventListener('resize', fit);
+    img.addEventListener('load', fit);
+    v.addEventListener('click', (e) => {
+      if (e.target === v) { close(); return; }
+      const b = e.target.closest('[data-p]');
+      if (!b) return;
+      const p = b.dataset.p;
+      if (p === 'close') close();
+      else if (p === 'tr' || p === 'orig') {
+        showTr = p === 'tr';
+        v.querySelectorAll('.seg button').forEach((x) => x.classList.toggle('on', x === b));
+        overlay();
+      } else if (p === 'copyText') send('copy', { text: lines.map((l) => (l.translated != null ? l.translated : l.text)).join('\n') });
+      else if (p === 'copy') send('imageCopy', { src });
+      else if (p === 'save') send('imageSave', { src });
+    });
+
+    stage('reading');
+    send('imageText', { src })
+      .then((r) => {
+        if (closed) return null;
+        lines = (r && r.lines) || [];
+        list();
+        if (!lines.length) { stage('noText'); return null; }
+        stage('translating');
+        return send('imageTranslate', { texts: lines.map((l) => l.text) }).then((t) => {
+          if (closed) return;
+          if (t.korean) { stage('korean'); return; }
+          t.out.forEach((x, i) => { if (x != null && lines[i]) lines[i].translated = x; });
+          stage('done');
+          overlay();
+          list();
+        });
+      })
+      .catch(() => { if (!closed) stage(lines.length ? 'done' : 'noText'); });
+  }
+
   // J·K 다음·이전 기사(H-05, 연 목록의 순서로 같은 창에서), Esc 닫기. 입력 칸에 글을 칠 때·Ctrl/Alt/Meta 와 함께면 쓰지 않음.
   // 앞 단계(capture)에서 본다: 메뉴가 열려 있으면 ui.js 가 메뉴만 닫게 두고, 스크랩 쪽지가 열려 있으면 쪽지만 닫는다.
   document.addEventListener('keydown', (e) => {
@@ -395,6 +658,7 @@
     }
     const k = (e.key || '').toLowerCase();
     if (k !== 'j' && k !== 'k') return;
+    if (document.querySelector('.photo-veil')) return; // 사진 번역 판이 떠 있으면 기사를 바꾸지 않음
     e.preventDefault();
     if (!e.repeat && doc) { closeSheet(); send('step', { dir: k === 'j' ? 1 : -1 }); }
   }, true);

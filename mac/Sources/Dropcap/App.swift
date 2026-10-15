@@ -7,7 +7,11 @@ struct DropcapApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @ObservedObject private var model = AppModel.shared
 
-    init() { E2EQuietUI.installEarly() } // 시험 실행만: 켜지는 순간 앞으로 나오지 않게(앱 기능에는 영향 없음)
+    init() {
+        #if DEBUG
+        E2EQuietUI.installEarly() // 시험 실행만: 켜지는 순간 앞으로 나오지 않게(앱 기능에는 영향 없음)
+        #endif
+    }
 
     var body: some Scene {
         MenuBarExtra(isInserted: .constant(!E2EFeeds.active)) { // 시험 실행은 상단바 아이콘을 두지 않는다(설치된 앱과 겹치지 않게)
@@ -54,10 +58,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // 이름이 바뀌기 전 앱(AI News Alert)이 떠 있으면 같은 소식을 두 번 알리므로 끈다
         for old in NSRunningApplication.runningApplications(withBundleIdentifier: "io.github.neulloopa.ainewsalert") { old.terminate() }
         MainActor.assumeIsolated {
+            #if DEBUG
             E2ERunner.startIfNeeded() // 시험용: 사용자 흐름 시나리오(DROPCAP_TEST_E2E, mac/scripts/e2e/run.sh)
+            #endif
             AppModel.shared.start()
             SectionStartup.run() // 첫 실행 분야 고르기 + 시험 훅
             Integrations.start() // 위젯·Spotlight(Integrations/)
+            #if DEBUG // 시험 장치(M9): 배포 빌드에는 없음
             // 시험용: DROPCAP_TEST_URL=<기사 주소> 면 읽기 창을, DROPCAP_TEST_TOAST=1 이면 알림 미리 보기를 바로 띄운다
             let env = ProcessInfo.processInfo.environment
             ReaderSaveTestHooks.run(env)
@@ -265,6 +272,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     }
                 }
             }
+            #endif
         }
     }
 

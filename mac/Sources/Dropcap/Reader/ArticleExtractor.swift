@@ -243,14 +243,32 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
 
     private static var compiled: [String: WKContentRuleList] = [:]
 
+    // 내부망·내 Mac 주소(M8): 느린 길은 자바스크립트가 켜져 있어 이동은 막아도 페이지 스크립트의 fetch·XHR·사진 요청이
+    // 내부망으로 나갈 수 있다. 그런 주소로 가는 요청은 종류와 상관없이 막는다. WebKit 규칙 정규식은 '|'·'{n}' 를 못 써서 하나씩.
+    // 10진수·16진수 IP 표기는 WebKit 이 주소를 읽을 때 점 네 칸으로 바꿔 둔다.
+    nonisolated static let privateNetworkFilters: [String] = {
+        let head = "^[a-z][a-z0-9+.-]*://([^/?#]*@)?"
+        let v4 = ["127\\.", "10\\.", "0\\.", "192\\.168\\.", "169\\.254\\.", "172\\.1[6-9]\\.", "172\\.2[0-9]\\.", "172\\.3[01]\\.",
+                  "100\\.6[4-9]\\.", "100\\.[7-9][0-9]\\.", "100\\.1[01][0-9]\\.", "100\\.12[0-7]\\."].map { head + $0 }
+        let names = ["localhost[.]?[:/?#]", "localhost[.]?$", "[^/?#:]*\\.localhost[.]?[:/?#]", "[^/?#:]*\\.localhost[.]?$",
+                     "[^/?#:]*\\.local[.]?[:/?#]", "[^/?#:]*\\.local[.]?$"].map { head + $0 }
+        let v6 = ["\\[::\\]", "\\[::1\\]", "\\[f[cd][0-9a-f]*:", "\\[fe[89ab][0-9a-f]*:", "\\[::ffff:"].map { head + $0 }
+        return v4 + names + v6
+    }()
+
+    nonisolated static func rules(block types: [String]) -> [[String: Any]] {
+        [["trigger": ["url-filter": ".*", "resource-type": types], "action": ["type": "block"]]]
+            + privateNetworkFilters.map { ["trigger": ["url-filter": $0, "url-filter-is-case-sensitive": false], "action": ["type": "block"]] }
+    }
+
+    // 컴파일한 규칙은 id 로 디스크에 남는다: 규칙을 바꾸면 id 끝 숫자를 올린다(예전 규칙을 다시 꺼내 쓰지 않게)
     private static func ruleList(_ id: String, _ types: [String]) async -> WKContentRuleList? {
         if let c = compiled[id] { return c }
         if let found = try? await WKContentRuleListStore.default().contentRuleList(forIdentifier: id) {
             compiled[id] = found
             return found
         }
-        let rule: [[String: Any]] = [["trigger": ["url-filter": ".*", "resource-type": types], "action": ["type": "block"]]]
-        guard let data = try? JSONSerialization.data(withJSONObject: rule), let json = String(data: data, encoding: .utf8) else { return nil }
+        guard let data = try? JSONSerialization.data(withJSONObject: rules(block: types)), let json = String(data: data, encoding: .utf8) else { return nil }
         let list = try? await WKContentRuleListStore.default().compileContentRuleList(forIdentifier: id, encodedContentRuleList: json)
         compiled[id] = list
         return list
@@ -269,7 +287,7 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
     }
 
     private func run(data: Data, encoding: String, base: URL) async -> Article? {
-        let w = await makeWeb(js: false, block: ["image", "media", "font", "style-sheet", "script", "raw", "svg-document", "popup", "fetch", "websocket", "other"], id: "ainews-fast")
+        let w = await makeWeb(js: false, block: ["image", "media", "font", "style-sheet", "script", "raw", "svg-document", "popup", "fetch", "websocket", "other"], id: "ainews-fast-2")
         web = w
         defer { w.stopLoading(); web = nil }
         loadDone = false
@@ -296,7 +314,7 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
     }
 
     private func run(url: URL, maxWait: TimeInterval = 15) async -> Article? {
-        let w = await makeWeb(js: true, block: ["image", "media", "font", "popup", "websocket"], id: "ainews-full")
+        let w = await makeWeb(js: true, block: ["image", "media", "font", "popup", "websocket"], id: "ainews-full-2")
         web = w
         defer { w.stopLoading(); web = nil }
         w.load(URLRequest(url: url, timeoutInterval: 20))

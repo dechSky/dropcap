@@ -667,6 +667,8 @@ impl ArticleService {
             let idx: Vec<usize> =
                 (0..art.blocks.len()).filter(|&i| art.blocks[i].text.is_some() && art.blocks[i].kind != BlockKind::Pre).collect();
             let chunks = [idx.iter().take(8).cloned().collect::<Vec<_>>(), idx.iter().skip(8).cloned().collect::<Vec<_>>()];
+            // 실제로 바뀐(번역된) 문단 수 — 번역이 모두 실패하면 원문이 그대로 돌아온다(맥 efdeb13)
+            let (mut done, mut total, mut engine) = (0usize, 0usize, String::new());
             for (n, chunk) in chunks.iter().enumerate() {
                 if chunk.is_empty() && n != 0 {
                     continue;
@@ -675,18 +677,18 @@ impl ArticleService {
                 inputs.extend(chunk.iter().map(|&i| art.blocks[i].text.clone().unwrap()));
                 let (mut out, used) = TR.translate_many_reporting(&inputs).await;
                 if used != crate::translator::Engine::None {
-                    a.engine = used.label().to_string(); // 이 기사에 실제로 쓴 엔진(T-08)
+                    engine = used.label().to_string(); // 이 기사에 실제로 쓴 엔진(T-08)
                 }
                 if n == 0 {
                     a.title = out.remove(0);
                 }
-                for (k, &i) in chunk.iter().enumerate() {
-                    a.blocks[i].original = art.blocks[i].text.clone();
-                    a.blocks[i].text = Some(out[k].clone());
-                }
-                a.translated = true;
+                let (d, t) = merge_translated(&mut a.blocks, &art.blocks, chunk, &out);
+                done += d;
+                total += t;
+                a.translated = done > 0;
                 self.emit(&item.link, &a);
             }
+            a.engine = engine_label(done, total, &engine);
         } else {
             a.title = art_title.clone();
         }
@@ -729,6 +731,37 @@ impl ArticleService {
         {
             let _ = std::fs::remove_file(p);
         }
+    }
+}
+
+// 번역 결과를 본문에 끼운다(맥 ArticleService.run): 외국어로 보이는 문단만 세고(total), 실제로 바뀐 것만(done) 번역으로 바꾼다.
+// 번역 안 된 문단은 원문 그대로 두고 original 도 비워 둔다(원문 보기 대상 아님). out[k] 는 chunk[k] 의 번역
+pub fn merge_translated(blocks: &mut [Block], src: &[Block], chunk: &[usize], out: &[String]) -> (usize, usize) {
+    let (mut done, mut total) = (0, 0);
+    for (k, &i) in chunk.iter().enumerate() {
+        let Some(orig) = src.get(i).and_then(|b| b.text.as_deref()) else { continue };
+        if !looks_foreign(orig) {
+            continue;
+        }
+        total += 1;
+        let Some(t) = out.get(k).filter(|t| t.as_str() != orig) else { continue };
+        done += 1;
+        blocks[i].original = Some(orig.to_string());
+        blocks[i].text = Some(t.clone());
+    }
+    (done, total)
+}
+
+// 읽기 창의 번역 표시: 번역된 문단이 없으면 표시 없음, 일부만 됐으면 '… · 일부 번역'(맥 ArticleService.engineLabel)
+pub fn engine_label(done: usize, total: usize, engine: &str) -> String {
+    if done == 0 {
+        return String::new();
+    }
+    let engine = if engine.is_empty() { crate::translator::Engine::Google.label() } else { engine };
+    if done < total {
+        format!("{engine} · 일부 번역")
+    } else {
+        engine.to_string()
     }
 }
 
@@ -813,6 +846,30 @@ pub mod body_cleanup {
             }
         }
         (skip, if names.is_empty() { None } else { Some(names.join(" · ")) })
+    }
+
+    // 본문에서 빼는 블록 전부(맥 ReaderView.hiddenBlocks): 기자 줄·짝 잃은 설명 문구, 표지와 같은 사진(주소가 같거나 크기 표기만 다른 것)
+    // 처음 한 번, 기자 프로필·로고 같은 잡그림, 그리고 뺀 그림 바로 뒤의 사진 설명(사진 없이 설명만 남지 않게)
+    pub fn hidden(blocks: &[Block], cover: Option<&str>) -> HashSet<usize> {
+        use super::image_key;
+        let (mut out, _) = analyze(blocks);
+        if let Some(c) = cover {
+            if let Some(dup) = blocks.iter().position(|b| b.kind == BlockKind::Img && image_key::same(b.src.as_deref(), Some(c))) {
+                out.insert(dup);
+            }
+        }
+        for (i, b) in blocks.iter().enumerate() {
+            if b.kind == BlockKind::Img && image_key::is_junk(b.src.as_deref()) {
+                out.insert(i);
+            }
+        }
+        let caps: Vec<usize> = out
+            .iter()
+            .filter(|&&i| blocks[i].kind == BlockKind::Img && blocks.get(i + 1).map(|n| n.kind == BlockKind::Cap).unwrap_or(false))
+            .map(|i| i + 1)
+            .collect();
+        out.extend(caps);
+        out
     }
 }
 

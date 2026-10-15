@@ -190,19 +190,8 @@ impl FeedService {
     pub async fn og_image(&self, link: &str) -> Option<String> {
         let data = self.fetch_page(link).await.ok()??;
         let head = String::from_utf8_lossy(&data[..data.len().min(65536)]).to_string();
-        for p in [
-            r#"<meta[^>]+property=["']og:image(?::url)?["'][^>]+content=["']([^"']+)"#,
-            r#"<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image"#,
-            r#"<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)"#,
-        ] {
-            let re = RegexBuilder::new(p).case_insensitive(true).build().ok()?;
-            if let Some(c) = re.captures(&head) {
-                let raw = c[1].replace("&amp;", "&");
-                let base = url::Url::parse(link).ok()?;
-                return base.join(&raw).ok().map(|u| u.to_string());
-            }
-        }
-        None
+        // <meta> 를 하나씩 떼어 읽음(og:image:type 을 주소로 잡지 않게 — 읽기 창 표지와 같은 함수, R-22)
+        crate::cover_pick::og_image(&head, Some(link))
     }
 }
 

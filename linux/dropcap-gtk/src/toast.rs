@@ -411,7 +411,7 @@ fn check_test_env() {
     if !first {
         return;
     }
-    let Ok(sec) = std::env::var("DROPCAP_TEST_BUNDLE") else { return };
+    let Some(sec) = dropcap_core::test_hooks::var("DROPCAP_TEST_BUNDLE") else { return };
     let sec = if sec.is_empty() || sec == "1" { "economy".to_string() } else { sec };
     crate::widgets::later(2500, move || show_bundle(&sec, bundle_samples(), false));
 }
@@ -430,7 +430,7 @@ fn bundle_samples() -> Vec<NewsItem> {
 // 시험용(DROPCAP_TEST_SHOT_DIR + TOAST/BURST): 맥 App.swift 처럼 여러 시점의 알림 창을 PNG 로
 fn plan_shots() {
     let env = ui().env.clone();
-    if env.shot_dir.is_none() || !(env.test_toast || env.test_burst || std::env::var("DROPCAP_TEST_BUNDLE").is_ok() || std::env::var("DROPCAP_TEST_EXTRAS2").is_ok()) {
+    if env.shot_dir.is_none() || !(env.test_toast || env.test_burst || dropcap_core::test_hooks::var("DROPCAP_TEST_BUNDLE").is_some() || dropcap_core::test_hooks::var("DROPCAP_TEST_EXTRAS2").is_some()) {
         return;
     }
     let first = CENTER.with(|c| !std::mem::replace(&mut c.borrow_mut().shots_planned, true));

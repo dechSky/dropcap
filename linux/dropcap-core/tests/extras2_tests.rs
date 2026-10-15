@@ -109,7 +109,7 @@ fn watched_story_notifies_regardless_of_section_but_respects_total_cap() {
     let l = PolicyLimits::default();
     let mut i = Input {
         chosen: false,
-        policy: SectionPolicy { mode: NotifyMode::Magazine, bundle_hour: 18, daily_cap: 3 },
+        policy: SectionPolicy { mode: NotifyMode::Magazine, bundle_hour: 18, daily_cap: 3, less: false },
         coverage: Coverage { kr: 1, intl: 0 },
         lab: false,
         important: false,
@@ -178,7 +178,7 @@ fn home() -> (AppState, Vec<Scrap>) {
     s.settings.must_keywords = vec!["GPT-6".into()];
     s.settings.watch_keywords = vec!["삼성전자".into()];
     s.sections_chosen = Some(vec!["ai".into(), "economy".into()]);
-    s.section_policy = HashMap::from([("economy".to_string(), SectionPolicy { mode: NotifyMode::Bundle, bundle_hour: 17, daily_cap: 3 })]);
+    s.section_policy = HashMap::from([("economy".to_string(), SectionPolicy { mode: NotifyMode::Bundle, bundle_hour: 17, daily_cap: 3, less: false })]);
     s.enabled = HashMap::from([("verge".to_string(), true), ("nyt".to_string(), false)]);
     s.notify = HashMap::from([("verge".to_string(), false)]);
     s.custom_sources = vec![source("custom-a", "https://custom-a.example/feed")];

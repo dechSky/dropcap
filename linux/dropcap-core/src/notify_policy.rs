@@ -39,11 +39,12 @@ pub struct SectionPolicy {
     pub bundle_hour: i64, // 묶음을 보내는 시각(시)
     #[serde(rename = "dailyCap")]
     pub daily_cap: i64, // 이 분야에서 하루에 떨어뜨리는 물방울 수
+    pub less: bool,     // 카드에서 '이 분야 덜 받기'를 누름 → 주요 뉴스 흐름으로도 바로 떨어뜨리지 않음(즉시로 되돌리면 풀림)
 }
 
 impl Default for SectionPolicy {
     fn default() -> Self {
-        SectionPolicy { mode: NotifyMode::Bundle, bundle_hour: 18, daily_cap: 3 }
+        SectionPolicy { mode: NotifyMode::Bundle, bundle_hour: 18, daily_cap: 3, less: false }
     }
 }
 
@@ -63,6 +64,7 @@ impl<'de> Deserialize<'de> for SectionPolicy {
             mode: get("mode").and_then(|m| serde_json::from_value(m).ok()).unwrap_or(def.mode),
             bundle_hour: get("bundleHour").and_then(|m| m.as_i64()).unwrap_or(def.bundle_hour),
             daily_cap: get("dailyCap").and_then(|m| m.as_i64()).unwrap_or(def.daily_cap),
+            less: get("less").and_then(|m| m.as_bool()).unwrap_or(false), // 예전 파일엔 없음 · 예전 판은 이 값을 무시
         })
     }
 }
@@ -153,7 +155,8 @@ pub fn decide(i: &Input, l: PolicyLimits) -> Decision {
 pub fn decide_with_top(i: &Input, top: Option<&Input>, l: PolicyLimits) -> (Decision, bool) {
     let own = decide(i, l);
     match top {
-        Some(t) if own != Decision::Drop && crosses(i.coverage, l) => {
+        // '덜 받기'한 분야는 주요 뉴스 흐름으로도 떨어뜨리지 않고 자기 정책(묶음·매거진만)대로 둔다
+        Some(t) if own != Decision::Drop && !i.policy.less && crosses(i.coverage, l) => {
             let mut t = *t;
             t.coverage = i.coverage;
             if decide(&t, l) == Decision::Drop {

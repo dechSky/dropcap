@@ -16,7 +16,7 @@ thread_local! {
     static WINDOW: RefCell<Option<adw::PreferencesWindow>> = const { RefCell::new(None) };
 }
 
-// tab: "general" | "sections" | "sources" | "filters"
+// tab: "general" | "sections" | "sources" | "filters" | "scrapbook"
 pub fn open(tab: Option<&str>) {
     let w = WINDOW.with(|c| c.borrow().clone()).unwrap_or_else(build);
     if let Some(t) = tab {
@@ -56,6 +56,7 @@ fn build() -> adw::PreferencesWindow {
     w.add(&crate::settings_sections::page());
     w.add(&sources());
     w.add(&filters());
+    w.add(&crate::scrapbook_settings::page()); // 스크랩북(I-05·I-06)
     WINDOW.with(|c| *c.borrow_mut() = Some(w.clone()));
     w
 }
@@ -185,6 +186,8 @@ fn general() -> adw::PreferencesPage {
     });
     g.add(&row);
     page.add(&g);
+
+    page.add(&crate::scrapbook_settings::integrations_group()); // 데스크톱 검색 · 명령줄(I-02·I-03)
 
     // 트레이 안내(GNOME)
     if desktop_is("GNOME") {

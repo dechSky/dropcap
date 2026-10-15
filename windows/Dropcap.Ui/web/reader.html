@@ -31,6 +31,14 @@
   <button id="browser" class="tb" title="원문을 브라우저에서 열기"><i data-ic="globe"></i></button>
   <button id="share" class="tb" title="공유"><i data-ic="share"></i></button>
 </header>
+<div id="find" class="find" hidden>
+  <i data-ic="search"></i>
+  <input id="findq" placeholder="기사 안에서 찾기" spellcheck="false" autocomplete="off">
+  <span id="findn" class="n"></span>
+  <button id="findPrev" class="fb up" title="이전 (Shift+F3)" aria-label="이전"><i data-ic="chevronDown"></i></button>
+  <button id="findNext" class="fb" title="다음 (F3)" aria-label="다음"><i data-ic="chevronDown"></i></button>
+  <button id="findClose" class="fb x" title="찾기 닫기 (Esc)" aria-label="찾기 닫기"><i data-ic="xmark.circle"></i></button>
+</div>
 <main id="scroll">
   <article id="page">
     <div id="cover"></div>

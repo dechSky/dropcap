@@ -116,7 +116,7 @@ pub fn parse_meta(json: &str) -> HashMap<String, SourceMeta> {
 
 // 찾는 순서: DROPCAP_SECTIONS(시험용 경로) → 실행 파일에 담긴 shared/categories.json → 기본값
 pub static ALL: Lazy<Vec<NewsSection>> = Lazy::new(|| {
-    if let Ok(p) = std::env::var("DROPCAP_SECTIONS") {
+    if let Some(p) = crate::test_hooks::var("DROPCAP_SECTIONS") {
         if let Some(s) = std::fs::read_to_string(&p).ok().and_then(|j| parse(&j)) {
             return s;
         }
@@ -166,6 +166,7 @@ pub fn sources_in(section: &str, meta: &HashMap<String, SourceMeta>) -> Vec<Sour
 pub struct Placement {
     pub primary: String,
     pub chips: Vec<String>,
+    pub strong: Option<String>, // 출처 분야와 다른데 낱말이 강하게 걸린 분야(목록에 칩을 하나 더 보임)
 }
 
 // 출처의 분야가 1순위, 출처가 '주요'·모름이면 낱말 규칙으로 보충. AI 는 다른 분야 글에서도 끌어온다(aiPattern).
@@ -191,7 +192,21 @@ pub fn place(it: &NewsItem, meta: &HashMap<String, SourceMeta>, ai_regex: Option
             }
         }
     }
-    Placement { primary, chips }
+    // 출처 분야가 정한 대표와 달리 다른 분야 낱말이 2개 이상(그리고 대표 분야 낱말보다 많이) 걸리면 그 분야를 '강한' 칩으로
+    let mut strong = None;
+    if primary != TOP {
+        let h = hits(&text);
+        let best = h.iter().filter(|(k, _)| **k != primary && *k != AI).max_by_key(|(k, v)| (**v, std::cmp::Reverse(order(k))));
+        if let Some((k, v)) = best {
+            if *v >= 2 && *v > h.get(&primary).copied().unwrap_or(0) {
+                strong = Some(k.clone());
+                if !chips.contains(k) {
+                    chips.push(k.clone());
+                }
+            }
+        }
+    }
+    Placement { primary, chips, strong }
 }
 
 static CACHE: Lazy<Mutex<HashMap<String, Placement>>> = Lazy::new(|| Mutex::new(HashMap::new()));
@@ -238,6 +253,27 @@ static COMPILED: Lazy<Vec<(&'static str, Option<Regex>, Vec<&'static str>)>> = L
         .collect()
 });
 
+// 분야마다 걸린 낱말 수(서로 다른 낱말)
+pub fn hits(text: &str) -> HashMap<String, usize> {
+    let t = text.to_lowercase();
+    let mut out = HashMap::new();
+    for (sec, re, korean) in COMPILED.iter() {
+        let mut found = std::collections::HashSet::new();
+        if let Some(r) = re {
+            for m in r.find_iter(&t) {
+                found.insert(m.as_str().to_string());
+            }
+        }
+        for k in korean.iter().filter(|k| t.contains(**k)) {
+            found.insert(k.to_string());
+        }
+        if !found.is_empty() {
+            out.insert(sec.to_string(), found.len());
+        }
+    }
+    out
+}
+
 pub fn classify(text: &str) -> Option<String> {
     let t = text.to_lowercase();
     for (sec, re, korean) in COMPILED.iter() {
@@ -256,6 +292,10 @@ impl NewsItem {
     // 이 기사에 다는 분야 칩(대표 포함)
     pub fn section_chips(&self) -> Vec<String> {
         cached_place(self).chips
+    }
+    // 대표 분야 말고 낱말로 강하게 걸린 분야(목록에 칩을 하나 더)
+    pub fn extra_topic(&self) -> Option<String> {
+        cached_place(self).strong
     }
     pub fn in_section(&self, id: &str) -> bool {
         self.section_chips().iter().any(|c| c == id)

@@ -133,6 +133,7 @@ struct Wave: Shape {
     }
 }
 
+#if DEBUG // 시험 장치(M9)
 // 시험용: 세 시안을 모든 분야로 그려 PNG 로(밝은·어두운 바탕)
 enum SectionIconLab {
     @MainActor static func render(to dir: String) {
@@ -172,3 +173,4 @@ enum SectionIconLab {
         NSLog("[아이콘 시험] 끝")
     }
 }
+#endif

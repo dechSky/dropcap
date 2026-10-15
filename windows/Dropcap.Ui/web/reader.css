@@ -175,3 +175,56 @@ article { max-width: calc(660px + 72px); margin: 0 auto; padding: 20px 36px 80px
   animation: up 0.3s cubic-bezier(.2,.9,.25,1); }
 .flash.out { opacity: 0; transition: opacity 0.25s ease-out; }
 @keyframes up { from { opacity: 0; transform: translate(-50%, 16px); } }
+
+/* 찾기(R-19, 맥 ReaderFindBar): 도구 막대 아래 가운데 캡슐. 찾은 곳은 노랑, 지금 고른 곳은 주황 */
+.find { position: fixed; top: 56px; left: 50%; transform: translateX(-50%); z-index: 800; width: min(440px, calc(100vw - 32px));
+  display: flex; align-items: center; gap: 8px; padding: 7px 12px; border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-elev) 92%, transparent); backdrop-filter: blur(20px);
+  box-shadow: 0 3px 8px rgba(0,0,0,.12), 0 0 0 0.5px color-mix(in srgb, var(--text) 10%, transparent); animation: drop 0.18s ease-out; }
+@keyframes drop { from { opacity: 0; transform: translate(-50%, -8px); } }
+.find > .ic { font-size: 12px; color: var(--text-2); flex: none; }
+.find input { flex: 1; min-width: 160px; border: 0; outline: 0; background: transparent; font-size: 13px; color: var(--text); user-select: text; }
+.find .n { min-width: 40px; text-align: right; font-size: 11.5px; font-variant-numeric: tabular-nums; color: var(--text-2); flex: none; }
+.find .n.none { color: var(--orange); }
+.find .fb { width: 22px; height: 22px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; color: var(--text-2); background: none; flex: none; }
+.find .fb:hover { background: var(--fill); color: var(--text); }
+.find .fb:disabled { opacity: 0.35; pointer-events: none; }
+.find .fb.up .ic { transform: rotate(180deg); }
+.find .fb.x { font-size: 14px; color: var(--text-3); }
+mark.hit { color: inherit; background: rgba(255, 204, 0, .45); border-radius: 2px; }
+mark.hit.cur { color: #000; background: rgba(255, 149, 0, .75); }
+html.reduce-motion .find { animation: none; }
+
+/* 기사 속 사진 도구(R-20, 맥 ImageActions): 사진에 마우스를 올리면 오른쪽 위에 작은 단추 */
+.itools { position: absolute; top: 8px; right: 8px; display: flex; gap: 4px; opacity: 0; visibility: hidden;
+  transition: opacity 0.15s ease-out, visibility 0s linear 0.15s; z-index: 2; }
+.figure.loaded:hover .itools, .cover.loaded:hover .itools { opacity: 1; visibility: visible; transition-delay: 0s; }
+.itools button { width: 28px; height: 26px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; font-size: 12px;
+  color: var(--text); background: color-mix(in srgb, var(--bg-elev) 85%, transparent); backdrop-filter: blur(16px);
+  box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--text) 10%, transparent); }
+.itools button:hover { background: var(--bg-elev); }
+
+/* 사진 번역 판(맥 ImageTranslateView: 사진 + 읽은 글자 목록 + 아래 막대) */
+.photo-veil { align-items: center; padding: 20px; }
+.photo { width: min(920px, 100%); max-height: 100%; display: flex; flex-direction: column; border-radius: 12px; overflow: hidden;
+  background: var(--bg-elev); box-shadow: var(--shadow); animation: pop-in 0.12s ease-out; }
+.ph-head { display: flex; align-items: center; padding: 8px 10px 8px 18px; border-bottom: 0.5px solid var(--line); font-size: 13px; }
+.ph-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+.ph-pic { position: relative; border-radius: 10px; overflow: hidden; align-self: center; max-width: 100%; }
+.ph-pic img { display: block; max-width: 100%; }
+.ph-over { position: absolute; inset: 0; }
+.ph-t { position: absolute; padding: 0 2px; border-radius: 3px; overflow: hidden; color: #000; font-weight: 600;
+  line-height: 1.1; word-break: keep-all; overflow-wrap: anywhere; user-select: text;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.ph-t.dark { color: #fff; }
+.ph-list { display: flex; flex-direction: column; gap: 8px; user-select: text; }
+.ph-list .hd { font-size: 13px; font-weight: 600; color: var(--text-2); }
+.ph-list .ln { font-size: 14px; display: flex; flex-direction: column; gap: 2px; }
+.ph-list .ln .o { font-size: 12px; color: var(--text-2); }
+.ph-bar { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-top: 0.5px solid var(--line); font-size: 12.5px; flex-wrap: wrap; }
+.ph-stage { display: inline-flex; align-items: center; gap: 6px; }
+.ph-done { display: inline-flex; align-items: center; gap: 10px; }
+.ph-done[hidden] { display: none; }
+.ph-bar .seg { margin: 0; }
+.ph-bar .btn { padding: 5px 11px; font-size: 12.5px; }
+.spin { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--text-3); border-top-color: transparent; animation: spin 0.8s linear infinite; }

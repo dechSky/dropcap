@@ -45,7 +45,12 @@ final class AppModel: ObservableObject {
         HotKey.register(key: .m) { MagazineController.open() }          // ⌥⌘M
         // 시험 폴더로 띄운 시험 실행은 사용자 화면에 환영 알림을 띄우지 않는다(DROPCAP_TEST_WELCOME 으로만 확인)
         let env = ProcessInfo.processInfo.environment
-        if firstRun, env["DROPCAP_DATA_DIR"] == nil || env["DROPCAP_TEST_WELCOME"] != nil {
+        #if DEBUG
+        let testWelcome = env["DROPCAP_TEST_WELCOME"] != nil
+        #else
+        let testWelcome = false
+        #endif
+        if firstRun, env["DROPCAP_DATA_DIR"] == nil || testWelcome {
             ToastCenter.shared.showWelcome()
         }
         if state.settings.style == .system { SystemNotifier.requestAuthorization() }

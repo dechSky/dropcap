@@ -1,0 +1,4 @@
+# 앱이 꺼져 있을 때 GNOME 검색·KRunner 가 물으면 창 없이 켠다. /usr/share/dbus-1/services/ 에 둔다(Exec 는 설치 경로에 맞게)
+[D-BUS Service]
+Name=io.github.dechsky.Dropcap
+Exec=/usr/bin/dropcap --background

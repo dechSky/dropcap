@@ -27,6 +27,7 @@ public sealed record SectionPolicy
     public NotifyMode Mode { get; init; } = NotifyMode.Bundle;
     public int BundleHour { get; init; } = 18;    // 묶음을 보내는 시각(시)
     public int DailyCap { get; init; } = 3;       // 이 분야에서 하루에 떨어뜨리는 물방울 수
+    public bool Less { get; init; }               // 카드에서 '이 분야 덜 받기'를 누름 → 주요 뉴스 흐름으로도 바로 떨어뜨리지 않음(즉시로 되돌리면 풀림)
 
     // 예전·깨진 값도 읽힘(모르는 모드는 묶음)
     public static SectionPolicy FromJson(JsonNode? n)
@@ -37,6 +38,7 @@ public sealed record SectionPolicy
             Mode = NotifyModes.Parse(Json.Field<string?>(o, "mode", null)),
             BundleHour = Json.Field(o, "bundleHour", 18),
             DailyCap = Json.Field(o, "dailyCap", 3),
+            Less = Json.Field(o, "less", false), // 예전 파일엔 없음 · 예전 판은 이 값을 무시
         };
     }
 }
@@ -102,7 +104,8 @@ public static class NotifyPolicy
     public static (NotifyDecision Decision, bool ViaTop) DecideWithTop(Input i, Input? top, PolicyLimits l)
     {
         var own = Decide(i, l);
-        if (own == NotifyDecision.Drop || top is null || !Crosses(i.Coverage, l)) return (own, false);
+        // '덜 받기'한 분야는 주요 뉴스 흐름으로도 떨어뜨리지 않고 자기 정책(묶음·매거진만)대로 둔다
+        if (own == NotifyDecision.Drop || i.Policy.Less || top is null || !Crosses(i.Coverage, l)) return (own, false);
         var t = top with { Coverage = i.Coverage };
         return Decide(t, l) == NotifyDecision.Drop ? (NotifyDecision.Drop, true) : (own, false);
     }

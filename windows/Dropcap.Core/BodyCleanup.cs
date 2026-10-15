@@ -37,4 +37,19 @@ public static class BodyCleanup
         }
         return (skip, names.Count == 0 ? null : string.Join(" · ", names));
     }
+
+    // 본문에서 빼는 블록(맥 ReaderView.hiddenBlocks): 표지와 같은 사진(주소가 같거나 크기 표기만 다른 것) 처음 한 번, 기자 줄·짝 잃은 설명 문구, 잡그림
+    public static HashSet<int> Hidden(IReadOnlyList<Block> blocks, string? cover)
+    {
+        var o = Analyze(blocks).Skip;
+        if (cover is not null)
+            for (var i = 0; i < blocks.Count; i++)
+                if (blocks[i].Type == BlockKind.Img && ImageKey.Same(blocks[i].Src, cover)) { o.Add(i); break; }
+        for (var i = 0; i < blocks.Count; i++)
+            if (blocks[i].Type == BlockKind.Img && ImageKey.IsJunk(blocks[i].Src)) o.Add(i);   // 기자 프로필·로고 같은 잡그림은 싣지 않음
+        // 뺀 그림 바로 뒤의 사진 설명도 함께 뺀다(사진 없이 설명만 남지 않게)
+        foreach (var i in o.ToList())
+            if (i + 1 < blocks.Count && blocks[i].Type == BlockKind.Img && blocks[i + 1].Type == BlockKind.Cap) o.Add(i + 1);
+        return o;
+    }
 }

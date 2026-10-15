@@ -129,7 +129,6 @@ fn story_list_card(c: &Cluster, items: &[NewsItem], big: bool, on_story: Rc<dyn 
     h.set_margin_bottom(14);
     h.set_margin_start(14);
     h.set_margin_end(14);
-    let lead = items.iter().find(|i| i.tier == "lab").or(items.first()).cloned();
     if let Some(photo) = items.iter().find(|i| has_photo(i)) {
         let (w, hh) = if big { (210, 140) } else { (120, 80) };
         let img = RemoteImage::new(photo.image.as_deref(), photo.category(), &widgets::source_color(&photo.source_id), w, hh);
@@ -141,11 +140,13 @@ fn story_list_card(c: &Cluster, items: &[NewsItem], big: bool, on_story: Rc<dyn 
     let v = gtk::Box::new(gtk::Orientation::Vertical, 8);
     v.set_hexpand(true);
     let meta = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    if let Some(l) = &lead {
+    // 분야는 묶인 보도들의 다수결(대표 기사 하나의 AI 하위 분류를 그대로 쓰면 IT 소식이 'AI·모델·제품'이 됐다, M-26)
+    if let Some(topic) = dropcap_core::magazine::story_topic(items, |i| i.section()) {
+        let (name, icon, color) = dropcap_core::magazine::story_topic_label(&topic, crate::theme::is_dark());
         let t = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-        t.append(&widgets::icon(l.topic_icon(), 11));
-        t.append(&label(&l.topic_label(), 11.5, 600, &[]));
-        tint(&t, &l.topic_color(crate::theme::is_dark()));
+        t.append(&widgets::icon(icon, 11));
+        t.append(&label(&name, 11.5, 600, &[]));
+        tint(&t, &color);
         meta.append(&t);
     }
     meta.append(&label(&format!("{}곳 보도", c.size), 11.5, 600, &["dc-secondary"]));
@@ -517,6 +518,11 @@ pub fn saved() -> (gtk::Widget, gtk::ScrolledWindow) {
     let (v, scroll) = wide_box();
     v.append(&big_title("저장"));
     v.append(&label("저장한 기사는 번역까지 이 컴퓨터에 보관돼 인터넷 없이도 읽을 수 있습니다.", 13.0, 400, &["dc-secondary"]));
+    // 피드에 없는 기사도 주소로 저장(I-05, 맥 AddURLBar(compact: false))
+    let bar = crate::add_url_bar::build(false);
+    bar.set_halign(gtk::Align::Start);
+    bar.set_size_request(560, -1);
+    v.append(&bar);
     let core = ui().core.clone();
     let list = core.state().saved;
     if list.is_empty() {
@@ -999,32 +1005,11 @@ fn save_markdown(win: &adw::ApplicationWindow, folder: &str) {
     });
 }
 
-// 일요일 저녁(17시부터) 스크랩북 첫머리에 '이번 주 모은 문장'(맥 WeeklyQuotes) — 지난 7일 동안 문단으로 스크랩한 글
-pub fn pick_weekly(scraps: &[Scrap], now: chrono::DateTime<Utc>, limit: usize) -> Vec<Scrap> {
-    let mut seen = std::collections::HashSet::new();
-    let mut v: Vec<Scrap> = scraps
-        .iter()
-        .filter(|s| {
-            let Some(q) = s.quote.as_ref().filter(|q| !q.is_empty()) else { return false };
-            (now - s.created).num_seconds() < 7 * 86400 && s.created <= now + chrono::Duration::seconds(60) && seen.insert(q.clone())
-        })
-        .cloned()
-        .collect();
-    v.sort_by(|a, b| b.created.cmp(&a.created));
-    v.truncate(limit);
-    v
-}
-
-fn is_sunday_evening(now: chrono::DateTime<Local>) -> bool {
-    if std::env::var("DROPCAP_TEST_WEEKLY").is_ok() {
-        return true; // 시험용
-    }
-    now.weekday() == chrono::Weekday::Sun && chrono::Timelike::hour(&now) >= 17
-}
-
+// 일요일 저녁(17시부터) 스크랩북 첫머리에 '이번 주 모은 문장'(맥 WeeklyQuotes, M-27) — 지난 7일 동안 문단으로 스크랩한 글.
+// 고르는 규칙은 core(magazine::pick_weekly_quotes · is_sunday_evening, 시험 magazine_catchup_tests)
 fn weekly_quotes(all: &[Scrap]) -> Option<gtk::Box> {
-    let list = pick_weekly(all, Utc::now(), 6);
-    if !is_sunday_evening(Local::now()) || list.is_empty() {
+    let list = dropcap_core::magazine::pick_weekly_quotes(all, Utc::now(), 6);
+    if !dropcap_core::magazine::is_sunday_evening(&Local::now()) || list.is_empty() {
         return None;
     }
     let v = gtk::Box::new(gtk::Orientation::Vertical, 14);

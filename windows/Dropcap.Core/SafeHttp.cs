@@ -7,7 +7,9 @@ namespace Dropcap.Core;
 
 // 바깥으로 나가는 모든 요청(피드·기사·사진·번역)은 이 클라이언트만 쓴다.
 // - 연결 콜백(S-03): 접속하는 순간 이름을 풀어 모든 IP 를 검사하고, 검사한 그 IP 로만 소켓을 연다. 확인 못 하면 막는다.
-// - 프록시(S-03 예외): 시스템 프록시가 설정돼 있을 때 그 프록시로 가는 연결만 허용(이때는 요청 전 이름 확인에 맡김).
+// - 프록시(S-03 예외): 시스템 프록시가 설정돼 있을 때 그 프록시로 가는 연결만 허용. 프록시가 목적지 이름을 다시 푸므로 접속 IP 는
+//   볼 수 없다 → 프록시를 쓰는 요청은 보내기 직전에 목적지 이름을 기억 없이 다시 풀어 공개 주소가 아니면 막는다(ProxyGuard, 보안 점검 W6).
+//   프록시 응답을 출처 도메인으로 제한하지는 않는다(사진 CDN·출처 밖 기사·번역이 막혀 맥에서 되돌림).
 // - 리다이렉트(S-04): 자동으로 따라가지 않고, 다음 주소를 같은 검사에 통과시킨 뒤에만 따라간다.
 public static class SafeHttp
 {
@@ -15,7 +17,7 @@ public static class SafeHttp
     public const long MaxBody = 32L << 20;
 
     private static readonly IWebProxy? systemProxy = SystemProxy();
-    public static readonly HttpClient Client = Create();
+    public static readonly HttpClient Client = Create(systemProxy);
 
     // 마지막으로 막은 연결(로그·오류 문구용)
     public static string? LastBlocked { get; private set; }
@@ -25,8 +27,14 @@ public static class SafeHttp
         try { return HttpClient.DefaultProxy; } catch { return null; }
     }
 
-    private static HttpClient Create()
+    // 이름 풀기(시험에서 바꿔 끼움 — 실제로는 DNS)
+    internal delegate Task<IPAddress[]> Resolver(string host, CancellationToken ct);
+    private static Task<IPAddress[]> SystemDns(string host, CancellationToken ct) => Dns.GetHostAddressesAsync(host, ct);
+
+    // proxy·dns 는 시험에서만 바꾼다
+    internal static HttpClient Create(IWebProxy? proxy, Resolver? dns = null)
     {
+        dns ??= SystemDns;
         var h = new SocketsHttpHandler
         {
             AllowAutoRedirect = false,
@@ -34,41 +42,64 @@ public static class SafeHttp
             UseCookies = false,
             ConnectTimeout = TimeSpan.FromSeconds(15),
             PooledConnectionLifetime = TimeSpan.FromMinutes(5),
-            UseProxy = systemProxy is not null,
-            Proxy = systemProxy,
-            ConnectCallback = ConnectAsync,
+            UseProxy = proxy is not null,
+            Proxy = proxy,
+            ConnectCallback = (ctx, ct) => ConnectAsync(ctx, proxy, dns, ct),
         };
-        var c = new HttpClient(h) { Timeout = Timeout.InfiniteTimeSpan };
+        var c = new HttpClient(new ProxyGuard(h, proxy, dns)) { Timeout = Timeout.InfiniteTimeSpan };
         c.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
         return c;
     }
 
-    // 프록시로 가는 연결인가(시스템에 프록시가 실제로 설정돼 있고, 이 요청이 그 프록시를 쓰는 경우만)
-    internal static bool IsSystemProxyEndpoint(Uri? request, string host, int port)
+    // 프록시를 쓰는 요청: 보내기 직전에 목적지 이름을 다시 푼다(5분 기억 없이 — 요청 전 검사 뒤 이름이 내부망으로 바뀌는 것 대비).
+    // 남는 위험: 이 확인과 프록시의 이름 풀기 사이에 바뀌는 것은 막을 수 없다(받아들인 위험 — PROGRESS).
+    private sealed class ProxyGuard(HttpMessageHandler inner, IWebProxy? proxy, Resolver dns) : DelegatingHandler(inner)
     {
-        if (systemProxy is null || request is null) return false;
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            if (UsesProxy(proxy, request.RequestUri) && request.RequestUri is { } u
+                && await ResolveCheckedAsync(u.Host.Trim('[', ']'), ct, dns) is null)
+            {
+                LastBlocked = u.Host;
+                throw new BlockedException($"프록시 목적지 {u.Host}");
+            }
+            return await base.SendAsync(request, ct);
+        }
+    }
+
+    internal static bool UsesProxy(IWebProxy? proxy, Uri? request)
+    {
+        if (proxy is null || request is null) return false;
+        try { return !proxy.IsBypassed(request) && proxy.GetProxy(request) is { } p && p != request; }
+        catch { return true; } // 판단을 못 하면 검사하는 쪽으로
+    }
+
+    // 프록시로 가는 연결인가(프록시가 실제로 설정돼 있고, 이 요청이 그 프록시를 쓰는 경우만)
+    internal static bool IsProxyEndpoint(IWebProxy? proxy, Uri? request, string host, int port)
+    {
+        if (proxy is null || request is null) return false;
         try
         {
-            if (systemProxy.IsBypassed(request)) return false;
-            var p = systemProxy.GetProxy(request);
+            if (proxy.IsBypassed(request)) return false;
+            var p = proxy.GetProxy(request);
             return p is not null && p != request && string.Equals(p.Host, host, StringComparison.OrdinalIgnoreCase) && p.Port == port;
         }
         catch { return false; }
     }
 
-    private static async ValueTask<Stream> ConnectAsync(SocketsHttpConnectionContext ctx, CancellationToken ct)
+    private static async ValueTask<Stream> ConnectAsync(SocketsHttpConnectionContext ctx, IWebProxy? proxy, Resolver dns, CancellationToken ct)
     {
         var host = ctx.DnsEndPoint.Host.Trim('[', ']');
         var port = ctx.DnsEndPoint.Port;
         IPAddress[] targets;
-        if (IsSystemProxyEndpoint(ctx.InitialRequestMessage.RequestUri, host, port))
+        if (IsProxyEndpoint(proxy, ctx.InitialRequestMessage.RequestUri, host, port))
         {
             // 사용자가 설정한 프록시(회사망 등): 프록시 자체는 내부망일 수 있으므로 IP 검사 대신 요청 전 이름 확인에 맡긴다
-            targets = await Dns.GetHostAddressesAsync(host, ct);
+            targets = await dns(host, ct);
         }
         else
         {
-            var addrs = await ResolveCheckedAsync(host, ct);
+            var addrs = await ResolveCheckedAsync(host, ct, dns);
             if (addrs is null)
             {
                 LastBlocked = host;
@@ -91,14 +122,14 @@ public static class SafeHttp
     }
 
     // 접속 직전에 다시 푼다(5분 기억을 쓰지 않음): 모든 IP 가 공개 주소여야 하고, 그 IP 로만 접속한다
-    internal static async Task<IPAddress[]?> ResolveCheckedAsync(string host, CancellationToken ct)
+    internal static async Task<IPAddress[]?> ResolveCheckedAsync(string host, CancellationToken ct, Resolver? dns = null)
     {
         if (!UrlSafety.IsPublicHost(host)) return null;
         if (UrlSafety.ParseV4(host) is { } v4) return [new IPAddress(v4)];
         if (host.Contains(':')) return UrlSafety.ParseV6(host) is { } v6 ? [new IPAddress(v6)] : null;
         try
         {
-            var all = await Dns.GetHostAddressesAsync(host, ct);
+            var all = await (dns ?? SystemDns)(host, ct);
             return all.Length > 0 && all.All(UrlSafety.IsPublic) ? all : null;
         }
         catch (SocketException) { return null; }

@@ -1,6 +1,9 @@
 import AppKit
 import SwiftUI
 
+// 시험 장치(M9): 디버그 빌드(swift build·swift test·e2e·clicksweep)에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
+#if DEBUG
+
 // 시험용 환경 변수(화면 캡처 권한 없이 앱 안에서 찍기). 실제 기록을 건드리지 않게 DROPCAP_DATA_DIR 와 함께 쓴다.
 //  DROPCAP_TEST_LOOK=sepia,serif,loose,wide,19   읽기 창 모양(바탕,글꼴,줄 간격,폭,크기)을 미리 정함
 //  DROPCAP_TEST_FIND=<낱말>                       읽기 창을 찾기 막대가 열린 채로(ReaderView 가 읽음)
@@ -71,3 +74,5 @@ enum ReaderSaveTestHooks {
         }
     }
 }
+
+#endif

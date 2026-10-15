@@ -1,6 +1,9 @@
 import AppKit
 import SwiftUI
 
+// 시험 장치(M9): 디버그 빌드(swift build·swift test·e2e·clicksweep)에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
+#if DEBUG
+
 // 시나리오 단계. 기대값은 docs/research/COMPETITIVE.md (다)-3 의 알림 정책(NotifyPolicy)과 지시서의 단계 설명을 따른다.
 @MainActor
 enum E2EPhases {
@@ -508,3 +511,5 @@ private func allText(_ v: NSView) -> [String] {
     for s in v.subviews { out += allText(s) }
     return out
 }
+
+#endif

@@ -82,12 +82,12 @@
     const attrs = `data-key="${esc(it.key)}" style="--c:${esc(it.color)};--tl:${esc(r.topicLight)};--td:${esc(r.topicDark)}"`;
     if (r.hero) {
       return head + `<div class="hero item" ${attrs}>${thumb(r)}<span class="shade"></span>
-        <div class="cap"><div class="tag"><span class="pill">${esc(r.topicLabel)}</span><span class="src">${esc(it.source)} · ${esc(it.time)}</span>${lock(it)}</div>
+        <div class="cap"><div class="tag"><span class="pill">${esc(r.topicLabel)}</span>${r.extraLabel ? `<span class="pill" style="--cat:${esc(r.extraColor)}">${esc(r.extraLabel)}</span>` : ''}<span class="src">${esc(it.source)} · ${esc(it.time)}</span>${lock(it)}</div>
         <div class="t">${esc(it.title)}</div></div></div>`;
     }
     return head + `<div class="card item${it.read ? ' read' : ''}" ${attrs}>${thumb(r)}
       <div class="body"><div class="t">${esc(it.title)}</div>
-        <div class="meta">${it.important ? `<span class="imp">${ic('star.fill')}</span>` : it.watch ? `<span class="wt" title="지켜볼 낱말: ${esc(it.watch)}">${ic('eye')}</span>` : ''}<span class="src">${esc(it.source)}</span>${lock(it)}<span class="cat">${esc(r.topicLabel)}</span><span class="tm">${esc(it.time)}</span>${it.saved ? `<span class="bm">${ic('bookmark.fill')}</span>` : ''}</div></div>
+        <div class="meta">${it.important ? `<span class="imp">${ic('star.fill')}</span>` : it.watch ? `<span class="wt" title="지켜볼 낱말: ${esc(it.watch)}">${ic('eye')}</span>` : ''}<span class="src">${esc(it.source)}</span>${lock(it)}<span class="cat">${esc(r.topicLabel)}</span>${r.extraLabel ? `<span class="cat" style="--cat:${esc(r.extraColor)}">${esc(r.extraLabel)}</span>` : ''}<span class="tm">${esc(it.time)}</span>${it.saved ? `<span class="bm">${ic('bookmark.fill')}</span>` : ''}</div></div>
       ${it.read ? '' : '<span class="dot"></span>'}
     </div>`;
   }

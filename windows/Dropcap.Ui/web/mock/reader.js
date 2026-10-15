@@ -1,6 +1,7 @@
 // 미리 보기 전용(WebView2 밖에서만): reader.html?key=x 를 열어 모양을 확인.
 // ?phase=loading|translating|failed 로 단계별 화면, ?cover=0 으로 표지 없이.
 // ?free=1 로 '같은 소식을 무료로 읽기' 상자(유료 기사), ?blocked=1 로 본문을 막아 둔 사이트의 실패 문구.
+// 사진 번역은 ?ocr=0(글자 없음)·?ocr=ko(이미 한국어).
 if (!(window.chrome && window.chrome.webview)) {
   const q = new URLSearchParams(location.search);
   const phase = q.get('phase') || 'done';
@@ -79,6 +80,23 @@ if (!(window.chrome && window.chrome.webview)) {
       case 'updateScrap': { const s = marks.scraps.find((x) => x.quote === a.quote); if (s) { if (a.collection) s.collection = a.collection; if (a.memo != null) s.memo = a.memo; } return null; }
       case 'removeScrap': marks.scraps = marks.scraps.filter((x) => x.quote !== a.quote); setTimeout(() => bridge.emit('changed')); return null;
       case 'step': console.log('mock step', a.dir); return { moved: false };
+      // 사진 도구(R-20): 가짜 글자 줄(?ocr=0 이면 글자 없음, ?ocr=ko 면 한국어만)
+      case 'imageText': {
+        const o = q.get('ocr');
+        if (o === '0') return new Promise((r) => setTimeout(() => r({ lines: [] }), 600));
+        const lines = o === 'ko'
+          ? [{ text: '발표 행사장', x: 0.08, y: 0.1, w: 0.3, h: 0.07, bg: '#e1306c', light: false }]
+          : [{ text: 'LAUNCH EVENT', x: 0.08, y: 0.1, w: 0.36, h: 0.08, bg: '#e1306c', light: false },
+            { text: 'Reasoning, rebuilt', x: 0.08, y: 0.22, w: 0.4, h: 0.06, bg: '#d0346f', light: false }];
+        return new Promise((r) => setTimeout(() => r({ lines }), 600));
+      }
+      case 'imageTranslate': {
+        const ko = { 'LAUNCH EVENT': '출시 행사', 'Reasoning, rebuilt': '다시 만든 추론' };
+        const foreign = (t) => !/[가-힣]/.test(t);
+        if (!a.texts.some(foreign)) return { out: a.texts.map(() => null), korean: true };
+        return new Promise((r) => setTimeout(() => r({ out: a.texts.map((t) => (foreign(t) ? ko[t] || t : null)), korean: false }), 600));
+      }
+      case 'imageCopy': case 'imageSave': console.log('mock', cmd, a.src.slice(0, 40)); return { ok: true };
       default: console.log('mock', cmd, a); return null;
     }
   };

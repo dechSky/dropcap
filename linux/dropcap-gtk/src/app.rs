@@ -43,7 +43,7 @@ pub struct Env {
 
 impl Env {
     pub fn read(args: &[String]) -> Env {
-        let v = |k: &str| std::env::var(k).ok().filter(|s| !s.is_empty());
+        let v = |k: &str| dropcap_core::test_hooks::var(k).filter(|s| !s.is_empty()); // 시험 훅은 개발 빌드에서만(L8)
         Env {
             background: args.iter().any(|a| a == "--background"),
             shot_dir: v("DROPCAP_TEST_SHOT_DIR").map(PathBuf::from),

@@ -230,12 +230,14 @@ public sealed class Magazine
     }
 
     // MARK: 호 엮기(M-04)
-    public Issue MakeIssue(IssueKind kind, DateTimeOffset from, DateTimeOffset to, string id)
+    // only: 분야 지면(M-25 — 그 분야 칩이 달린 기사만, 구독 채널 지면 없이, 분야 지면 40건까지)
+    public Issue MakeIssue(IssueKind kind, DateTimeOffset from, DateTimeOffset to, string id, string? only = null)
     {
         // 기사와 구독 채널 글을 따로(논문이 많아도 기사가 잘리지 않게)
         var filter = Filter();   // 숨긴·꺼진·해지한 출처는 스토리 대표를 고르기 전에 뺀다(G-11 · S-13)
-        var stored = db.Items(from, to, limit: 4000, articlesOnly: true).Concat(db.Items(from, to, limit: 800, channelsOnly: true))
-            .Where(s => filter.Shows(s.Item.SourceId)).ToList();
+        var stored = db.Items(from, to, limit: 4000, articlesOnly: true).Concat(only is null ? db.Items(from, to, limit: 800, channelsOnly: true) : [])
+            .Where(s => filter.Shows(s.Item.SourceId))
+            .Where(s => only is null || Dropcap.Core.Sections.CachedPlace(s.Item).Chips.Contains(only)).ToList();
         // 같은 스토리는 대표 하나만 지면에(점수 높은 것)
         var sizes = new Dictionary<string, int>();
         foreach (var s in stored) if (s.Cluster is { } c) sizes[c] = sizes.GetValueOrDefault(c) + 1;
@@ -260,7 +262,7 @@ public sealed class Magazine
         if (cover.S is null) cover = picked.FirstOrDefault();
         var coverKey = cover.S?.Item.Key;
         var articles = picked.Where(p => p.S.Item.Key != coverKey).Select(p => p.S).ToList();
-        var sections = SectionPages(articles, stored, Chosen(), Limits(), kind == IssueKind.Weekly ? 8 : 12);
+        var sections = SectionPages(articles, stored, only is not null ? [only] : Chosen(), Limits(), only is not null ? SectionPageLimit : (kind == IssueKind.Weekly ? 8 : 12));
         // 구독 채널 지면: 종류별, 채널 하나당 4개까지(논문처럼 많은 곳이 지면을 덮지 않게)
         var channelSections = new List<Issue.Section>();
         foreach (var k in new[] { ItemKind.Video, ItemKind.Release, ItemKind.Paper, ItemKind.Podcast, ItemKind.Post })
@@ -376,6 +378,37 @@ public sealed class Magazine
     {
         var start = new DateTimeOffset(DateTime.Today);
         return MakeIssue(IssueKind.Daily, start.AddHours(-6), DateTimeOffset.Now.AddSeconds(60), "live-daily");
+    }
+
+    // 분야 지면(M-25): 오늘 호와 같은 기간(전날 18시~지금)에 그 분야 칩이 달린 기사만으로 엮은 호(표지·건수도 그 분야)
+    public const int SectionPageLimit = 40;
+    public Issue LiveSection(string section)
+    {
+        var start = new DateTimeOffset(DateTime.Today);
+        return MakeIssue(IssueKind.Daily, start.AddHours(-6), DateTimeOffset.Now.AddSeconds(60), "live-section-" + section, section);
+    }
+
+    // 머리 숫자(M-25 — 맥 Magazine.subtitle): 모두 실렸으면 "소식 N건", 아니면 "소식 N건 중 M건 실음", 분야가 있으면 " · 분야 K개"
+    public static string Subtitle(int total, int shown, int sections, string noun = "소식")
+    {
+        var head = shown >= total ? $"{noun} {total}건" : $"{noun} {total}건 중 {shown}건 실음";
+        return sections > 0 ? head + $" · 분야 {sections}개" : head;
+    }
+
+    // 스토리의 분야(M-26): 묶인 보도들의 대표 분야 다수결(같으면 분야 순서 앞). AI 면 AI 안 하위 분류도 다수결(같으면 분류 순서 앞)
+    public static (string Section, NewsCategory? Category)? StoryTopic(IReadOnlyList<NewsItem> items, Func<NewsItem, string>? place = null)
+    {
+        if (items.Count == 0) return null;
+        place ??= it => Dropcap.Core.Sections.CachedPlace(it).Primary;
+        var secs = items.Select(place).ToList();
+        var votes = new Dictionary<string, int>();
+        foreach (var s in secs) votes[s] = votes.GetValueOrDefault(s) + 1;
+        var sec = votes.OrderByDescending(v => v.Value).ThenBy(v => Dropcap.Core.Sections.Order(v.Key)).First().Key;
+        if (sec != Dropcap.Core.Sections.Ai) return (sec, null);
+        var cats = new Dictionary<NewsCategory, int>();
+        for (var i = 0; i < items.Count; i++) if (secs[i] == Dropcap.Core.Sections.Ai) cats[items[i].Category] = cats.GetValueOrDefault(items[i].Category) + 1;
+        var cat = cats.OrderByDescending(v => v.Value).ThenBy(v => v.Key.SortOrder()).Select(v => (NewsCategory?)v.Key).FirstOrDefault();
+        return (sec, cat);
     }
 
     public Issue LiveWeekly() =>

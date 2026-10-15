@@ -3,10 +3,13 @@ using Dropcap.Core;
 
 namespace Dropcap.Ui;
 
-// 설정 창(P 절·K 절·G-13). 맥 SettingsView 와 같은 탭(일반·분야·구독·거르기), 같은 문구·선택지.
-public sealed class SettingsPage(AppModel model, IPlatform platform, Scrapbook? scrapbook = null) : IPage
+// 설정 창(P 절·K 절·G-13·I-05·I-06). 맥 SettingsView 와 같은 탭(일반·분야·구독·거르기·스크랩북), 같은 문구·선택지.
+public sealed class SettingsPage(AppModel model, IPlatform platform, Scrapbook? scrapbook = null, ScrapExport? export = null) : IPage
 {
     public string Name => "settings";
+
+    // 스크랩북 탭(I-06): 노트 폴더 내보내기. 따로 주지 않으면 앱 전체의 것(설정만 그릴 때는 DB 를 열지 않음)
+    private ScrapExport Export => export ?? ScrapExport.Shared;
 
     // 내 기록 내보내기·가져오기(P-08): 마지막 결과 문구(화면 아래에 보임)
     private string? backupMessage;
@@ -140,6 +143,27 @@ public sealed class SettingsPage(AppModel model, IPlatform platform, Scrapbook? 
         };
     }
 
+    // 설정 › 스크랩북(맥 ScrapbookSettingsView): 노트 폴더로 내보내기 · 아무 웹 주소나 나중에 읽기로
+    public object ScrapbookView()
+    {
+        var x = Export;
+        var folder = x.Folder;
+        var saved = x.SavedPath;
+        return new
+        {
+            enabled = x.Enabled && folder is not null,
+            folder = folder ?? (saved is { Length: > 0 } p ? $"{p} (찾지 못함)" : "고르지 않음"),
+            hasFolder = folder is not null,
+            choose = folder is null ? "고르기…" : "바꾸기…",
+            error = x.LastError,
+            canSaveNow = x.Enabled && folder is not null && x.HasScraps,
+            exportNote = "스크랩 폴더마다 ‘폴더 이름.md’ 파일 하나 — Obsidian 보관소 안의 폴더를 고르면 노트로 바로 보입니다. 파일은 덮어쓰니 고쳐 쓸 노트는 다른 이름으로 두세요.",
+            addUrl = "‘저장’ 목록 위 ‘주소로 추가…’ 칸에 붙여 넣기",
+            bookmarkletNote = "새 북마크를 만들고 주소 칸에 복사한 코드를 붙여 넣으세요. 기사를 보다 그 북마크를 누르면 Dropcap 의 나중에 읽기에 담깁니다. "
+                + "다른 프로그램에서는 dropcap://save?url=<주소> 를 열거나 Dropcap.exe --save <주소> 로 부르면 됩니다.",
+        };
+    }
+
     public object View()
     {
         var st = model.State.Settings;
@@ -182,6 +206,7 @@ public sealed class SettingsPage(AppModel model, IPlatform platform, Scrapbook? 
                 },
             },
             sections = SectionsView(),
+            scrapbook = ScrapbookView(),
             sources = new
             {
                 custom = model.State.CustomSources.Select(s => SourceRow(s, removable: true)).ToList(),
@@ -361,6 +386,12 @@ public sealed class SettingsPage(AppModel model, IPlatform platform, Scrapbook? 
             case "undoImport":
                 backupMessage = Backup.UndoLastImport(model, Book).Message;
                 return new { message = backupMessage };
+            // 스크랩북 탭(I-05·I-06)
+            case "scrapExport": await Export.Toggle(a.Bool("on")); return null;
+            case "chooseScrapFolder": await Export.ChooseFolder(); return null;
+            case "forgetScrapFolder": Export.ForgetFolder(); return null;
+            case "scrapExportNow": await Task.Run(Export.SyncNow); return null;
+            case "copyBookmarklet": platform.CopyText(SaveLink.Bookmarklet); return null;
             case "onboarding": platform.OpenOnboarding(); return null;
             case "magazine": platform.OpenMagazine(); return null;
             case "close": platform.CloseWindow(Name); return null;

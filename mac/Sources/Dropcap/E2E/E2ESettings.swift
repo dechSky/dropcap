@@ -2,6 +2,9 @@ import AppKit
 import DropcapShared
 import SwiftUI
 
+// 시험 장치(M9): 디버그 빌드(swift build·swift test·e2e·clicksweep)에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
+#if DEBUG
+
 // 시나리오 13~22: 설정과의 상호작용. 단계마다 상단바 목록·안 읽음 수·매거진 오늘 호·스토리·검색·알림 대기열·위젯 스냅숏 JSON 을 같이 본다.
 // 설정 창의 실제 칸(낱말 입력·글꼴 토글)은 창의 AppKit 컨트롤을 찾아 직접 입력·누르고, 못 찾으면 같은 동작을 모델로 하고 그렇다고 적는다.
 @MainActor
@@ -321,3 +324,5 @@ private struct SettingsOpener: View {
     @Environment(\.openSettings) private var openSettings
     var body: some View { Color.clear.frame(width: 1, height: 1).onAppear { openSettings() } }
 }
+
+#endif

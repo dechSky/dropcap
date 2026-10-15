@@ -14,7 +14,7 @@
 | C-12 | ✓ flock 잠금 | system.rs |
 | C-13 | ✓ 원자적 쓰기·.bak·항목별 관대한 읽기·DROPCAP_DATA_DIR | store.rs |
 | C-14, C-16~C-25 | ✓ | app_model.rs, category.rs |
-| C-15 | ~ 낱말 규칙은 맥과 같음. 뜻 비교(맥 NLEmbedding)는 "고유명사 2개+어간 3개 겹침"으로 대신 — 맥 시험 사례 그대로 통과 | story_match.rs |
+| C-15 | ~ 낱말 규칙은 맥과 같음. 뜻 비교(맥 NLEmbedding)는 "영어 제목 고유명사 2개 이상 공유 + 적은 쪽의 절반 이상"(윈도우와 같은 기준, 814dddc)으로 대신 — 맥 시험 사례 그대로 통과 | story_match.rs |
 | S-01~S-04 | ✓ S-03 은 **접속 순간 검사**: 이름 풀기를 앱이 직접 하고(GuardedResolver) 내부망이면 연결하지 않음 + 받은 뒤 실제 IP 재확인 | url_safety.rs, net.rs |
 | S-06, S-07, S-09 | ✓ | article.rs, images.rs, feed_service.rs |
 | T-01~T-04 | ✓ | translator.rs |
@@ -73,7 +73,7 @@
 - 맥 점검 A-31: guid·link 가 모두 빈 글은 제목+날짜 FNV-1a `noid-…`(맥 Swift 로 잰 값과 같음).
 - FEATURES '리' 열: S-12·T-08·N-27·P-08 ✓ — 빈칸·☐ 없음.
 - 시험: `cargo test` 전체 통과(핵심 177 · 화면 6, 새 extras2_tests 21), 리눅스 전 기능 형 검사 통과. 앱 실행(시험 폴더): 내보내기 → 같은 파일 가져오기 = "새로 더할 것이 없었습니다", 되돌리기 파일 생김·되돌림, 지켜볼 낱말 정리 물방울(눈 아이콘·'검색 결과'), 설정 거르기 탭의 지켜볼 낱말 칸 PNG 확인.
-- 이번에 안 한 것: 맥의 SourceFilter(끈·해지한 출처 글을 목록·매거진에서 바로 빼기)는 FEATURES 항목이 없어 범위 밖으로 두었다 — 필요하면 지시 바람.
+- (이때 범위 밖으로 둔 맥 SourceFilter 는 같은 날 저녁 S-13 으로 반영 — 아래 절.)
 
 ## 2026-10-14 저녁 — S-13 끈 출처 글 바로 빼기(맥 SourceFilter)
 
@@ -81,7 +81,7 @@
 - 적용: 상단바 목록·안 읽음 탭 수·안 읽음 수(상태 `unreadKeys` — 맥과 같은 이름, 예전 파일은 줄이기만), 매거진 오늘·이번 주·지난 호·분야 지면·표지(`resolve` 가 거름), 스토리 목록·크기(보이는 출처로 두 곳 이상만), 검색, 무료 보도 추천, 지켜볼 낱말 정리, 단축키 '가장 최근 소식'·아침 브리핑 수.
 - 맥과 같이 바꿈: 숨기기는 이제 글을 지우지 않고 거르기만(숨김을 풀면 돌아옴), '알리지 않음' 낱말도 이미 받은 목록에서 지우지 않고 거르기만(낱말을 지우면 돌아옴).
 - 시험: `source_filter_tests` 8개(맥 SourceFilterTests 6 + 안 읽음 다시 세기 + 끄기·다시 켜기·숨기기·낱말 → 목록·안 읽음 수·오늘 호·지난 호·스토리·검색 반영). 전체 통과, 리눅스 전 기능 형 검사 통과.
-- FEATURES: S-13 행 추가(맥 ✓ · 윈 ☐ · 리 ✓).
+- FEATURES: S-13 행 추가, 리 열 ✓.
 
 ## 2026-10-14 — 보안 점검 고침(리눅스)
 
@@ -101,3 +101,39 @@
   - L4 번역이 늘 Google 로 — '번역 안 함'·배경 제목 번역 옵트인 설정(설정 항목·상태 파일 추가라 맥과 함께 정할 일).
   - L8 시험 훅을 cfg 로 감싸기 — 지금은 환경 변수가 있어야만 켜짐(확인). 배포 빌드에서 빼려면 기능 플래그 정리 필요.
   - 이미 저장소 이력(이전 커밋)에 남은 실명 문자열은 이력 재작성이 필요하므로 관리자 판단.
+
+## 2026-10-15 — 따라잡기 3차(새 FEATURES 행 · e2e-fix 이식)
+
+- 새 행 R-19~R-22 · M-25~M-27 · I-01~I-06 의 '리' 칸을 채움(☐ 없음).
+  - 읽기: 찾기 셈을 핵심 `reader_find.rs` 로(악센트·전각 무시), `cover_pick.rs`(맥 HTMLScan 처럼 `<meta>` 하나씩 — 매거진 사진 채우기 `feed_service::og_image` 도 이 함수로 바꿔 og:image:type 을 주소로 잡던 문제 없앰), `body_cleanup::hidden`(뺀 그림 바로 뒤 설명도 뺌), 사진 도구 `reader_image.rs` + `image_text.rs`(Vision 대신 tesseract TSV — R-20 ~).
+  - 매거진: 분야 지면 `live_section`(그 분야만·채널 지면 없음·40건)·머리 숫자 `subtitle`/`section_subtitle`(실린 수 기준)·AI 하위 칩 합, 스토리 분야 다수결 `story_topic`, `unseen_reports`·`pick_weekly_quotes`·`is_sunday_evening` 를 핵심으로(시험).
+  - 연동: `url_router.rs`(dropcap:// — open·magazine·save, 바깥 요청 1분 10번), `save_link.rs`, `search_index.rs`(GNOME 검색 공급자·KRunner), `scrap_export.rs`(노트 폴더 `<이름>.md`), 명령줄 `--latest`·`--save`·`--magazine`, 상단바·매거진 저장 '주소로 추가…', 설정 › 스크랩북(북마클릿·노트 폴더). 새 설정은 데이터 폴더 `integrations.json`(없거나 깨지면 기본값 — 데스크톱 검색만 켬, 예전 판은 이 파일을 읽지 않음). 위젯(I-01)은 ⊘, 단축어(I-02)는 명령줄로 ~, 서비스 메뉴(I-05 일부)는 ⊘.
+- e2e-fix 6건 이식(맥 efdeb13):
+  - G-05·G-08: `SectionPolicy.less`(JSON `less`, 예전 파일 → false) — 덜 받기한 분야는 주요 뉴스 흐름으로 안 떨어짐, 누를 때 안내 "이 분야는 저녁 묶음으로 모아 드릴게요"/"매거진에만 실을게요", 즉시로 되돌리면 풀림.
+  - G-02: `sections::hits`·`Placement.strong`·`NewsItem::extra_topic`(목록 줄·첫 소식에 칩 하나 더), `notify_section_of`.
+  - M-17: `scraps.json` 사본(원자적 쓰기, 맥과 같은 `{version, scraps}`), DB 가 깨지면 `.broken.sqlite` 에서 `import_scraps`, 새로 만든·빈 DB 면 사본에서 되살림(평소에 다 지운 것은 안 되살림). 끄기 `prefs.json` `scrapsCopyOff`. 예전 판은 사본을 모르고 무시.
+  - R-08: 실제로 바뀐 외국어 문단 수로 `engine_label`(0이면 표시 없음·일부면 '일부 번역').
+  - N-05: 리눅스 물방울 머리 줄은 처음부터 칩·외 N곳 너비를 먼저 잡고 출처명만 줄임 — 고칠 것 없음 확인.
+- 문서: C-15 설명을 지금 기준(고유명사 2개 이상 + 적은 쪽의 절반 이상)으로, S-13 낡은 줄 정리, README 첫 소개 문장, '리눅스에서 확인할 목록' 17~22, AppImage 에 검색 공급자 파일 사본.
+- 시험: 새 `e2e_fix_tests` 8 · `reader_catchup_tests` 13 · `magazine_catchup_tests` 7 · `integrations_tests` 19. `cargo test --workspace` 전체 통과(핵심 242 · 화면 5), 리눅스 전 기능 형 검사(`scripts/check-linux-features.sh`) 통과. 앱 창은 띄우지 않음(화면 동작은 README 확인 목록 17~22).
+
+### 사이드바 맞추기(맥 4e27109) — 이식하지 않음, 리눅스와 다른 점(관리자 결정 대기)
+
+분야 지면(M-25)·스토리 분야 다수결(M-26)·머리 숫자 '… 건 중 M건 실음'은 FEATURES 행이라 이번에 반영했다. 그 밖에 리눅스에 없는 것:
+
+1. 이번 주 범위: 맥은 달력 한 주 시작~지금(지난 주간과 이어짐), 리눅스 `live_weekly` 는 아직 '지금부터 7일 전'(지난 주간과 날이 겹침).
+2. 주간 표지: 맥은 그 주 가장 많이 다룬 이야기(스토리 보도 수 → 점수), 리눅스는 점수 1등(오늘 표지와 같아질 수 있음).
+3. 지난 호 순서: 맥은 호 끝 시각 순(주간은 그 주 끝), 리눅스 `db.issues` 는 만든 시각 순.
+4. 예전 호 다시 엮기(`needsRebuild`): 분야 개편 전 호를 지금 규칙으로 — 리눅스에 없음.
+5. 기록 적은 호(기사 5건 미만): 맥은 지난 호 목록에서 흐리게 + 머리 '기록 적음' — 리눅스에 없음.
+6. 빈 검색 화면: 맥은 지켜볼 낱말·최근 검색 칩(8개)·도움말 — 리눅스에 최근 검색 기억 없음.
+7. 저장·스크랩북 머리에 왼쪽 목록과 같은 수(맥 '저장 N건') — 리눅스 매거진 저장 머리에 수 없음(스크랩북은 확인 안 함).
+8. 카드 사진이 칸 너비를 밀어 4열에서 겹치던 문제(맥 SwiftUI 배치 문제) — 리눅스는 격자 칸 너비를 고정해 그리므로 해당 없음으로 보이나 화면 확인은 안 함.
+
+## 2026-10-15 — 보안 남은 항목 L2 · L8
+
+- L2 시스템 프록시(관리자 결정 — 맥 기존 동작과 같게): 프록시가 설정돼 있어도 `net::get` 은 보내기 전에 단계(리다이렉트 포함)마다 앱이 이름을 풀어 공개 대역이 아니면 막는다(`allowed` → `url_safety::resolves_public`, 프록시 자신의 이름을 주소로 쓰면 막음). 출처 밖 주소(사진 CDN·기사·번역)는 그대로 프록시로 보낸다 — '출처 피드 도메인만' 방식은 쓰지 않음(맥에서 프록시 사용자에게 사진·번역이 막혀 되돌림). 코드는 바꾸지 않고 시험 `proxy_tests`(가짜 프록시: 내부망으로 풀리는 이름은 프록시로 안 나감 · 출처 밖 공개 주소·출처 피드는 프록시로 나감)로 지킴. 읽기 창(WebKit) 하위 요청은 `guard_proxy` 가 검사한 IP 로 직접 붙어 시스템 프록시를 쓰지 않음.
+  - **받아들인 위험**: 프록시를 거치면 실제 연결할 곳의 이름을 프록시가 다시 푼다. 앱이 확인한 뒤 DNS 응답이 내부 주소로 바뀌면(DNS 바꿔치기) 요청 한 번이 프록시를 통해 내부망으로 갈 수 있고, 접속 IP 가 프록시 것이라 받은 뒤 확인도 못 한다. 프록시를 설정한 환경(회사망 등)에서만 생기며, 앱이 확인한 이름 결과는 5분 기억한다.
+- L8 시험 훅: `test_hooks::var` 한 곳 — `DROPCAP_TEST_*`·`DROPCAP_SECTIONS`·`DROPCAP_CATEGORIES` 는 개발 빌드(debug)나 `--features test-hooks` 에서만 듣는다(배포 빌드에서는 변수가 있어도 꺼짐). 핵심·화면 모두 이 함수로(app.rs Env·test_extras·toast·reader_view·integrations·focus_guard·magazine·sections·category). `DROPCAP_DATA_DIR`·`DROPCAP_RESOURCES`·`DROPCAP_OLLAMA_MODEL` 은 사용 설정이라 그대로. 개발 경로(`CARGO_MANIFEST_DIR`) 후보는 이미 debug 빌드에만(app.rs `resource`).
+  - 시험 `test_hooks_tests`: 고치기 전 `cargo test --release` 실패(배포 빌드에서 DROPCAP_TEST_WEEKLY 가 들음) → 고친 뒤 통과, 개발 빌드에서는 훅이 그대로 듦.
+- 시험: `cargo test --workspace` 전체 통과(핵심 244 · 화면 5, 새 proxy_tests 1 · test_hooks_tests 1), `cargo test --release --test test_hooks_tests` 통과, 리눅스 전 기능 형 검사 통과.

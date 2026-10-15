@@ -20,6 +20,9 @@
     'bell.fill': '<path fill="currentColor" d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
     house: '<path d="M4 11l8-6.5 8 6.5"/><path d="M6 9.5V20h12V9.5"/><path d="M10 20v-5.5h4V20"/>',
     lines: '<path d="M4 6.5h16M4 10.5h11M4 14.5h16M4 18.5h9"/>',
+    link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/><path d="M18.5 15.5v5M16 18h5"/>',
+    quote: '<path fill="currentColor" stroke="none" d="M5.5 17.5c2.6-1 4-3 4-6.2V7H4.5v5.2h2.9c0 2-.9 3.4-2.6 4.3zM14.5 17.5c2.6-1 4-3 4-6.2V7h-5v5.2h2.9c0 2-.9 3.4-2.6 4.3z"/>',
+    warn: '<path fill="currentColor" stroke="none" d="M10.3 4.2a2 2 0 0 1 3.4 0l7.5 13a2 2 0 0 1-1.7 3H4.5a2 2 0 0 1-1.7-3z"/><path stroke="var(--paper,#fff)" stroke-width="2" d="M12 9.5v4.5M12 17.2v.1"/>',
   };
   const ic = (name, cls = '') => X[name]
     ? `<i class="ic ${cls}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${X[name]}</svg></i>`
@@ -43,7 +46,7 @@
   let current = null;           // 지금 지면의 DOM(.page)
   let view = null;              // 지금 지면의 데이터
   let seen = { revision: 0, imageRevision: 0, layoutRevision: 0 };
-  let focus = null;             // 분야 칩으로 고른 한 분야(section:<id> 지면이면 처음부터)
+  let focus = null;             // 분야 칩으로 고른 한 분야(이번 주·지난 호. 분야 지면 section:<id> 은 따로 엮은 호라 칩 없음)
   let sub = null;               // AI 안의 하위 칩
   let folder = null;            // 스크랩북에서 보던 폴더
   let query = '';
@@ -53,7 +56,7 @@
 
   const isIssue = (p) => p === 'today' || p === 'week' || p.startsWith('issue:') || p.startsWith('section:');
   const isLive = (p) => p === 'today' || p === 'week' || p.startsWith('section:');
-  const issueSource = (p) => p.startsWith('issue:') ? p.slice(6) : p.startsWith('section:') ? 'today' : p;
+  const issueSource = (p) => p.startsWith('issue:') ? p.slice(6) : p;   // section:<id> 은 앱이 그 분야만으로 엮는다(M-25)
   const issueArgs = (extra = {}) => ({ source: issueSource(page), focus, sub, ...extra });
 
   // 넘김 방향(맥 order): 뒤 지면으로 가면 앞으로 넘기고, 앞 지면이면 거꾸로
@@ -89,7 +92,7 @@
     hideFresh();
     const forward = order(p) >= order(page);
     page = p;
-    focus = p.startsWith('section:') ? p.slice(8) : null;
+    focus = null;
     sub = null;
     selected = null;
     markSide();
@@ -250,12 +253,17 @@
 
   // MARK: 한 호(M-06~M-11·M-22) · 분야 칩 줄(G-09) · 분야 지면(G-10)
   function chipBar(v) {
-    if (!v.chips.length) return '';
     const chip = (attr, id, on, t, icon, label, count, small) =>
       `<button class="schip tint${on ? ' on' : ''}${small ? ' small' : ''}" style="${tint(t)}" ${attr}="${esc(id)}">${ic(icon)}<span>${esc(label)}</span>${count > 0 ? `<small>${count}</small>` : ''}</button>`;
+    // 분야 지면(M-25): '전체'·다른 분야 칩 없이, AI 면 그 안의 하위 칩만(건수 — 합이 실린 수와 같음)
+    if (v.sectionPage) {
+      return v.subChips.length ? `<div class="chipbar"><div class="crow">${v.subChips.map((c) => chip('data-subchip', c.id, v.sub === c.id, c, c.icon, c.label, c.count)).join('')}</div></div>` : '';
+    }
+    if (!v.chips.length) return '';
+    // 오늘 호의 칩은 그 분야 지면으로 가는 길(건수는 가는 곳과 달라 달지 않는다 — 맥과 같음)
     return `<div class="chipbar">
       <div class="crow">${chip('data-chip', '', !v.focus, { light: '#007AFF', dark: '#0A84FF' }, 'grid', '전체', 0)}
-        ${v.chips.map((c) => chip('data-chip', c.id, v.focus === c.id, c, c.icon, c.label, c.count)).join('')}</div>
+        ${v.chips.map((c) => chip('data-chip', c.id, v.focus === c.id, c, c.icon, c.label, v.chipsGo ? 0 : c.count)).join('')}</div>
       ${v.subChips.length ? `<div class="crow sub">${v.subChips.map((c) => chip('data-subchip', c.id, v.sub === c.id, c, c.icon, c.label, 0, true)).join('')}</div>` : ''}
     </div>`;
   }
@@ -289,9 +297,9 @@
     el.classList.toggle('calm', !fresh);
     el.innerHTML = `
       <header class="mast">
-        <div class="logo"><span class="mark"><b>D</b><span>ROPCAP</span></span><span class="sub">매거진</span>${v.live ? '<span class="live">발행 중</span>' : ''}</div>
+        <div class="logo"><span class="mark"><b>D</b><span>ROPCAP</span></span><span class="sub">매거진</span>${v.kicker ? `<span class="sub">· ${esc(v.kicker)}</span>` : ''}${v.live ? '<span class="live">발행 중</span>' : ''}</div>
         <div class="title">${esc(v.title)}</div>
-        <div class="count">소식 ${v.count}건 · 분야 ${v.sectionCount}개</div>
+        <div class="count">${esc(v.head || `소식 ${v.count}건 · 분야 ${v.sectionCount}개`)}</div>
         <div class="rule"></div>
         <button class="sortbtn" title="지면 안의 기사 순서">${ic(sort.icon)}<span>${esc(sort.label)}</span>${ic('chevronDown', 'chev')}</button>
       </header>
@@ -300,7 +308,7 @@
       ${v.brief ? briefHtml(v.brief) : ''}
       ${coverHtml}
       ${v.sections.map((s) => `<section class="sec tint" style="${tint(s)}">
-        ${s.glass ? glassHtml(s) : `<div class="sec-h">${ic(s.icon)}<b>${esc(s.label)}</b><small>${s.items.length}</small><span class="line"></span></div>`}
+        ${v.sectionPage ? '' : s.glass ? glassHtml(s) : `<div class="sec-h">${ic(s.icon)}<b>${esc(s.label)}</b><small>${s.items.length}</small><span class="line"></span></div>`}
         <div class="grid bal">${s.items.map((it, i) => card(it, i, '', { topic: s.showTopic ? v.topics[it.key] : null, region: v.regions[it.key] })).join('')}</div></section>`).join('')}
       <div class="copyright">기사 저작권은 각 언론사·기업에 있습니다. 제목·요약·사진은 원문으로 이어 주기 위한 것입니다.</div>`;
     balance(el);
@@ -370,6 +378,8 @@
   detail.addEventListener('click', async (e) => {
     const c = e.target.closest('[data-chip], [data-subchip]');
     if (!c || !isIssue(page)) return;
+    // 오늘 호의 분야 칩은 왼쪽 목록의 분야 지면으로 간다(칩과 목록 선택이 늘 같게)
+    if (c.dataset.chip != null && view && view.chipsGo) { if (c.dataset.chip) go('section:' + c.dataset.chip); return; }
     if (c.dataset.chip != null) { const id = c.dataset.chip || null; focus = focus === id ? null : id; sub = null; }
     else { const id = c.dataset.subchip; sub = sub === id ? null : id; }
     const my = ++gen;
@@ -509,18 +519,62 @@
   }
 
   // MARK: 저장(M-15)
+  // 저장 목록 위 '주소로 추가…'(I-05, 맥 AddURLBar): 피드에 없는 기사 주소를 붙여 넣고 Enter
+  let addUrl = { text: '', busy: false, msg: null, timer: null };
+  function addBarHtml() {
+    const m = addUrl.msg;
+    return `<div class="addurl${addUrl.busy ? ' busy' : ''}">
+      <label class="field">${ic('link')}<input id="addUrl" placeholder="주소로 추가… (기사 주소를 붙여 넣고 Enter)" autocomplete="off" spellcheck="false"${addUrl.busy ? ' disabled' : ''}>
+        ${addUrl.busy ? '<span class="spinner small"></span>' : `<button class="go" id="addUrlGo"${addUrl.text.trim() ? '' : ' hidden'}>저장</button>`}</label>
+      ${m ? `<div class="msg ${m.ok ? 'ok' : 'bad'}">${ic(m.ok ? 'check' : 'warn')}<span>${esc(m.text)}</span></div>` : ''}</div>`;
+  }
+  function paintAddBar(el, keepFocus) {
+    const slot = $('.addurl-slot', el);
+    if (!slot) return;
+    slot.innerHTML = addBarHtml();
+    const input = $('#addUrl', slot);
+    input.value = addUrl.text;
+    if (keepFocus) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
+  }
+  async function submitAddUrl() {
+    const raw = addUrl.text;
+    if (!raw.trim() || addUrl.busy) return;
+    const el = current;
+    addUrl.busy = true;
+    paintAddBar(el, false);
+    let r;
+    try { r = await bridge.send('addUrl', { url: raw }); } catch (e) { r = { ok: false, message: e.message }; }
+    addUrl.busy = false;
+    addUrl.msg = { ok: r.ok, text: r.message };
+    if (r.ok) addUrl.text = '';
+    if (el === current) paintAddBar(el, true);
+    clearTimeout(addUrl.timer);
+    addUrl.timer = setTimeout(() => { addUrl.msg = null; if (page === 'saved') { const m = current && $('.addurl .msg', current); if (m) m.remove(); } }, 4000);
+  }
+  detail.addEventListener('input', (e) => {
+    if (e.target.id !== 'addUrl') return;
+    addUrl.text = e.target.value;
+    const b = $('#addUrlGo', current);
+    if (b) b.hidden = !addUrl.text.trim();
+  });
+  detail.addEventListener('keydown', (e) => { if (e.target.id === 'addUrl' && e.key === 'Enter' && !e.isComposing) { e.preventDefault(); submitAddUrl(); } });
+  detail.addEventListener('click', (e) => { if (e.target.closest('#addUrlGo')) submitAddUrl(); });
+
   function drawSaved(el, v, fresh, my) {
     if (my !== gen) return;
     remember(v.items);
     const kept = new Set(v.archived);
     el.classList.toggle('calm', !fresh);
     const scroll = el.scrollTop;
+    const typing = document.activeElement && document.activeElement.id === 'addUrl' && el.contains(document.activeElement);
     el.innerHTML = `<div class="wrap" style="padding:0 32px 40px">
       <h1 class="h1">저장</h1>
       <p class="lead">저장한 기사는 번역까지 이 PC 에 보관돼 인터넷 없이도 읽을 수 있습니다.</p>
+      <div class="addurl-slot"></div>
       ${v.items.length ? '' : '<div class="note">아직 저장한 기사가 없습니다. 카드를 오른쪽 클릭해 \'나중에 읽기\'로 저장하세요.</div>'}
       <div class="grid" style="margin-top:14px">${v.items.map((it, i) => card(it, i, kept.has(it.key) ? `<span class="kept">${ic('kept')}보관됨</span>` : '', { topic: v.topics[it.key] })).join('')}</div>
     </div>`;
+    paintAddBar(el, typing);
     if (!fresh) el.scrollTop = scroll;
     wireImages(el);
     watch(el);
@@ -572,6 +626,7 @@
         <button class="btn" id="copyMd" ${empty ? 'disabled' : ''}>${ic('copy')}<span>Markdown 복사</span></button>
         <button class="btn" id="saveMd" ${empty ? 'disabled' : ''}>${ic('download')}<span>파일로 저장</span></button></div>
       <p class="lead" style="margin-top:18px">읽기 창에서 문단에 마우스를 올려 ✂︎ 를 누르거나, 도구막대의 스크랩으로 기사를 모아 두세요. 폴더째 Markdown 으로 내보낼 수 있습니다.</p>
+      ${v.weekly ? weeklyHtml(v.weekly) : ''}
       <div class="chips">${v.folders.map((f) => `<button class="chip${f.name === v.folder ? ' on' : ''}" data-folder="${esc(f.name)}">${ic(f.name === v.folder ? 'folder.fill' : 'folder')}${esc(f.name)} ${f.count}</button>`).join('')}
         <button class="chip add" id="newFolder">${ic('plus')}새 폴더</button></div>
       ${empty ? `<div class="sb-empty">${ic('scissors')}<b>이 폴더는 비어 있습니다</b></div>` : ''}
@@ -583,6 +638,19 @@
     wireImages(el);
     el.querySelectorAll('.memo textarea').forEach(grow);
   }
+
+  // 이번 주 모은 문장(M-27): 일요일 17시부터 스크랩북 첫머리. 두 번 누르면 그 기사 읽기 창
+  function weeklyHtml(w) {
+    return `<div class="weekly">
+      <div class="wh">${ic('quote')}<b>이번 주 모은 문장</b><span>${esc(w.count)}</span></div>
+      ${w.items.map((q) => `<div class="wq" data-weekly="${esc(q.key)}" style="--c:${esc(q.color)}" title="두 번 눌러 기사 읽기">
+        <p>“${esc(q.quote)}”</p><div class="wm"><b>${esc(q.source)}</b><span>${esc(q.title)}</span></div></div>`).join('')}
+    </div>`;
+  }
+  detail.addEventListener('dblclick', (e) => {
+    const q = e.target.closest('[data-weekly]');
+    if (q && page === 'scrapbook') open(q.dataset.weekly);
+  });
 
   function scrapRow(s) {
     return `<div class="scrap" data-scrap="${esc(s.id)}">

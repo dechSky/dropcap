@@ -69,6 +69,8 @@
     $('#summary').textContent = g.summary;
     // 분야(G-13)
     renderSections(v.sections);
+    // 스크랩북(I-05·I-06)
+    renderScrapbook(v.scrapbook);
     // 구독(P-06)
     $('#sourceLists').innerHTML = sources(v.sources);
     $('#addBtn').textContent = adding ? '찾는 중…' : '구독';
@@ -95,6 +97,34 @@
     // 목록·매거진·읽기 창 키(H-03~H-05)
     $('#navkeys').innerHTML = f.navKeys.map((h) => `<div class="row"><span class="lb">${esc(h.label)}</span><span class="keys">${esc(h.keys)}</span></div>`).join('');
   }
+
+  // 스크랩북 탭(맥 ScrapbookSettingsView): 켜려는데 폴더가 없으면 앱이 먼저 폴더 고르는 창을 띄운다
+  let copied = null;
+  function renderScrapbook(x) {
+    $('#scrapExport').checked = x.enabled;
+    $('#scrapFolder').textContent = x.folder;
+    $('#scrapFolder').title = x.folder;
+    $('#scrapFolder').classList.toggle('dim', !x.hasFolder);
+    $('#chooseScrapFolder').textContent = x.choose;
+    $('#forgetScrapFolder').hidden = !x.hasFolder;
+    $('#scrapError').hidden = !x.error;
+    $('#scrapError').innerHTML = x.error ? `${sic('warn')}<span>${esc(x.error)}</span>` : '';
+    $('#scrapNote').textContent = x.exportNote;
+    $('#scrapExportNow').disabled = !x.canSaveNow;
+    $('#addUrlHow').textContent = x.addUrl;
+    $('#bookmarkletNote').textContent = x.bookmarkletNote;
+    $('#copyBookmarklet').innerHTML = copied ? `${ic('check')}<span>복사했어요</span>` : `${ic('copy')}<span>북마클릿 코드 복사</span>`;
+  }
+  $('#scrapExport').addEventListener('change', (e) => run('scrapExport', { on: e.target.checked }));
+  ['chooseScrapFolder', 'forgetScrapFolder'].forEach((id) => $('#' + id).addEventListener('click', () => run(id)));
+  $('#scrapExportNow').addEventListener('click', () => run('scrapExportNow'));
+  $('#copyBookmarklet').addEventListener('click', () => {
+    bridge.send('copyBookmarklet').then(() => {
+      clearTimeout(copied);
+      copied = setTimeout(() => { copied = null; view && renderScrapbook(view.scrapbook); }, 1600);
+      view && renderScrapbook(view.scrapbook);
+    });
+  });
 
   // 분야 탭: 고른 분야마다 묶음 하나(모드 나눔 단추 + 즉시·묶음이면 묶음 시각, 즉시면 하루 상한)
   const stepper = (attrs, value, min, max) =>

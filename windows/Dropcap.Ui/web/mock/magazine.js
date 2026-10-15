@@ -94,6 +94,8 @@ if (!(window.chrome && window.chrome.webview)) {
     }
     return {
       id: live ? 'live-daily' : 'daily-2026-10-12', title, live, count: 42, sectionCount: allSections.length, sort: localStorage.magSort || 'recommended',
+      head: `소식 42건 중 ${1 + sections.reduce((n, x) => n + x.items.length, 0)}건 실음 · 분야 ${sections.filter((x) => x.tone !== 'kind-video').length}개`,
+      kicker: live ? '오늘' : '지난 호', chipsGo: live && !focus,
       cover: focus ? undefined : { item: cover, cluster: 's1', size: 5 },
       empty: focus && !sections.length ? { preparing: false, title: '이번 호에는 아직 이 분야 소식이 없습니다', sub: '새 소식이 들어오는 대로 지면이 채워집니다.' } : undefined,
       sections, clusters: { [cover.key]: 's1', [top[0].key]: 's1' }, revision: 3, imageRevision: 1, layoutRevision: 0, preparing: false,
@@ -143,6 +145,22 @@ if (!(window.chrome && window.chrome.webview)) {
         if (a.sort) localStorage.magSort = a.sort;
         if (a.source === 'week') return { ...issue('주간 · 10월 6일–10월 13일', true), cover: undefined, sections: [], count: 0, sectionCount: 0, chips: [],
           empty: { preparing: true, title: '첫 호를 엮는 중…', sub: '구독한 출처에서 최근 사흘 소식을 모으고 번역하고 있어요. 잠시면 됩니다.' }, preparing: true };
+        // 분야 지면(M-25): 그 분야만으로 따로 엮은 호 — 표지도 그 분야, 칩은 AI 하위 칩만(건수 합 = 실린 수)
+        if (a.source.startsWith('section:')) {
+          const id = a.source.slice(8);
+          const pool = [cover, ...top, ...economy, ...ai, ...sports, ...other].filter((i) => (topics[i.key] || {}).label && (id === 'ai' ? topics[i.key].label.startsWith('AI') : topics[i.key].label === SEC[id][0]));
+          const sub = id === 'ai' ? a.sub || undefined : undefined;
+          const shown = pool.filter((i) => !sub || i.category === sub);
+          const [c0, ...rest] = shown;
+          const outlets = new Set(shown.map((i) => i.source)).size;
+          const subChips = id === 'ai' ? Object.entries(AI).map(([cid, x]) => ({ id: cid, label: x[0], icon: x[1], light: x[2], dark: x[3], count: pool.filter((i) => i.category === cid).length })).filter((c) => c.count) : [];
+          return { ...issue(SEC[id][0], true), sectionPage: id, focus: undefined, sub, chips: [], subChips, chipsGo: false, today: undefined, brief: id === 'economy' ? brief : undefined,
+            kicker: '오늘 호의 분야 지면 · 10월 13일 월요일', count: pool.length + 3,
+            head: `${SEC[id][0]} 소식 ${pool.length + 3}건 중 ${shown.length}건 실음 · 출처 ${outlets}곳`,
+            cover: c0 ? { item: c0, cluster: null, size: 1 } : undefined,
+            empty: c0 ? undefined : { preparing: false, title: `이번 호에는 아직 ${SEC[id][0]} 소식이 없습니다`, sub: '새 소식이 들어오는 대로 지면이 채워집니다.' },
+            sections: rest.length ? [{ ...section(id, SEC[id][0], SEC[id][1], S(id), rest, false), glass: undefined }] : [] };
+        }
         return issue(a.source === 'today' ? '10월 13일 월요일 호' : '10월 12일 일요일 호', a.source === 'today', a.focus || undefined, a.focus === 'ai' ? a.sub || undefined : undefined);
       case 'stories':
         return {
@@ -178,11 +196,19 @@ if (!(window.chrome && window.chrome.webview)) {
       }
       case 'scrapbook': {
         const f = folders.some((x) => x.name === a.folder) ? a.folder : '스크랩';
-        return { folder: f, folders, total: 2, groups: f === '스크랩' ? [{ item: cover, scraps }, { item: economy[1], scraps: [scraps[1]] }] : [] };
+        // 이번 주 모은 문장(M-27): 미리 보기에서는 #weekly 이면 보임(앱은 일요일 17시부터)
+        const weekly = /weekly/.test(location.hash) ? { count: '2개 · 지난 7일', items: [
+          { key: cover.key, quote: '한국은행은 물가와 환율 흐름을 더 지켜보겠다고 밝혔다.', source: cover.source, title: cover.title, color: cover.color },
+          { key: ai[1].key, quote: '작은 모델이 큰 모델의 추론 과정을 따라 하도록 가르치면, 적은 계산으로도 비슷한 성능을 낼 수 있다는 결과가 나왔다.', source: ai[1].source, title: ai[1].title, color: ai[1].color },
+        ] } : undefined;
+        return { folder: f, folders, total: 2, groups: f === '스크랩' ? [{ item: cover, scraps }, { item: economy[1], scraps: [scraps[1]] }] : [], weekly };
       }
       case 'newFolder': folders = [...folders, { name: a.name.trim(), count: 0 }]; return { ok: true, folder: a.name.trim() };
       case 'renameFolder': folders = folders.map((f) => (f.name === a.from ? { ...f, name: a.to.trim() } : f)); return { ok: true, folder: a.to.trim() };
       case 'marks': return { read: [...read], saved: [] };
+      // 주소로 추가(I-05): 미리 보기에서는 http(s) 처럼 보이면 저장한 것으로
+      case 'addUrl': return new Promise((r) => setTimeout(() => r(/^(https?:\/\/)?[^\s/]+\.[^\s]+$/.test((a.url || '').trim()) && !/localhost|127\.0|192\.168/.test(a.url)
+        ? { ok: true, message: '저장함 · ' + a.url.trim().replace(/^https?:\/\//, '') } : { ok: false, message: (a.url || '').includes('192.168') ? '내부망·특수 주소는 저장하지 않습니다' : 'http(s) 기사 주소가 아닙니다' }), 700));
       case 'open': read.add(a.key); console.log('open', a.key, 'seq', (a.seq || []).length); setTimeout(() => window.bridge.emit('changed', { revision: 3, imageRevision: 1, layoutRevision: 0 }), 50); return null;
       case 'toggleRead': read.has(a.key) ? read.delete(a.key) : read.add(a.key); setTimeout(() => window.bridge.emit('changed', { revision: 3, imageRevision: 1, layoutRevision: 0 }), 50); return null;
       case 'todayProgress': return today(a.keys);

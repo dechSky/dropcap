@@ -170,16 +170,17 @@ public sealed class AppModel
     public SectionPolicy Policy(string section) => State.SectionPolicy.GetValueOrDefault(section) ?? new SectionPolicy();
     public void SetPolicy(string section, Func<SectionPolicy, SectionPolicy> change)
     {
-        State.SectionPolicy[section] = change(Policy(section));
+        var old = Policy(section);
+        var p = change(old);
+        if (p.Mode == NotifyMode.Instant && old.Mode != NotifyMode.Instant) p = p with { Less = false }; // 설정에서 즉시로 되돌리면 '덜 받기'도 풂
+        State.SectionPolicy[section] = p;
         Save();
     }
 
     // 알림을 정할 때 쓰는 분야: 고른 분야에 걸린 칩이 있으면 그것, 없으면 대표 분야
-    public string NotifySection(NewsItem it)
-    {
-        var chosen = ChosenSections;
-        return it.SectionChips().FirstOrDefault(chosen.Contains) ?? it.Section();
-    }
+    public string NotifySection(NewsItem it) => NotifySection(it, ChosenSections);
+    public static string NotifySection(NewsItem it, IReadOnlyCollection<string> chosen) =>
+        it.SectionChips().FirstOrDefault(chosen.Contains) ?? it.Section();
 
     private int SentToday(string? section, DateTimeOffset now) =>
         State.NotifyLog.Count(m => m.At.ToLocalTime().Date == now.ToLocalTime().Date && (section is null || m.Section == section));
@@ -360,8 +361,12 @@ public sealed class AppModel
         SubscriptionsChanged();
     }
 
-    public void LessOf(string section) =>
-        SetPolicy(section, p => p with { Mode = p.Mode == NotifyMode.Instant ? NotifyMode.Bundle : NotifyMode.Magazine });
+    public void LessOf(string section)
+    {
+        SetPolicy(section, p => p with { Mode = p.Mode == NotifyMode.Instant ? NotifyMode.Bundle : NotifyMode.Magazine, Less = true });
+        Ui.ShowInfo(Policy(section).Mode == NotifyMode.Bundle ? "이 분야는 저녁 묶음으로 모아 드릴게요" : "이 분야는 매거진에만 실을게요",
+                    $"{Sections.Name(section)} · 설정 › 분야에서 되돌리기");
+    }
 
     public void MuteWord(string word)
     {

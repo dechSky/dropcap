@@ -27,11 +27,14 @@ enum Integrations {
             .dropFirst()
             .sink { _ in SpotlightIndexer.shared.scheduleSync() }
             .store(in: &bag)
+        #if DEBUG
         runTestHooks()
+        #endif
     }
 
     private struct WidgetTrigger: Equatable { var lastCheck: Date?; var unread: Int; var top: String? }
 
+    #if DEBUG // 시험 장치(M9): 배포 빌드에는 없음
     // 시험용: DROPCAP_TEST_WIDGET=1 + DROPCAP_TEST_SHOT_DIR 이면 스냅숏을 쓰고 위젯 화면(소·중)을 그림 파일로 찍는다
     private static func runTestHooks() {
         let env = ProcessInfo.processInfo.environment
@@ -60,6 +63,7 @@ enum Integrations {
             if env["DROPCAP_TEST_SPOTLIGHT"] != nil { await SpotlightIndexer.shared.sync() }
         }
     }
+    #endif
 }
 
 // 설정 > 일반 에 들어가는 한 묶음

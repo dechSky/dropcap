@@ -77,6 +77,14 @@ if (!(window.chrome && window.chrome.webview)) {
             sub: n ? '새 글이 오면 알림' : '글이 많아 알림 없이 매거진에만 실림', subscribed: subscribed.has(id), subscribing: false })),
         })),
       },
+      // 스크랩북 탭(I-05·I-06): 폴더는 미리 보기용 가상 경로
+      scrapbook: {
+        enabled: !!st.scrapExport && !!st.scrapFolder, folder: st.scrapFolder || '고르지 않음', hasFolder: !!st.scrapFolder, choose: st.scrapFolder ? '바꾸기…' : '고르기…',
+        error: null, canSaveNow: !!st.scrapExport && !!st.scrapFolder,
+        exportNote: '스크랩 폴더마다 ‘폴더 이름.md’ 파일 하나 — Obsidian 보관소 안의 폴더를 고르면 노트로 바로 보입니다. 파일은 덮어쓰니 고쳐 쓸 노트는 다른 이름으로 두세요.',
+        addUrl: '‘저장’ 목록 위 ‘주소로 추가…’ 칸에 붙여 넣기',
+        bookmarkletNote: '새 북마크를 만들고 주소 칸에 복사한 코드를 붙여 넣으세요. 기사를 보다 그 북마크를 누르면 Dropcap 의 나중에 읽기에 담깁니다. 다른 프로그램에서는 dropcap://save?url=<주소> 를 열거나 Dropcap.exe --save <주소> 로 부르면 됩니다.',
+      },
       filters: {
         must: st.must, mute: st.mute, watch: st.watch, quietEnabled: st.quietEnabled, quietStart: st.quietStart, quietEnd: st.quietEnd,
         hours: Array.from({ length: 24 }, (_, h) => ({ value: h, label: `${String(h).padStart(2, '0')}:00` })),
@@ -102,6 +110,9 @@ if (!(window.chrome && window.chrome.webview)) {
       case 'setPolicy': policy[a.id][a.key] = a.value; return null;
       case 'unhide': hidden = hidden.filter((h) => h[0] !== a.id); return null;
       case 'subscribe': return new Promise((r) => setTimeout(() => { subscribed.add(a.id); r({ error: null }); }, 600));
+      case 'scrapExport': if (a.on && !st.scrapFolder) st.scrapFolder = 'D:\\Notes\\Obsidian\\Dropcap 스크랩'; st.scrapExport = !!a.on; return null;
+      case 'chooseScrapFolder': st.scrapFolder = 'D:\\Notes\\Obsidian\\Dropcap 스크랩'; st.scrapExport = true; return null;
+      case 'forgetScrapFolder': st.scrapFolder = null; st.scrapExport = false; return null;
       case 'addChannel': return new Promise((r) => setTimeout(() => r({ error: '이 주소에서 피드를 찾지 못했습니다' }), 600));
       default: return null;
     }

@@ -28,7 +28,14 @@ public sealed class ReaderPage : IPage
         public NewsItem Item { get; } = item;
         public PreparedArticle? Article { get; set; }
         public Guid? Token { get; set; }
+        public (bool Done, string? Url)? Cover { get; set; }   // 고른 표지(R-22). 고르기 전에는 null — 피드 사진·매거진 기록을 먼저 보임
     }
+
+    // 표지 고르기(R-22)에 쓰는 받기: 사진의 가로 크기 · 기사 머리 대표 사진 주소. 시험에서 바꿔 끼운다
+    public Func<string, Task<int?>> ImageWidth { get; set; } = u => ImageLoader.Shared.WidthAsync(u);
+    public Func<string, Task<string?>> OgImage { get; set; } = CoverPick.OgImageAsync;
+    // 사진 바이트(R-20): 안전 로더(공개 주소만·8MB·1400px)
+    public Func<string, Task<byte[]?>> ImageBytes { get; set; } = u => ImageLoader.Shared.JpegAsync(u);
 
     public ReaderPage(AppModel model, ArticleService articles, Scrapbook book, IPlatform platform, Bridge bridge, PaywallBook? paywall = null)
     {
@@ -59,6 +66,18 @@ public sealed class ReaderPage : IPage
             e.Token = articles.Observe(item.Link, a => { lock (gate) e.Article = a; Send(e); });
         }
         _ = Run(e);
+        _ = PickCover(e);
+    }
+
+    // 피드 사진이 작은 미리보기거나 받지 못하면 기사 머리 대표 사진으로 바꾸고, 대신할 것도 없으면 깨진 자리를 지운다(R-22)
+    private async Task PickCover(Entry e)
+    {
+        var known = CoverPick.Known(e.Item.Image, model.Magazine.StoredImage(e.Item.Key));
+        string? url;
+        try { url = await CoverPick.FindAsync(known, e.Item.Link, ImageWidth, OgImage); }
+        catch { return; }
+        lock (gate) { if (!open.ContainsKey(e.Item.Key)) return; e.Cover = (true, url); }
+        if (url != known) Send(e);
     }
 
     private async Task Run(Entry e)
@@ -89,8 +108,9 @@ public sealed class ReaderPage : IPage
     private void Send(Entry e)
     {
         PreparedArticle? a;
-        lock (gate) a = e.Article;
-        bridge.Emit(Name, "article", View(e.Item, a, model, book, Paywalls));
+        (bool, string?)? cover;
+        lock (gate) { a = e.Article; cover = e.Cover; }
+        bridge.Emit(Name, "article", View(e.Item, a, model, book, Paywalls, cover));
     }
 
     // MARK: 보기 데이터
@@ -155,15 +175,16 @@ public sealed class ReaderPage : IPage
         d is { } v ? v.ToLocalTime().ToString("M월 d일 tt h:mm", CultureInfo.GetCultureInfo("ko-KR")) : "";
 
     // 창 하나에 보낼 전부. 번역/원문 전환은 창이 들고 있고, 두 쪽에 필요한 것(제목·원문·읽는 시간)을 함께 보낸다.
-    public static object View(NewsItem item, PreparedArticle? a, AppModel? m, Scrapbook book, PaywallBook? pw = null)
+    // pickedCover: 표지 고르기(R-22)를 마쳤으면 (true, 고른 주소 — 없으면 null)
+    public static object View(NewsItem item, PreparedArticle? a, AppModel? m, Scrapbook book, PaywallBook? pw = null, (bool Done, string? Url)? pickedCover = null)
     {
         var blocks = a?.Blocks ?? new();
-        var (skip, byline) = BodyCleanup.Analyze(blocks);   // 기자 줄 → 바이라인, 짝 잃은 설명 문구 빼기
-        // 표지: 피드 사진 → 매거진이 받아 둔 대표 사진 → 본문의 첫 사진(맥과 같은 순서). 기자 프로필·로고 같은 잡그림은 빼고,
-        // 본문에서는 표지와 같은 사진(크기만 다른 것 포함)을 다시 싣지 않는다.
-        var stored = m?.Magazine.StoredImage(item.Key);
-        var cover = new[] { item.Image, stored }.FirstOrDefault(u => u is not null && !ImageKey.IsJunk(u))
-            ?? blocks.FirstOrDefault(b => b.Type == BlockKind.Img && !ImageKey.IsJunk(b.Src))?.Src;
+        var byline = BodyCleanup.Analyze(blocks).Byline;   // 기자 줄 → 바이라인
+        // 표지: 피드 사진 → 매거진이 받아 둔 대표 사진 → (작거나 못 받으면) 기사 머리 대표 사진 → 본문의 첫 사진(맥과 같은 순서).
+        // 기자 프로필·로고 같은 잡그림은 빼고, 본문에서는 표지와 같은 사진(크기만 다른 것 포함)과 그 설명을 다시 싣지 않는다.
+        var head = pickedCover is { Done: true } p ? p.Url : CoverPick.Known(item.Image, m?.Magazine.StoredImage(item.Key));
+        var cover = head ?? blocks.FirstOrDefault(b => b.Type == BlockKind.Img && !ImageKey.IsJunk(b.Src))?.Src;
+        var skip = BodyCleanup.Hidden(blocks, cover);   // 짝 잃은 설명 문구·기자 줄·표지와 같은 사진·잡그림·뺀 사진의 설명
         var shown = blocks.Select(b => b.Text).OfType<string>().ToList();
         var original = blocks.Select(b => b.Original ?? b.Text).OfType<string>().ToList();
         var phase = Phase(a);
@@ -202,7 +223,7 @@ public sealed class ReaderPage : IPage
             // 소리 내어 읽기(R-09): 번역이 없으면 제목 언어로 판단
             koreanTitle = !Translator.LooksForeign(title),
             blocks = blocks.Select((b, i) => (b, i))
-                .Where(x => !skip.Contains(x.i) && !(x.b.Type == BlockKind.Img && (ImageKey.IsJunk(x.b.Src) || ImageKey.Same(x.b.Src, cover))))
+                .Where(x => !skip.Contains(x.i))
                 .Select(x => new
                 {
                     i = x.i,
@@ -262,7 +283,61 @@ public sealed class ReaderPage : IPage
         return (text, showOriginal ? null : b.Original);
     }
 
-    public Task<object?> Handle(string cmd, JsonObject a) => Task.FromResult(Do(cmd, a));
+    public async Task<object?> Handle(string cmd, JsonObject a) => cmd switch
+    {
+        "imageText" => await ImageTextOf(a.Str("key"), a.Str("src")),
+        "imageTranslate" => await TranslateLines(a),
+        "imageCopy" => await CopyImage(a.Str("key"), a.Str("src")),
+        "imageSave" => await SaveImage(a.Str("key"), a.Str("src")),
+        _ => Do(cmd, a),
+    };
+
+    // MARK: 기사 속 사진 도구(R-20)
+
+    // 이 창의 기사에 실린 사진만(표지·본문) — 화면이 아무 주소나 받게 하지 않는다
+    private bool ShowsImage(string key, string src)
+    {
+        if (src.Length == 0) return false;
+        var e = Find(key);
+        PreparedArticle? a;
+        (bool, string?)? cover;
+        lock (gate) { a = e.Article; cover = e.Cover; }
+        return src == e.Item.Image || src == model.Magazine.StoredImage(e.Item.Key) || (cover is (true, { } c) && c == src)
+            || (a?.Blocks.Any(b => b.Type == BlockKind.Img && b.Src == src) ?? false);
+    }
+
+    private async Task<byte[]?> BytesOf(string key, string src) => ShowsImage(key, src) ? await ImageBytes(src) : null;
+
+    // 사진 속 글자 읽기: 줄마다 글·상자(0~1)·바탕색
+    private async Task<object?> ImageTextOf(string key, string src)
+    {
+        if (await BytesOf(key, src) is not { } data) return new { lines = Array.Empty<object>() };
+        IReadOnlyList<ImageText.Line> lines;
+        try { lines = ImageText.Recognize is { } r ? await r(data) : []; }
+        catch { lines = []; }
+        return new { lines = ImageText.Describe(data, lines) };
+    }
+
+    // 외국어 줄만 번역. 번역하지 않은 줄은 null, 외국어 줄이 없으면 korean
+    private static async Task<object?> TranslateLines(JsonObject a)
+    {
+        var texts = (a["texts"] as JsonArray ?? new JsonArray()).Select(n => n is JsonValue v && v.TryGetValue<string>(out var t) ? t : "").Take(500).ToList();
+        var (o, korean) = await ImageText.TranslateAsync(texts);
+        return new { @out = o, korean };
+    }
+
+    private async Task<object?> CopyImage(string key, string src)
+    {
+        if (await BytesOf(key, src) is not { } data || ImageText.Copy is not { } copy) return new { ok = false };
+        copy(data);
+        return new { ok = true };
+    }
+
+    private async Task<object?> SaveImage(string key, string src)
+    {
+        if (await BytesOf(key, src) is not { } data || ImageText.Save is not { } save) return new { ok = false };
+        return new { ok = await save(ImageText.SuggestedName(src), ext => ImageText.Encode(data, ext)) };
+    }
 
     private object? Do(string cmd, JsonObject a)
     {
@@ -275,7 +350,9 @@ public sealed class ReaderPage : IPage
             case "view":
             {
                 var e = E();
-                return View(e.Item, ArticleOf(e), model, book, Paywalls);
+                (bool, string?)? cover;
+                lock (gate) cover = e.Cover;
+                return View(e.Item, ArticleOf(e), model, book, Paywalls, cover);
             }
             case "marks": return Marks(E().Item, model, book);
             case "fontSize":

@@ -1,8 +1,10 @@
 // Dropcap 리눅스 판(GTK4 · libadwaita). 맥 앱(mac/Sources/Dropcap)과 같은 기능·문구·수치.
+mod add_url_bar;
 mod app;
 mod backup_ui;
 mod focus_x11;
 mod hotkeys;
+mod integrations;
 mod keynav;
 mod magazine;
 mod magazine_card;
@@ -14,11 +16,13 @@ mod motion;
 mod onboarding;
 mod reader;
 mod reader_find;
+mod reader_image;
 mod reader_speech;
 mod reader_view;
 #[cfg(feature = "webkit")]
 mod reader_webkit;
 mod section_photos;
+mod scrapbook_settings;
 mod settings;
 mod settings_sections;
 mod settings_tools;
@@ -65,11 +69,16 @@ fn main() -> glib::ExitCode {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let args: Vec<String> = std::env::args().collect();
     let env = Env::read(&args);
+    // 명령줄(I-02): --latest 는 창 없이 출력만, --save·--magazine·dropcap:// 는 주소로 바꿔 앱(이미 떠 있으면 그쪽)에 넘긴다
+    let uris = match dropcap_core::url_router::cli(&args) {
+        dropcap_core::url_router::Cli::Run { uris } => uris,
+        other => return glib::ExitCode::from(print_cli(other)),
+    };
 
     // 하나만 실행(C-12): 잠금을 못 잡으면 바로 끝낸다(D-Bus 가 있으면 GApplication 이 먼저 기존 실행을 깨운다)
     let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(4).enable_all().thread_name("dropcap-bg").build().expect("tokio");
 
-    let app = adw::Application::builder().application_id(APP_ID).build();
+    let app = adw::Application::builder().application_id(APP_ID).flags(gtk::gio::ApplicationFlags::HANDLES_OPEN).build();
     let lock = std::cell::RefCell::new(None);
     let env2 = env.clone();
     let handle = rt.handle().clone();
@@ -86,6 +95,8 @@ fn main() -> glib::ExitCode {
         theme::apply();
         adw::StyleManager::default().connect_dark_notify(|_| theme::apply());
         app::connect_events(&ui);
+        integrations::install_search(app); // GNOME 검색·KRunner(I-03)
+        scrapbook_settings::start(); // 스크랩 노트 폴더 자동 저장(I-06)
         reader::install_extractor();
         focus_x11::install(); // 회의·발표 중 조용히: 전체 화면 감지(X11)
         tray::start();
@@ -108,9 +119,50 @@ fn main() -> glib::ExitCode {
             }
         }
     });
-    let code = app.run_with_args::<String>(&[]);
+    // dropcap:// 주소(I-04): 처음 켤 때도, 이미 떠 있는 앱에 넘어온 것도 여기로
+    app.connect_open(|_, files, _| {
+        if app::try_ui().is_none() {
+            return; // 이미 실행 중이라 끝나는 쪽
+        }
+        let list: Vec<String> = files.iter().map(|f| f.uri().to_string()).collect();
+        integrations::handle_uris(&list);
+    });
+    // GApplication 에는 넘길 주소만(--background 같은 우리 선택은 GApplication 이 모르는 선택이라 넘기지 않음)
+    let gargs: Vec<String> = args.iter().take(1).cloned().chain(uris).collect();
+    let code = app.run_with_args(&gargs);
     drop(rt);
     code
+}
+
+// --latest · --help · 잘못된 선택: 창 없이 출력하고 끝(종료 값)
+fn print_cli(c: dropcap_core::url_router::Cli) -> u8 {
+    use dropcap_core::url_router::{self as ur, Cli, SectionChoice};
+    match c {
+        Cli::Help => {
+            print!("{}", ur::HELP);
+            0
+        }
+        Cli::Error(e) => {
+            eprintln!("{e}");
+            2
+        }
+        Cli::Latest { section, count, json } => {
+            let sec = match ur::section(section.as_deref()) {
+                SectionChoice::All => None,
+                SectionChoice::Only(c) => Some(c),
+                SectionChoice::Unknown => {
+                    eprintln!("'{}' 분야를 찾지 못했습니다. {} 중에서 고르세요.", section.unwrap_or_default(), ur::section_names().join(", "));
+                    return 2;
+                }
+            };
+            // 읽기만: 상태 파일을 고치지 않는다(앱이 떠 있어도 안전)
+            let (state, _) = dropcap_core::store::read_state(&Store::new(DIR.clone()).file(), &Store::new(DIR.clone()).backup_file());
+            let items = ur::latest(&ur::visible_recent(&state), sec, count);
+            print!("{}", ur::format_latest(&items, json, chrono::Utc::now()));
+            0
+        }
+        Cli::Run { .. } => 0,
+    }
 }
 
 // 시험용 환경 변수(Q-03)

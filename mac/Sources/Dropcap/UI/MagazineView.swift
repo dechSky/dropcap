@@ -13,10 +13,10 @@ struct MagazineView: View {
     @ObservedObject private var mag = Magazine.shared
     @ObservedObject private var app = AppModel.shared
     @ObservedObject private var book = Scrapbook.shared
-    @State private var page: Page = MagazineController.pendingPage ?? (ProcessInfo.processInfo.environment["DROPCAP_TEST_MAG_PAGE"] == "scrapbook" ? .scrapbook
-        : ProcessInfo.processInfo.environment["DROPCAP_TEST_MAG_PAGE"] == "stories" ? .stories
-        : ProcessInfo.processInfo.environment["DROPCAP_TEST_STORY"].map { .story($0) }
-        ?? ProcessInfo.processInfo.environment["DROPCAP_TEST_MAG_SECTION"].map { .section($0) } ?? .today)
+    @State private var page: Page = MagazineController.pendingPage ?? (TestEnv.get("MAG_PAGE") == "scrapbook" ? .scrapbook
+        : TestEnv.get("MAG_PAGE") == "stories" ? .stories
+        : TestEnv.get("STORY").map { .story($0) }
+        ?? TestEnv.get("MAG_SECTION").map { .section($0) } ?? .today)
     @State private var turn = 0   // 넘긴 방향(+1 다음, -1 이전) — 책장 넘김 방향
 
     var body: some View {
@@ -268,7 +268,7 @@ struct IssueView: View {
             guard gen == buildGen else { return }
             withAnimation(animated) { data = r }
             seenRevision = rev
-            if selected == nil, let n = ProcessInfo.processInfo.environment["DROPCAP_TEST_SELECT"].flatMap(Int.init) { // 시험용: 선택 테두리 보기
+            if selected == nil, let n = TestEnv.get("SELECT").flatMap(Int.init) { // 시험용: 선택 테두리 보기
                 let list = flat(r); if list.indices.contains(n) { selected = list[n].key }
             }
             then?()
@@ -523,7 +523,7 @@ private struct CoverStory: View {
             .background(ScreenFrame(frame: $frame))
             .onAppear {
                 // 움직임 줄이기를 켠 사람에게는 끝없이 흐르는 켄 번스를 돌리지 않는다
-                guard !reduceMotion, ProcessInfo.processInfo.environment["DROPCAP_TEST_NOKB"] == nil else { return }
+                guard !reduceMotion, TestEnv.get("NOKB") == nil else { return }
                 withAnimation(.easeInOut(duration: 22).repeatForever(autoreverses: true)) { drift = true }
             }
     }

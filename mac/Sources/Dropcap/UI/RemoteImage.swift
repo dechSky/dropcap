@@ -45,18 +45,35 @@ actor ImageLoader {
             return img
         }
         guard let data = try? await FeedService.shared.fetch(url, limit: .image), // 8MB 를 넘으면 받다가 끊는다(R-2)
-              let src = CGImageSourceCreateWithData(data as CFData, nil),
-              let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, [
-                  kCGImageSourceCreateThumbnailFromImageAlways: true,
-                  kCGImageSourceThumbnailMaxPixelSize: 1400,
-                  kCGImageSourceCreateThumbnailWithTransform: true,
-              ] as CFDictionary) else { return nil }
+              let cg = Self.decode(data) else { return nil }
         let rep = NSBitmapImageRep(cgImage: cg)
         if let jpg = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.82]) {
             try? jpg.write(to: f, options: .atomic)
             prune()
         }
         return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+    }
+
+    // 풀어도 되는 사진의 크기 상한: 받은 크기(8MB)는 작아도 풀면 수백 메가픽셀인 사진(압축 폭탄)이 있다 — M11.
+    // 머리(가로·세로)만 읽어 보고 넘으면 풀지 않는다. 40메가픽셀 = 8000×5000 정도(보통 사진기 원본은 들어온다).
+    static let maxPixels = 40_000_000
+
+    static func pixelsAcceptable(_ src: CGImageSource) -> Bool {
+        guard let p = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
+              let w = p[kCGImagePropertyPixelWidth] as? Int, let h = p[kCGImagePropertyPixelHeight] as? Int,
+              w > 0, h > 0 else { return false } // 크기를 모르면 풀지 않음
+        return w <= 100_000 && h <= 100_000 && w * h <= maxPixels
+    }
+
+    // 받은 사진을 줄여서(최대 1400px) 푼다. 크기를 넘거나 모르면 nil.
+    static func decode(_ data: Data) -> CGImage? {
+        guard let src = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+              pixelsAcceptable(src) else { return nil }
+        return CGImageSourceCreateThumbnailAtIndex(src, 0, [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: 1400,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+        ] as CFDictionary)
     }
 
     private var writes = 0

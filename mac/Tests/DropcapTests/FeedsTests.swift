@@ -268,7 +268,7 @@ import Testing
 @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["DROPCAP_LIVE_TESTS"] == "1"))
 struct LiveSourceDatesTests {
     @Test func everyFeedParsesWithDates() async throws {
-        let undated: Set<String> = ["hani-society", "hani-world", "hani-science", "hani-culture", "hani-sports"] // 한겨레는 글 날짜가 없음
+        let undated: Set<String> = ["hani-society", "hani-world", "hani-science", "hani-culture", "hani-sports", "hani-politics", "hani-economy"] // 한겨레는 글 날짜가 없음
         var failures: [String] = []
         for src in Resources.config.sources where src.type == "feed" {
             do {

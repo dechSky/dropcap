@@ -103,6 +103,21 @@ public class FeedParserTests
         Assert.Equal(["https://www.anthropic.com/news/claude-x"], FeedParser.ParseSitemap(B(xml), re).Select(e => e.Link));
     }
 
+    // 뉴스 사이트맵: 발행 시각(news:publication_date)을 먼저, 없으면 lastmod(한국일보·문화일보는 발행 시각만)
+    [Fact]
+    public void SitemapReadsNewsPublicationDate()
+    {
+        var xml = """
+            <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:news="http://www.google.com/schemas/sitemap-news/0.9">
+            <url><loc>https://www.hankookilbo.com/News/Read/A1</loc><news:news><news:publication_date>2026-10-15T09:30:00+09:00</news:publication_date></news:news></url>
+            <url><loc>https://www.hankookilbo.com/News/Read/A2</loc><lastmod>2026-10-15T01:00:00Z</lastmod><news:news><news:publication_date>2026-10-14T23:00:00Z</news:publication_date></news:news></url>
+            <url><loc>https://www.hankookilbo.com/News/Read/A3</loc><lastmod>2026-10-15T02:00:00Z</lastmod></url></urlset>
+            """;
+        var e = FeedParser.ParseSitemap(B(xml), new Regex("/News/Read/"));
+        Assert.Equal([new DateTimeOffset(2026, 10, 15, 0, 30, 0, TimeSpan.Zero), new DateTimeOffset(2026, 10, 14, 23, 0, 0, TimeSpan.Zero),
+                      new DateTimeOffset(2026, 10, 15, 2, 0, 0, TimeSpan.Zero)], e.Select(x => x.Date!.Value.ToUniversalTime()));
+    }
+
     [Fact]
     public void GarbageThrows() =>
         Assert.ThrowsAny<Exception>(() => FeedParser.ParseFeed(B("<html><body>nope</body></html>")));

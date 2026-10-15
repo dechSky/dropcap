@@ -185,7 +185,9 @@ public static class FeedParser
         var set = root.Child("urlset") ?? throw FeedException.BadFormat();
         return set.All("url").Select(u => (Loc: u.Value("loc"), Node: u))
             .Where(p => match.IsMatch(p.Loc))
-            .Select(p => new Entry(p.Loc, "", p.Loc, Dates.Parse(p.Node.Value("lastmod")), "")).ToList();
+            // 뉴스 사이트맵의 발행 시각(news:publication_date)을 먼저, 없으면 lastmod — 한국일보·문화일보는 발행 시각만 있다
+            .Select(p => new Entry(p.Loc, "", p.Loc,
+                Dates.Parse(NonEmpty(p.Node.Child("news:news")?.Value("news:publication_date")) ?? p.Node.Value("lastmod")), "")).ToList();
     }
 
     internal static string? NonEmpty(string? s) => string.IsNullOrEmpty(s) ? null : s;

@@ -167,6 +167,10 @@ struct IssueView: View {
         self.source = source
         self.onStory = onStory
         _focus = State(initialValue: focus)
+        // 지난번에 엮은 지면이 있으면 그것부터 보이고, 새로 엮은 것이 오면 바꿔 끼운다(앱을 막 켠 직후 빈 화면 대신)
+        let last = IssueCache.get(source)
+        _data = State(initialValue: last?.data)
+        _seenRevision = State(initialValue: last?.revision ?? 0)
     }
 
     private var sectionID: String? { if case .section(let id) = source { return id }; return nil }
@@ -249,7 +253,8 @@ struct IssueView: View {
     private var isFixed: Bool { if case .fixed = source { return true }; return false }
     // 오늘 호를 다 읽었으면 새 소식을 더 밀어 넣지 않는다(M-23)
     @State private var todayDone = TodayIssue.isMarkedDone()
-    private var newCount: Int { isFixed || (source == .today && todayDone) ? 0 : max(0, mag.revision - seenRevision) }
+    @State private var built = false // 이 화면에서 한 번이라도 엮었는지(지난 결과만 보이는 동안은 '새 소식' 알림을 띄우지 않음)
+    private var newCount: Int { !built || isFixed || (source == .today && todayDone) ? 0 : max(0, mag.revision - seenRevision) }
 
     @State private var buildGen = 0
 
@@ -268,6 +273,8 @@ struct IssueView: View {
             guard gen == buildGen else { return }
             withAnimation(animated) { data = r }
             seenRevision = rev
+            built = true
+            IssueCache.put(source, r, revision: rev)
             if selected == nil, let n = TestEnv.get("SELECT").flatMap(Int.init) { // 시험용: 선택 테두리 보기
                 let list = flat(r); if list.indices.contains(n) { selected = list[n].key }
             }
@@ -331,6 +338,8 @@ struct IssueView: View {
                         Text("기사 저작권은 각 언론사·기업에 있습니다. 제목·요약·사진은 원문으로 이어 주기 위한 것입니다.")
                             .font(.app(11)).foregroundStyle(.tertiary)
                             .padding(.horizontal, 36).padding(.vertical, 40)
+                    } else {
+                        IssueBuilding(source: source, preparing: mag.preparing).padding(.horizontal, 36)
                     }
                 }
             }
@@ -447,6 +456,59 @@ private struct Masthead: View {
                 .padding(.top, 10)
         }
     }
+}
+
+// 지면을 처음 엮는 동안: 빈 화면 대신 머리 자리와 진행 표시(뼈대)
+struct IssueBuilding: View {
+    let source: IssueView.Source
+    var preparing = false
+
+    static func title(_ source: IssueView.Source) -> String {
+        switch source {
+        case .today: return "오늘"
+        case .week: return "이번 주"
+        case .section(let id): return Sections.name(id)
+        case .fixed(let i): return i.title
+        }
+    }
+    static func message(preparing: Bool) -> String { preparing ? "첫 호를 엮는 중…" : "지면을 엮는 중…" }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(Self.title(source)).font(.display(30, .bold)).padding(.top, 28)
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text(Self.message(preparing: preparing)).font(.app(13)).foregroundStyle(.secondary)
+            }
+            .accessibilityElement(children: .combine)
+            ForEach(0..<3, id: \.self) { i in // 카드 뼈대
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(.primary.opacity(0.05))
+                    .frame(height: i == 0 ? 220 : 96)
+            }
+            .padding(.top, 10)
+            .accessibilityHidden(true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+// 지면마다 마지막으로 엮은 결과(이번 실행 동안만). 지면을 다시 열면 이것부터 보이고 새로 엮은 것으로 바꾼다.
+@MainActor
+enum IssueCache {
+    private static var last: [String: (data: Magazine.Resolved, revision: Int)] = [:]
+
+    static func key(_ source: IssueView.Source) -> String {
+        switch source {
+        case .today: return "today"
+        case .week: return "week"
+        case .section(let id): return "section:" + id
+        case .fixed(let i): return "fixed:" + i.id
+        }
+    }
+    static func get(_ source: IssueView.Source) -> (data: Magazine.Resolved, revision: Int)? { last[key(source)] }
+    static func put(_ source: IssueView.Source, _ data: Magazine.Resolved, revision: Int) { last[key(source)] = (data, revision) }
+    static func clear() { last = [:] }
 }
 
 private struct EmptyIssue: View {

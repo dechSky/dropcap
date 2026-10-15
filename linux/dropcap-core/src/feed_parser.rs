@@ -344,7 +344,10 @@ pub fn parse_sitemap(data: &[u8], pattern: &Regex) -> Result<Vec<Entry>, FeedErr
             if !pattern.is_match(&loc) {
                 return None;
             }
-            Some(Entry { id: loc.clone(), title: String::new(), link: loc, date: dates::parse(&u.value("lastmod")), summary: String::new(), image: None })
+            // 뉴스 사이트맵의 발행 시각(news:publication_date)을 먼저, 없으면 lastmod — 한국일보·문화일보는 발행 시각만 있다
+            let published = u.child("news:news").map(|n| n.value("news:publication_date")).unwrap_or_default();
+            let date = dates::parse(&non_empty(published).unwrap_or_else(|| u.value("lastmod")));
+            Some(Entry { id: loc.clone(), title: String::new(), link: loc, date, summary: String::new(), image: None })
         })
         .collect())
 }

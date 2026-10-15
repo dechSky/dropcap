@@ -137,7 +137,9 @@ enum FeedParser {
         return set.all("url").compactMap { u in
             let loc = u.value("loc")
             guard match.firstMatch(in: loc, range: NSRange(loc.startIndex..., in: loc)) != nil else { return nil }
-            return Entry(id: loc, title: "", link: loc, date: Dates.parse(u.value("lastmod")), summary: "")
+            // 뉴스 사이트맵의 발행 시각(news:publication_date)을 먼저, 없으면 lastmod — 한국일보·문화일보는 발행 시각만 있다
+            let published = u.child("news:news")?.value("news:publication_date") ?? ""
+            return Entry(id: loc, title: "", link: loc, date: Dates.parse(published.nonEmpty ?? u.value("lastmod")), summary: "")
         }
     }
 }

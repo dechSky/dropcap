@@ -110,7 +110,8 @@
       "color": "#A31F34",
       "section": "ai",
       "lang": "en",
-      "region": "intl"
+      "region": "intl",
+      "paywall": "metered"
     },
     {
       "id": "ars",
@@ -136,7 +137,8 @@
       "color": "#5200FF",
       "section": "ai",
       "lang": "en",
-      "region": "intl"
+      "region": "intl",
+      "paywall": "metered"
     },
     {
       "id": "techcrunch",
@@ -231,24 +233,12 @@
       "region": "kr"
     },
     {
-      "id": "mbc-top",
-      "name": "MBC 주요뉴스",
-      "tier": "kr",
-      "type": "feed",
-      "url": "https://imnews.imbc.com/rss/google_news/narrativeNews.rss",
-      "aiOnly": false,
-      "defaultOn": false,
-      "color": "#E4007F",
-      "section": "top",
-      "lang": "ko",
-      "region": "kr"
-    },
-    {
       "id": "chosun-all",
       "name": "조선일보",
       "tier": "kr",
-      "type": "feed",
-      "url": "https://www.chosun.com/arc/outboundfeeds/rss/?outputType=xml",
+      "type": "sitemap",
+      "url": "https://www.chosun.com/arc/outboundfeeds/news-sitemap/?outputType=xml",
+      "match": "^https:\\/\\/www\\.chosun\\.com\\/(politics|national|economy|international|culture-life|opinion|sports|entertainments|special|investigation|science|medical)(\\/[a-z0-9_-]+)*\\/\\d{4}\\/\\d{2}\\/\\d{2}\\/[A-Z0-9]+\\/$",
       "aiOnly": false,
       "defaultOn": false,
       "color": "#222222",
@@ -268,7 +258,7 @@
       "section": "top",
       "lang": "en",
       "region": "intl",
-      "paywall": "metered"
+      "paywall": "hard"
     },
     {
       "id": "npr-news",
@@ -334,7 +324,7 @@
       "section": "politics",
       "lang": "en",
       "region": "intl",
-      "paywall": "metered"
+      "paywall": "hard"
     },
     {
       "id": "khan-politics",
@@ -412,7 +402,8 @@
       "color": "#B8000B",
       "section": "politics",
       "lang": "en",
-      "region": "intl"
+      "region": "intl",
+      "paywall": "metered"
     },
     {
       "id": "yna-market",
@@ -438,7 +429,8 @@
       "color": "#1F3F8F",
       "section": "economy",
       "lang": "ko",
-      "region": "kr"
+      "region": "kr",
+      "paywall": "metered"
     },
     {
       "id": "cnbc",
@@ -581,7 +573,8 @@
       "color": "#1F3F8F",
       "section": "economy",
       "lang": "ko",
-      "region": "kr"
+      "region": "kr",
+      "paywall": "metered"
     },
     {
       "id": "khan-economy",
@@ -622,7 +615,7 @@
       "section": "economy",
       "lang": "en",
       "region": "intl",
-      "paywall": "metered"
+      "paywall": "hard"
     },
     {
       "id": "nyt-business",
@@ -636,7 +629,7 @@
       "section": "economy",
       "lang": "en",
       "region": "intl",
-      "paywall": "metered"
+      "paywall": "hard"
     },
     {
       "id": "guardian-business",
@@ -844,7 +837,8 @@
       "color": "#1F3F8F",
       "section": "world",
       "lang": "ko",
-      "region": "kr"
+      "region": "kr",
+      "paywall": "metered"
     },
     {
       "id": "nyt-world",
@@ -858,7 +852,7 @@
       "section": "world",
       "lang": "en",
       "region": "intl",
-      "paywall": "metered"
+      "paywall": "hard"
     },
     {
       "id": "aljazeera",
@@ -936,7 +930,8 @@
       "color": "#E1127A",
       "section": "tech",
       "lang": "en",
-      "region": "intl"
+      "region": "intl",
+      "paywall": "metered"
     },
     {
       "id": "ars-all",
@@ -1014,14 +1009,15 @@
       "color": "#1F3F8F",
       "section": "tech",
       "lang": "ko",
-      "region": "kr"
+      "region": "kr",
+      "paywall": "metered"
     },
     {
       "id": "nocut-it",
-      "name": "노컷뉴스 IT",
+      "name": "노컷뉴스 산업",
       "tier": "kr",
       "type": "feed",
-      "url": "https://rss.nocutnews.co.kr/category/it.xml",
+      "url": "https://rss.nocutnews.co.kr/category/industry.xml",
       "aiOnly": false,
       "defaultOn": false,
       "color": "#E71D36",
@@ -1319,7 +1315,7 @@
       "section": "life",
       "lang": "en",
       "region": "intl",
-      "paywall": "metered"
+      "paywall": "hard"
     },
     {
       "id": "yna-culture",
@@ -1450,7 +1446,7 @@
       "section": "culture",
       "lang": "en",
       "region": "intl",
-      "paywall": "metered"
+      "paywall": "hard"
     },
     {
       "id": "yna-sports",
@@ -1740,7 +1736,7 @@
       "type": "feed",
       "url": "https://www.propublica.org/feeds/propublica/main",
       "aiOnly": false,
-      "defaultOn": false,
+      "defaultOn": true,
       "color": "#2D2D2D",
       "section": "society",
       "lang": "en",
@@ -1767,7 +1763,7 @@
       "type": "feed",
       "url": "https://spectrum.ieee.org/feeds/feed.rss",
       "aiOnly": false,
-      "defaultOn": false,
+      "defaultOn": true,
       "color": "#00629B",
       "section": "tech",
       "lang": "en",
@@ -1807,7 +1803,7 @@
       "url": "https://www.joongang.co.kr/sitemap/latest-articles",
       "match": "^https:\\/\\/www\\.joongang\\.co\\.kr\\/article\\/\\d+$",
       "aiOnly": false,
-      "defaultOn": false,
+      "defaultOn": true,
       "color": "#1F4E8C",
       "section": "top",
       "lang": "ko",

@@ -94,8 +94,8 @@ public class PaywallTests
         var all = Resources.Config.Sources;
         Assert.All(all.Where(s => s.Paywall is not null), s => Assert.Contains(s.Paywall, new[] { "hard", "metered" }));
         Assert.Equal("hard", all.First(s => s.Id == "wsj-markets").Paywall);
-        Assert.All(all.Where(s => s.Id.StartsWith("nyt-")), s => Assert.Equal("metered", s.Paywall));
-        Assert.Null(all.First(s => s.Id == "verge").Paywall);
+        Assert.All(all.Where(s => s.Id.StartsWith("nyt-")), s => Assert.Equal("hard", s.Paywall)); // 앱은 403 으로 못 읽음(sources-audit)
+        Assert.Equal("metered", all.First(s => s.Id == "verge").Paywall); // 구독 문·isAccessibleForFree=false
         Assert.Equal("hard", Sections.Meta["wsj-markets"].Paywall);
     }
 
@@ -126,12 +126,12 @@ public class PaywallTests
         using var tmp = new TempDir();
         using var db = new Database(Path.Combine(tmp.Path, "magazine.sqlite"));
         var book = new PaywallBook(db);
-        var it = Extras.News("x", "verge", link: "https://www.theverge.com/x");
+        var it = Extras.News("x", "ars", link: "https://arstechnica.com/x"); // 무료 출처
         for (var i = 0; i < 5; i++) book.Record(it, failed: i < 4, blocked: false);
         Assert.Equal(PaywallKind.Learned, book.Kind(it));                         // 5번 중 4번 막힘 → 배움
         book.Record(AppModel.PreviewItem(DateTimeOffset.Now), true, false);       // 견본 카드는 세지 않음
         Assert.False(book.Stats.ContainsKey("openai"));
-        Assert.Null(book.Kind(Extras.News("v", "verge", kind: "video")));         // 기사가 아니면 자물쇠 없음
+        Assert.Null(book.Kind(Extras.News("v", "ars", kind: "video")));         // 기사가 아니면 자물쇠 없음
     }
 
     [Fact]
@@ -143,7 +143,7 @@ public class PaywallTests
         var m = Dropcap.Ui.ItemView.From(Extras.News("2", "custom-nyt", link: "https://www.nytimes.com/2"), null);
         Assert.Equal("metered", m.Paywall);
         Assert.Equal("일부 유료(무료 건수 제한)", m.PaywallHelp);
-        Assert.Null(Dropcap.Ui.ItemView.From(Extras.News("3", "verge"), null).Paywall);
+        Assert.Null(Dropcap.Ui.ItemView.From(Extras.News("3", "ars"), null).Paywall);
     }
 }
 
@@ -616,12 +616,12 @@ public class MenuSettingsExtrasTests : IDisposable
     [Fact]
     public async Task HeaderShowsMeetingReasonAndRowsCarryLocks()
     {
-        model.State.Recent = [Extras.News("1", "custom-ft", link: "https://www.ft.com/1"), Extras.News("2", "verge")];
+        model.State.Recent = [Extras.News("1", "custom-ft", link: "https://www.ft.com/1"), Extras.News("2", "ars")];
         var v = J(await menu.Handle("view", A(new { })));
         Assert.Null(v["header"]!["autoQuiet"]);
         var rows = v["rows"]!.AsArray();
         Assert.Equal("hard", rows.First(r => r!["item"]!["key"]!.GetValue<string>() == "custom-ft|1")!["item"]!["paywall"]!.GetValue<string>());
-        Assert.Null(rows.First(r => r!["item"]!["key"]!.GetValue<string>() == "verge|2")!["item"]!["paywall"]);
+        Assert.Null(rows.First(r => r!["item"]!["key"]!.GetValue<string>() == "ars|2")!["item"]!["paywall"]);
         model.Focus.Override = new FocusMonitor.Fixed(FocusReason.Sharing);
         v = J(await menu.Handle("view", A(new { })));
         Assert.Equal("화면 공유·기록 중", v["header"]!["autoQuiet"]!.GetValue<string>());

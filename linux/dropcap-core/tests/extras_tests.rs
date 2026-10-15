@@ -105,8 +105,8 @@ fn sources_json_marks_known_paywalls() {
         assert!(["hard", "metered"].contains(&s.paywall.as_deref().unwrap()), "{}", s.id);
     }
     assert_eq!(all.iter().find(|s| s.id == "wsj-markets").and_then(|s| s.paywall.clone()).as_deref(), Some("hard"));
-    assert!(all.iter().filter(|s| s.id.starts_with("nyt-")).all(|s| s.paywall.as_deref() == Some("metered")));
-    assert_eq!(all.iter().find(|s| s.id == "verge").and_then(|s| s.paywall.clone()), None);
+    assert!(all.iter().filter(|s| s.id.starts_with("nyt-")).all(|s| s.paywall.as_deref() == Some("hard"))); // 앱은 403 으로 못 읽음(sources-audit)
+    assert_eq!(all.iter().find(|s| s.id == "verge").and_then(|s| s.paywall.clone()).as_deref(), Some("metered")); // 구독 문·isAccessibleForFree=false
     assert_eq!(sections::META.get("wsj-markets").and_then(|m| m.paywall.clone()).as_deref(), Some("hard"));
 }
 

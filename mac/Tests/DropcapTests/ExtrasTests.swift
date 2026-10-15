@@ -82,8 +82,8 @@ private func tempDB() throws -> (Database, URL) {
         let all = Resources.config.sources
         for s in all where s.paywall != nil { #expect(["hard", "metered"].contains(s.paywall!), "\(s.id)") }
         #expect(all.first { $0.id == "wsj-markets" }?.paywall == "hard")
-        #expect(all.filter { $0.id.hasPrefix("nyt-") }.allSatisfy { $0.paywall == "metered" })
-        #expect(all.first { $0.id == "verge" }?.paywall == nil)
+        #expect(all.filter { $0.id.hasPrefix("nyt-") }.allSatisfy { $0.paywall == "hard" }) // 앱은 403 으로 못 읽음(sources-audit)
+        #expect(all.first { $0.id == "verge" }?.paywall == "metered") // 구독 문·isAccessibleForFree=false
         #expect(Sections.meta["wsj-markets"]?.paywall == "hard")
     }
 

@@ -85,6 +85,18 @@ import SwiftUI
         #expect(e.map(\.link) == ["https://www.anthropic.com/news/claude-x"])
     }
 
+    // 뉴스 사이트맵: 발행 시각(news:publication_date)을 먼저, 없으면 lastmod(한국일보·문화일보는 발행 시각만)
+    @Test func sitemapReadsNewsPublicationDate() throws {
+        let xml = """
+        <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:news="http://www.google.com/schemas/sitemap-news/0.9">
+        <url><loc>https://www.hankookilbo.com/News/Read/A1</loc><news:news><news:publication_date>2026-10-15T09:30:00+09:00</news:publication_date></news:news></url>
+        <url><loc>https://www.hankookilbo.com/News/Read/A2</loc><lastmod>2026-10-15T01:00:00Z</lastmod><news:news><news:publication_date>2026-10-14T23:00:00Z</news:publication_date></news:news></url>
+        <url><loc>https://www.hankookilbo.com/News/Read/A3</loc><lastmod>2026-10-15T02:00:00Z</lastmod></url></urlset>
+        """
+        let e = try FeedParser.parseSitemap(Data(xml.utf8), match: try NSRegularExpression(pattern: "/News/Read/"))
+        #expect(e.map(\.date) == [Date(timeIntervalSince1970: 1_792_024_200), Date(timeIntervalSince1970: 1_792_018_800), Date(timeIntervalSince1970: 1_792_029_600)])
+    }
+
     @Test func garbageThrows() {
         #expect(throws: (any Error).self) { try FeedParser.parseFeed(Data("<html><body>nope</body></html>".utf8)) }
     }

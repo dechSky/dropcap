@@ -13,4 +13,20 @@ public class SecurityLow3Tests
             Assert.DoesNotContain(live, js);
         Assert.Contains("fresh.createElement('div')", js);
     }
+
+    // 행동으로도(review-3 시험 빈틈 T3): CSP 를 뺀 페이지에서 여러 덩어리 모으기(같은 class 형제 상자)를 돌려도
+    // 추출하는 동안 그림 받기·onerror 가 일어나지 않는다. 고치기 전(document.createElement) 코드는 요청 2건·onerror 실행
+    [JsFact]
+    public async Task GatheringDoesNotLoadImagesWithoutCsp()
+    {
+        static string P(string s) => "<p>" + string.Concat(Enumerable.Repeat(s + " lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor ", 2)) + "</p>";
+        var html = "<html><head><title>t</title></head><body><article>"
+            + $"<div class=\"chunk\">{P("one")}{P("two")}<img src=\"http://127.0.0.1:9/leak.png\" onerror=\"window.__probe=1\"></div>"
+            + "<div class=\"ad\">ad</div>"
+            + $"<div class=\"chunk\">{P("three")}{P("four")}<img src=\"http://127.0.0.1:9/leak2.png\" onerror=\"window.__probe=2\"></div>"
+            + "</article></body></html>";
+        var (requests, onerror) = await ExtractJs.ProbeAsync(html);
+        Assert.Equal(0, requests);
+        Assert.Null(onerror);
+    }
 }

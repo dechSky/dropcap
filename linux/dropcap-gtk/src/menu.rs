@@ -398,7 +398,7 @@ fn build() -> Rc<RefCell<Menu>> {
     {
         let m = m.clone();
         u.listen(move |e| {
-            if matches!(e, UiEvent::State | UiEvent::Checking(_) | UiEvent::Layout) && m.borrow().window.is_visible() {
+            if matches!(e, UiEvent::State | UiEvent::Checking(_) | UiEvent::Layout | UiEvent::Paywall) && m.borrow().window.is_visible() {
                 refresh(&m);
             }
         });

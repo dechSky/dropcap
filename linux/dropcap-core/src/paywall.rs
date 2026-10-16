@@ -308,14 +308,17 @@ impl PaywallBook {
         self.teasers.lock().unwrap().clone()
     }
 
-    // 본문을 받은 기사(미리 받기 포함)의 맛보기 판정을 남긴다 — 맛보기가 아니면 지난 기록을 지운다
-    pub fn record_teaser(&self, item: &NewsItem, teaser: bool) {
+    // 본문을 받은 기사(미리 받기 포함)의 맛보기 판정을 남긴다 — 맛보기가 아니면 지난 기록을 지운다.
+    // 다시 맛보기로 판정되면 시각만 새로 써서 30일·2,000건 정리에서 계속 맛보기인 기사가 빠지지 않게 한다(review-3 B3).
+    // 돌려주는 값: 화면 표시가 바뀌었나(목록·카드를 다시 그릴지 — review-3 B1)
+    pub fn record_teaser(&self, item: &NewsItem, teaser: bool) -> bool {
         if item.id == crate::app_model::PREVIEW_ID || item.link.is_empty() {
-            return;
+            return false;
         }
         let mut t = self.teasers.lock().unwrap();
-        if teaser == t.contains(&item.link) {
-            return;
+        let had = t.contains(&item.link);
+        if !teaser && !had {
+            return false;
         }
         self.db.mark_teaser(&item.link, teaser, chrono::Utc::now());
         if teaser {
@@ -323,6 +326,7 @@ impl PaywallBook {
         } else {
             t.remove(&item.link);
         }
+        teaser != had
     }
 
     // 사용자가 연 기사의 결과(미리 받기는 스크립트 없이 해서 실패가 잦으므로 세지 않는다)

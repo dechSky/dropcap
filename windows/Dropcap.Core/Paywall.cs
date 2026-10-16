@@ -182,15 +182,30 @@ public sealed class PaywallBook
         return Paywall.Kind(item.SourceId, item.Link, stats: stats, paid: item.Paid);
     }
 
-    // 본문을 받은 기사(미리 받기 포함)의 맛보기 판정을 남긴다 — 맛보기가 아니면 지난 기록을 지운다
+    // 본문을 받은 기사(미리 받기 포함)의 맛보기 판정을 남긴다 — 맛보기가 아니면 지난 기록을 지운다.
+    // 다시 맛보기로 판정되면 시각만 새로 써서 30일·2,000건 정리에서 계속 맛보기인 기사가 빠지지 않게 한다(review-3 B3).
+    // 알림 미리 받기(Task.Run)와 사용자가 연 기사가 함께 부를 수 있어 고치기를 잠근다 — 잠그지 않으면 한쪽 고침이 메모리에서 사라진다(review-3 B2)
+    private readonly object teaserGate = new();
+    internal Action? BeforeSwap;   // 시험 전용: 고친 사본을 바꿔 넣기 직전(경쟁 창을 넓혀 B2 를 재현)
     public void RecordTeaser(NewsItem item, bool teaser)
     {
-        if (item.Id == AppModel.PreviewId || item.Link.Length == 0 || teaser == teasers.Contains(item.Link)) return;
-        try { db.MarkTeaser(item.Link, teaser); } catch { return; }
-        var next = new HashSet<string>(teasers);
-        if (teaser) next.Add(item.Link); else next.Remove(item.Link);
-        teasers = next;
-        TeasersChanged?.Invoke();
+        if (item.Id == AppModel.PreviewId || item.Link.Length == 0) return;
+        bool changed;
+        lock (teaserGate)
+        {
+            var had = teasers.Contains(item.Link);
+            if (!teaser && !had) return;
+            try { db.MarkTeaser(item.Link, teaser); } catch { return; }
+            changed = teaser != had;
+            if (changed)
+            {
+                var next = new HashSet<string>(teasers);
+                if (teaser) next.Add(item.Link); else next.Remove(item.Link);
+                BeforeSwap?.Invoke();
+                teasers = next;
+            }
+        }
+        if (changed) TeasersChanged?.Invoke();
     }
 
     // 사용자가 연 기사의 결과(미리 받기는 스크립트 없이 해서 실패가 잦으므로 세지 않는다 — 부르는 쪽이 interactive 일 때만)

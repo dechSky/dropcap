@@ -474,6 +474,13 @@ impl ArticleService {
     pub fn set_teaser_recorder(&self, f: Arc<TeaserRecorder>) {
         *self.teaser_recorder.lock().unwrap() = f;
     }
+    // 받은 본문이 맛보기인가(피드·출처 값만 보고 — 지난 판정은 빼고) + 그 판정을 남김(미리 받기에서도 — 목록·카드에 열기 전부터 '앞부분만')
+    pub fn judge_teaser(&self, item: &NewsItem, art: &Article) -> bool {
+        let kind = (self.paywall_kind.lock().unwrap().clone())(item);
+        let teaser = crate::paywall::is_teaser(&art.blocks, art.paid, kind, art.ld_body);
+        (self.teaser_recorder.lock().unwrap().clone())(item, teaser);
+        teaser
+    }
     fn record(&self, item: &NewsItem, failed: bool, blocked: bool) {
         let f = self.recorder.lock().unwrap().clone();
         f(item, failed, blocked);
@@ -691,12 +698,9 @@ impl ArticleService {
         };
         let art_title = art.title.clone().filter(|t| !t.is_empty()).unwrap_or_else(|| item.title.clone());
         a.original_title = art_title.clone();
-        let kind = (self.paywall_kind.lock().unwrap().clone())(&item);
-        if crate::paywall::is_teaser(&art.blocks, art.paid, kind, art.ld_body) {
+        if self.judge_teaser(&item, &art) {
             a.paywalled = Some(true);
         }
-        // 미리 받기에서도 남겨 목록·카드에 열기 전부터 '앞부분만'
-        (self.teaser_recorder.lock().unwrap().clone())(&item, a.paywalled == Some(true));
         a.partial = art.partial.filter(|p| *p);
         // 맛보기 판정(끝의 구독 권유 문구)을 본 뒤에 군더더기를 뺀다 — 번역 전에 빼서 번역 시간도 줄임
         let mut art = art;

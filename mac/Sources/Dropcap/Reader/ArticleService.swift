@@ -111,6 +111,27 @@ final class ArticleService {
         listeners[link]?.values.forEach { $0(a) }
     }
 
+    // 피드 본문은 글 링크가 출처 피드와 같은 사이트일 때만(출처를 모르면 쓰지 않음)
+    nonisolated static func usableFeedBody(_ body: String?, link: String, sourceURL: String?) -> String? {
+        guard let body, let sourceURL, FeedService.sameSite(link, sourceURL) else { return nil }
+        return body
+    }
+
+    // 읽기 창이 쓸 피드 본문: 들고 온 사본에 없으면(나중에 읽기·스크랩 — 저장 때 뺌) 피드 기록 DB 에서 다시 찾고,
+    // 출처 피드와 다른 사이트 링크의 본문은 쓰지 않는다 — 받을 때도 거르지만(FeedService.sameSite) 그 전에 DB 에 들어간 것까지(보안 점검 M15)
+    // sourceURL: 출처 주소 찾기(시험이 바꿔 끼움 — 없으면 앱의 출처 목록)
+    static func feedBody(for item: NewsItem, db: Database = .shared, sourceURL: ((String) -> String?)? = nil) -> String? {
+        let url = sourceURL.map { $0(item.sourceId) } ?? Resources.source(item.sourceId)?.url
+        return usableFeedBody(item.feedBody ?? db.items(keys: [item.key]).first?.item.feedBody, link: item.link, sourceURL: url)
+    }
+
+    // 받은 본문이 맛보기인가(피드·출처 값만 보고 — 지난 판정은 빼고) + 그 판정을 남김(미리 받기에서도 — 목록·카드에 열기 전부터 '앞부분만')
+    static func judgeTeaser(_ item: NewsItem, _ art: Article, book: PaywallBook = .shared) -> Bool {
+        let teaser = Paywall.isTeaser(art.blocks, paid: art.paid, kind: book.sourceKind(item), ldBody: art.ldBody)
+        book.recordTeaser(item, teaser)
+        return teaser
+    }
+
     private func run(_ item: NewsItem, interactive: Bool) async -> PreparedArticle {
         var a = PreparedArticle(title: item.displayTitle, originalTitle: item.title)
         emit(item.link, a)
@@ -118,8 +139,7 @@ final class ArticleService {
         var got: Article?
         if let url = URL(string: item.link) { got = await extractor.extract(url, allowScripts: interactive) }
         // 피드 전문 우선: 사이트가 앞부분만 줬거나 못 추렸는데 피드에 전문이 있으면 그것을(FeedFullBody)
-        // 나중에 읽기·스크랩에서 연 사본에는 피드 본문이 빠져 있다(저장 때 뺌) — 피드 기록 DB 에서 다시 찾는다
-        let feedBody = item.feedBody ?? Database.shared.items(keys: [item.key]).first?.item.feedBody
+        let feedBody = Self.feedBody(for: item)
         if let body = feedBody, FeedFullBody.worthTrying(feedHTML: body, extracted: got?.blocks), let base = URL(string: item.link),
            let feed = await ArticleExtractor().extractHTML(FeedFullBody.page(body, title: item.title), base: base),
            FeedFullBody.prefer(feed: feed.blocks, over: got?.blocks ?? []) {
@@ -142,8 +162,7 @@ final class ArticleService {
         NSLog("[기사] 그림 %d개", art.blocks.filter { $0.type == .img }.count)
         let artTitle = ArticleService.stripSiteName(art.title?.nonEmpty ?? item.title, source: item.sourceName, feedTitle: item.title)
         a.originalTitle = artTitle
-        if Paywall.isTeaser(art.blocks, paid: art.paid, kind: PaywallBook.shared.sourceKind(item), ldBody: art.ldBody) { a.paywalled = true }
-        PaywallBook.shared.recordTeaser(item, a.paywalled == true) // 미리 받기에서도 남겨 목록·카드에 열기 전부터 '앞부분만'
+        if Self.judgeTeaser(item, art) { a.paywalled = true }
         a.partial = art.partial == true ? true : nil
         art.blocks = BodyCleanup.dropJunk(art.blocks) // 맛보기 판정(끝의 구독 권유 문구)을 본 뒤에 군더더기를 뺀다
         a.blocks = art.blocks

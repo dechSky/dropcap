@@ -33,6 +33,12 @@ public class TeaserLdTests
         Assert.True(Paywall.MatchesSiteBody(899, 902));
         Assert.False(Paywall.MatchesSiteBody(1150, 902));
         Assert.False(Paywall.MatchesSiteBody(900, 0));
+        // 경계(±10% 포함 — 리눅스 ld_body_tests 와 같은 값): 900 의 810·990 은 같음, 809·991 은 다름
+        Assert.True(Paywall.MatchesSiteBody(810, 900));
+        Assert.True(Paywall.MatchesSiteBody(990, 900));
+        Assert.False(Paywall.MatchesSiteBody(809, 900));
+        Assert.False(Paywall.MatchesSiteBody(991, 900));
+        Assert.False(Paywall.MatchesSiteBody(900, null));
     }
 
     // 군더더기(기자 소개·Follow topics)를 뺀 길이로도 견준다 — 그대로는 ld 와 10% 넘게 다름

@@ -31,12 +31,28 @@ public static class ExtractJs
 
     public static async Task<List<Article?>> RunAsync(params (string Html, string Base)[] cases)
     {
+        var raw = await RawAsync(probe: false, cases);
+        return raw.Select(r => r is null ? null : Json.Decode<Article>(r)).ToList();
+    }
+
+    // 격리 칸 CSP 없이 추출하는 동안 나간 바깥 요청 수·onerror 실행(보안 점검 X2 — 스크립트 스스로의 한 겹 방어)
+    public static async Task<(int Requests, string? OnError)> ProbeAsync(string html, string @base = ReaderCutText.Base)
+    {
+        var r = (await RawAsync(probe: true, (html, @base)))[0]!;
+        using var d = JsonDocument.Parse(r);
+        var e = d.RootElement.GetProperty("onerror");
+        return (d.RootElement.GetProperty("requests").GetInt32(), e.ValueKind == JsonValueKind.Null ? null : e.ToString());
+    }
+
+    private static async Task<List<string?>> RawAsync(bool probe, params (string Html, string Base)[] cases)
+    {
         var root = Root();
         var input = JsonSerializer.Serialize(new
         {
             readability = File.ReadAllText(Path.Combine(root, "mac", "Resources", "Readability.js")),
             extract = File.ReadAllText(Path.Combine(root, "windows", "Dropcap.Ui", "web", "extract.js")),
             cases = cases.Select(c => new { html = c.Html, @base = c.Base }),
+            probe,
         });
         var psi = new ProcessStartInfo("node", Path.Combine(root, "windows", "Dropcap.Core.Tests", "js", "extract-runner.mjs"))
         {
@@ -51,8 +67,7 @@ public static class ExtractJs
         await p.WaitForExitAsync();
         var (stdout, stderr) = (await outTask, await errTask);
         if (p.ExitCode != 0) throw new InvalidOperationException("추출 도우미 실패: " + stderr);
-        var raw = JsonSerializer.Deserialize<List<string?>>(stdout) ?? new();
-        return raw.Select(r => r is null ? null : Json.Decode<Article>(r)).ToList();
+        return JsonSerializer.Deserialize<List<string?>>(stdout) ?? new();
     }
 
     public static async Task<Article?> OneAsync(string html, string @base = ReaderCutText.Base) => (await RunAsync((html, @base)))[0];

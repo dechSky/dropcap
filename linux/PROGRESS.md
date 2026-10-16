@@ -184,6 +184,11 @@
   - `cargo test --workspace` 전체 통과(288 · 1 무시), 리눅스 전 기능 형 검사 통과(경고 없음). 앱 창은 띄우지 않음 — 띠·끝줄·원문 단추 모양은 리눅스에서 확인 필요.
 - FEATURES '리' 칸: R-01 · R-03 · R-05 · R-15 · R-18 · R-21 · G-14 · G-15 · T-01 · T-02 · T-03.
 
+## 2026-10-16 — 점검 review-3 낮음(wt/fix-review3 — 맥 AUDIT.md 9절)
+
+- B1: 맛보기 판정이 바뀌면 앱 핵심이 `UiEvent::Paywall` 을 보내 목록 메뉴·매거진 지면이 '🔒 앞부분만'을 다시 그린다. B3: 다시 맛보기면 DB 시각 갱신(`PaywallBook::record_teaser` 는 표시가 바뀌었는지 돌려줌).
+- 시험 `paywall_early_tests.rs` — `ArticleService::judge_teaser`(run 이 부르는 그 함수)를 앱 핵심 연결 그대로 지나 목록 표시·화면 알림 확인, 시각 갱신. 고치기 전 실패 → 고친 뒤 통과.
+
 ## 2026-10-16 — 보안 점검 낮음 나머지(wt/seclow3 — 맥 AUDIT.md 8절)
 
 - X2: WebKit 추출 스크립트(`reader_webkit.rs` SCRIPT) 여러 덩어리 모으기 상자를 사본 문서(`fresh.createElement`)에서 만든다(내용 차단 규칙이 막던 사진 받기·onerror 에 한 겹 더). Rust 판(`reader_extract.rs`)은 DOM 을 쓰지 않아 해당 없음. 시험 `dropcap-gtk/tests/security_low3_tests.rs` — 고치기 전 실패 → 고친 뒤 통과.

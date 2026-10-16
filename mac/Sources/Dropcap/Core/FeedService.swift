@@ -152,10 +152,21 @@ actor FeedService {
         return siteKey(a) == siteKey(b)
     }
 
-    // 등록 도메인 근사: 마지막 두 마디, 나라 도메인의 2단계(co.kr·co.uk·or.kr 등)면 세 마디. IP 는 그대로
+    // 여러 사람이 하위 도메인을 하나씩 나눠 쓰는 공용 호스팅(공용 접미사 목록 PSL 의 짧은 발췌 + 국내 블로그). 여기서는 하위 도메인 하나가 한 사이트다 —
+    // 'a.substack.com' 집계 피드가 'b.substack.com' 글에 실은 본문을 그 글로 보이지 않게(보안 점검 review-3 S1)
+    nonisolated static let sharedHosts: [String] = [
+        "substack.com", "medium.com", "github.io", "gitlab.io", "blogspot.com", "wordpress.com", "tumblr.com", "ghost.io", "beehiiv.com",
+        "netlify.app", "pages.dev", "vercel.app", "herokuapp.com", "neocities.org", "bearblog.dev", "micro.blog", "wixsite.com", "tistory.com",
+    ]
+
+    // 등록 도메인 근사: 마지막 두 마디, 나라 도메인의 2단계(co.kr·co.uk·or.kr 등)면 세 마디, 공용 호스팅이면 그 하위 도메인까지. IP 는 그대로
     nonisolated static func siteKey(_ host: String) -> String {
         let h = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
         if h.contains(":") || h.split(separator: ".").allSatisfy({ $0.allSatisfy(\.isNumber) }) { return h }
+        if let shared = sharedHosts.first(where: { h.hasSuffix("." + $0) }) {
+            let sub = h.dropLast(shared.count + 1).split(separator: ".").last.map(String.init) ?? ""
+            return sub + "." + shared
+        }
         let parts = h.split(separator: ".")
         guard parts.count > 2 else { return h }
         let second: Set<Substring> = ["co", "com", "net", "org", "or", "ne", "go", "ac", "re", "gov", "edu", "ed", "mil", "ltd", "plc", "gen", "pe", "kg", "es", "hs", "ms", "sc"]

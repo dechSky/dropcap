@@ -127,6 +127,42 @@ public class TeaserMarkTests : IDisposable
         Assert.Null(new PaywallBook(db).Kind(it));
     }
 
+    // review-3 B3: 다시 맛보기로 판정되면 시각을 새로 써서, 계속 맛보기인 기사가 처음 판정 30일 뒤에 빠지지 않는다(표시는 그대로라 다시 그리지 않음)
+    [Fact]
+    public void TeaserAgainRefreshesTime()
+    {
+        using var db = new Database(Path.Combine(tmp.Path, "magazine.sqlite"));
+        const string link = "https://kr.example/article/000000001i";
+        db.MarkTeaser(link, true, DateTimeOffset.Now.AddDays(-29));
+        var book = new PaywallBook(db);
+        var fired = 0;
+        book.TeasersChanged += () => fired++;
+        book.RecordTeaser(Item(link), true);
+        Assert.Equal(0, fired);
+        Assert.Contains(link, db.TeaserLinks(DateTimeOffset.Now.AddDays(2)));   // 고치기 전: 29+2일 → 빠짐
+    }
+
+    // review-3 B2: 알림 미리 받기와 사용자가 연 기사가 함께 남겨도 메모리 표시가 사라지지 않는다
+    [Fact]
+    public void ConcurrentRecordsAllKept()
+    {
+        using var db = new Database(Path.Combine(tmp.Path, "magazine.sqlite"));
+        for (var round = 0; round < 2; round++)
+        {
+            var book = new PaywallBook(db) { BeforeSwap = () => Thread.Sleep(1) };   // 사본을 만들고 바꿔 넣기까지의 틈을 넓힘
+            var links = Enumerable.Range(0, 40).Select(n => $"https://kr.example/{round}/article/{n}").ToList();
+            using var go = new ManualResetEventSlim();
+            var workers = Enumerable.Range(0, 8).Select(w => Task.Run(() =>
+            {
+                go.Wait();
+                for (var i = w; i < links.Count; i += 8) book.RecordTeaser(Item(links[i]), true);
+            })).ToArray();
+            go.Set();
+            Task.WaitAll(workers);
+            Assert.Equal(40, book.Teasers.Count(l => l.Contains($"/{round}/")));
+        }
+    }
+
     private sealed class FakeExtract(Article art) : IArticleExtractor
     {
         public Task<Article?> FromHtmlAsync(string html, Uri baseUri) => Task.FromResult<Article?>(art);

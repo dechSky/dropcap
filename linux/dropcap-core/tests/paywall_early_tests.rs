@@ -138,3 +138,52 @@ fn full_body_not_marked() {
     assert_ne!(book.kind(&it), Some(PaywallKind::Teaser));
     assert!(book.teasers().is_empty());
 }
+
+// review-3 B3: 다시 맛보기로 판정되면 시각을 새로 써서, 계속 맛보기인 기사가 처음 판정 30일 뒤에 빠지지 않는다
+#[test]
+fn teaser_again_refreshes_time() {
+    let d = tempfile::tempdir().unwrap();
+    let db = Arc::new(Database::open(d.path()));
+    let link = "https://kr.example/article/000000001i";
+    db.mark_teaser(link, true, Utc::now() - Duration::days(29));
+    let book = PaywallBook::new(db.clone());
+    let it = item("t", "kr-test", link, None);
+    assert_eq!(book.kind(&it), Some(PaywallKind::Teaser));
+    assert!(!book.record_teaser(&it, true)); // 표시는 그대로(다시 그릴 일 없음)
+    assert!(db.teaser_links(Utc::now() + Duration::days(2)).contains(link)); // 고치기 전: 29+2일 → 빠짐
+}
+
+// review-3 B1 · 시험 빈틈 T1: 기사 준비(ArticleService.judge_teaser — run 이 부르는 그 함수)가 앱 핵심의 연결을 거쳐
+// 목록 표시를 바꾸고, 바뀔 때만 화면에 다시 그리라고 알린다(맥 @Published · 윈도우 TeasersChanged 와 같음)
+#[test]
+fn service_judgement_marks_list_and_tells_screen() {
+    use dropcap_core::app_model::{AppModel, UiEvent};
+    use dropcap_core::article::Article;
+    use dropcap_core::store::Store;
+    use std::sync::Mutex;
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let core = AppModel::new(Store::new(dir.path().to_path_buf()), rt.handle().clone());
+    let seen = Arc::new(Mutex::new(0usize));
+    let s = seen.clone();
+    core.set_sink(Arc::new(move |e| {
+        if matches!(e, UiEvent::Paywall) {
+            *s.lock().unwrap() += 1;
+        }
+    }));
+    let it = item("t", "kr-test", "https://kr.example/article/000000002i", None);
+    let art = |blocks: Vec<Block>| Article { title: None, byline: None, site_name: None, blocks, paid: Some(true), partial: None, ld_body: None };
+    let short = art(vec![p(&"가".repeat(300)), p(&"나".repeat(250))]);
+    assert!(core.articles.judge_teaser(&it, &short));
+    assert_eq!(core.paywall.kind(&it), Some(PaywallKind::Teaser));
+    assert_eq!(*seen.lock().unwrap(), 1);
+    assert!(core.articles.judge_teaser(&it, &short)); // 같은 판정 — 다시 그리지 않음
+    assert_eq!(*seen.lock().unwrap(), 1);
+    let full = art(vec![p(&"다".repeat(1200)), p(&"라".repeat(1200))]);
+    assert!(!core.articles.judge_teaser(&it, &full)); // 다시 받아 전문 → 지우고 다시 그림
+    assert_eq!(core.paywall.kind(&it), None);
+    assert_eq!(*seen.lock().unwrap(), 2);
+    // 판정에는 지난 판정이 아니라 피드·출처 값만(sourceKind) — 표시가 맛보기여도 전문은 전문
+    assert!(core.articles.judge_teaser(&it, &short));
+    assert!(!core.articles.judge_teaser(&it, &full));
+}

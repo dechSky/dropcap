@@ -179,6 +179,11 @@
 - **고치기 전 실패**(같은 시험을 고치기 전 코드 + 빈 껍데기 함수로): 30개 중 25개 실패 → 고친 뒤 모두 통과. 고치기 전에도 통과한 5개: 지어낸 Ars 두 덩어리·BBC 블록·실제 꼴 매경·지어낸 동아 맨 글자(예전 Readability 결과로도 이 꼴은 이미 다 옴), 작은 그림(원래 맞음).
 - 확인: 전체 498 통과·8 건너뜀, `scripts/check-on-mac.sh` 경고 0·오류 0. 읽기 창 미리 보기(`reader.html?teaser=1&free=1` · `?partial=1`)를 머리 없는 브라우저로 라이트·다크 그림 확인. 실제 윈도우 PC 에서 WebView2 로 기사 몇 개 확인 필요.
 
+## 점검 review-3 낮음(2026-10-16, wt/fix-review3 — 맥 AUDIT.md 9절)
+
+- B2: `PaywallBook.RecordTeaser` 를 잠가 동시에 불러도 메모리 표시가 사라지지 않음. B3: 다시 맛보기면 DB 시각 갱신(표시가 그대로면 `TeasersChanged` 없음).
+- 시험: `TeaserMarkTests`(시각 갱신·동시 기록) · `TeaserLdTests` ±10% 경계값 · `SecurityLow3Tests.GatheringDoesNotLoadImagesWithoutCsp`(CSP 를 뺀 Chromium 에서 모으기가 그림 받기·onerror 를 일으키지 않음 — `extract-runner.mjs` probe). 고치기 전 실패 → 고친 뒤 통과.
+
 ## 보안 점검 낮음 나머지(2026-10-16, wt/seclow3 — 맥 AUDIT.md 8절)
 
 - X2: 추출 스크립트(`Dropcap.Ui/web/extract.js`) 여러 덩어리 모으기 상자를 살아 있는 문서 대신 사본 문서(`fresh.createElement`)에서 만든다(격리 칸 CSP 가 막던 사진 받기·onerror 에 한 겹 더). 시험 `SecurityLow3Tests` — 고치기 전 실패 → 고친 뒤 통과.

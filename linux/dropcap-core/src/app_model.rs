@@ -34,6 +34,7 @@ pub enum UiEvent {
     Checking(bool),
     Magazine,  // 새 기사가 들어옴(지면 갱신 띠)
     Images,    // 사진만 채워짐(조용히 다시 그림)
+    Paywall,   // 맛보기 판정이 바뀜(목록·카드의 자물쇠·'앞부분만'을 조용히 다시 그림)
     Layout,    // 숨긴 출처·고른 분야가 바뀜(알림 띠 없이 바로 다시 엮음)
     Bundle { section: String, items: Vec<NewsItem>, sound: bool },       // 묶음 한 방울(G-07)
     SystemBundle { section: String, items: Vec<NewsItem>, sound: bool }, // 시스템 알림 방식의 묶음
@@ -270,7 +271,15 @@ impl AppModel {
         let book = me.paywall.clone();
         me.articles.set_paywall_kind(Arc::new(move |it| book.source_kind(it)));
         let book = me.paywall.clone();
-        me.articles.set_teaser_recorder(Arc::new(move |it, teaser| book.record_teaser(it, teaser)));
+        let weak = Arc::downgrade(&me);
+        me.articles.set_teaser_recorder(Arc::new(move |it, teaser| {
+            // 표시가 바뀌면 열린 목록·카드의 자물쇠를 다시 그림(맥 @Published · 윈도우 TeasersChanged 와 같음, review-3 B1)
+            if book.record_teaser(it, teaser) {
+                if let Some(m) = weak.upgrade() {
+                    m.send(UiEvent::Paywall);
+                }
+            }
+        }));
         let weak = Arc::downgrade(&me);
         me.articles.set_pinned(Arc::new(move || weak.upgrade().map(|m| m.state().saved.iter().map(|s| s.link.clone()).collect()).unwrap_or_default()));
         me

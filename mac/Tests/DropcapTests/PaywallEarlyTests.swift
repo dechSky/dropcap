@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import Testing
 @testable import Dropcap
@@ -131,5 +132,46 @@ private let atomXML = """
         book.recordTeaser(it, judged)
         #expect(book.kind(it) != .teaser) // 출처 값(metered 열린 자물쇠)만
         #expect(book.teasers.isEmpty)
+    }
+}
+
+// 보안·버그 점검 review-3: B3(다시 맛보기면 시각 갱신) · 시험 빈틈 T1(기사 준비가 부르는 판정 함수 그대로) · 화면 갱신(T4)
+@Suite(.serialized) struct TeaserReview3Tests {
+    private func p(_ s: String) -> Block { Block(type: .p, text: s) }
+
+    // B3: 다시 맛보기로 판정되면 시각을 새로 써서, 계속 맛보기인 기사가 처음 판정 30일 뒤에 빠지지 않는다(표시는 그대로라 다시 그리지 않음)
+    @MainActor @Test func teaserAgainRefreshesTime() throws {
+        let (db, dir) = try tempDB()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let link = "https://kr.example/article/000000001i"
+        db.markTeaser(link, true, now: Date().addingTimeInterval(-29 * 86400))
+        let book = PaywallBook(db: db)
+        var fired = 0
+        let sub = book.objectWillChange.sink { fired += 1 }
+        defer { sub.cancel() }
+        book.recordTeaser(item("t", source: "kr-test", link: link), true)
+        #expect(fired == 0)
+        #expect(db.teaserLinks(now: Date().addingTimeInterval(2 * 86400)).contains(link)) // 고치기 전: 29+2일 → 빠짐
+    }
+
+    // T1: 기사 준비(ArticleService.run 이 부르는 judgeTeaser)가 목록 표시를 바꾸고, 바뀔 때만 화면(PaywallMark)이 다시 그린다
+    @MainActor @Test func serviceJudgementMarksListAndRedraws() throws {
+        let (db, dir) = try tempDB()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let book = PaywallBook(db: db)
+        var fired = 0
+        let sub = book.objectWillChange.sink { fired += 1 }
+        defer { sub.cancel() }
+        let it = item("t", source: "kr-test", link: "https://kr.example/article/000000002i")
+        let short = Article(title: nil, byline: nil, siteName: nil, blocks: [p(String(repeating: "가", count: 300)), p(String(repeating: "나", count: 250))], paid: true)
+        #expect(ArticleService.judgeTeaser(it, short, book: book))
+        #expect(book.kind(it) == .teaser)
+        #expect(fired == 1)
+        #expect(ArticleService.judgeTeaser(it, short, book: book)) // 같은 판정 — 다시 그리지 않음
+        #expect(fired == 1)
+        let full = Article(title: nil, byline: nil, siteName: nil, blocks: [p(String(repeating: "다", count: 1200)), p(String(repeating: "라", count: 1200))], paid: true)
+        #expect(!ArticleService.judgeTeaser(it, full, book: book)) // 표시가 맛보기여도 판정은 받은 본문으로(지난 판정에 끌려가지 않음)
+        #expect(book.kind(it) == nil)
+        #expect(fired == 2)
     }
 }

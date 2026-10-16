@@ -171,9 +171,9 @@ impl IssuePage {
                     widgets::fade_in(&self.banner, 300);
                 }
             }
-            UiEvent::Images => {
+            UiEvent::Images | UiEvent::Paywall => {
                 if !self.pending_new.get() {
-                    self.rebuild(); // 사진만 새로 채워졌으면 조용히 반영
+                    self.rebuild(); // 사진·자물쇠만 바뀌었으면 조용히 반영
                 }
             }
             UiEvent::Layout => self.rebuild(), // 출처 숨기기·분야 바꾸기·저녁 정리는 바로

@@ -142,10 +142,14 @@ final class PaywallBook: ObservableObject {
         return Paywall.kind(sourceId: item.sourceId, link: item.link, paid: item.paid, stats: stats)
     }
 
-    // 본문을 받은 기사(미리 받기 포함)의 맛보기 판정을 남긴다 — 맛보기가 아니면 지난 기록을 지운다
+    // 본문을 받은 기사(미리 받기 포함)의 맛보기 판정을 남긴다 — 맛보기가 아니면 지난 기록을 지운다.
+    // 다시 맛보기로 판정되면 시각만 새로 써서 30일·2,000건 정리에서 계속 맛보기인 기사가 빠지지 않게 한다(review-3 B3). 표시가 바뀔 때만 화면이 다시 그림
     func recordTeaser(_ item: NewsItem, _ teaser: Bool) {
-        guard item.id != AppModel.previewID, !item.link.isEmpty, teaser != teasers.contains(item.link) else { return }
+        guard item.id != AppModel.previewID, !item.link.isEmpty else { return }
+        let had = teasers.contains(item.link)
+        guard teaser || had else { return }
         db.markTeaser(item.link, teaser)
+        guard teaser != had else { return }
         if teaser { teasers.insert(item.link) } else { teasers.remove(item.link) }
     }
 

@@ -218,6 +218,7 @@ struct ToastView: View {
                                 .help("꼭 알림 낱말이 들어간 소식")
                         }
                         Text(item.sourceName).font(.app(11.5, .semibold)).lineLimit(1)
+                        PaywallMark(item: item).fixedSize() // 미리 받기가 맛보기로 판정하면 '앞부분만'이 곧 붙는다
                         // 칩·'외 N곳'은 줄지 않게(좁으면 출처 이름이 먼저 줄어든다 — 예전엔 칩이 '…'만 남았다)
                         TopicChip(item: item).fixedSize()
                         if let r = item.related, !r.isEmpty {

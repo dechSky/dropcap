@@ -80,6 +80,7 @@ struct NewsItem: Codable, Identifiable, Hashable {
     var itemKind: ItemKind { ItemKind(rawValue: kind ?? "article") ?? .article }
     var important: Bool? = nil      // '꼭 알림' 낱말에 걸림
     var watch: String? = nil        // 걸린 '지켜볼 낱말'(★ 와 겹치면 표시는 ★)
+    var paid: Bool? = nil           // 피드가 이 기사에 적은 유료 표시(FeedParser.paidMark): true 유료 · false 무료로 풀림 · nil 표시 없음(출처 값)
     // 피드가 준 본문 전문 HTML(FeedParser.body — 1,000자 이상만, 60,000자 상한). 예전 기록·다른 기기 기록에는 없다(nil).
     // 사이트 HTML 이 앞부분만 줄 때 읽기 창이 대신 쓴다(ArticleService · FeedFullBody).
     // 저장할 때는 기본으로 빠진다(앱 상태의 최근·나중에 읽기·고인 소식, 스크랩, 백업, Spotlight) — 피드 기록 DB 의 items 줄만

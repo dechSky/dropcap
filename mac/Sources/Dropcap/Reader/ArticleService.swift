@@ -142,7 +142,8 @@ final class ArticleService {
         NSLog("[기사] 그림 %d개", art.blocks.filter { $0.type == .img }.count)
         let artTitle = ArticleService.stripSiteName(art.title?.nonEmpty ?? item.title, source: item.sourceName, feedTitle: item.title)
         a.originalTitle = artTitle
-        if Paywall.isTeaser(art.blocks, paid: art.paid, kind: PaywallBook.shared.kind(item), ldBody: art.ldBody) { a.paywalled = true }
+        if Paywall.isTeaser(art.blocks, paid: art.paid, kind: PaywallBook.shared.sourceKind(item), ldBody: art.ldBody) { a.paywalled = true }
+        PaywallBook.shared.recordTeaser(item, a.paywalled == true) // 미리 받기에서도 남겨 목록·카드에 열기 전부터 '앞부분만'
         a.partial = art.partial == true ? true : nil
         art.blocks = BodyCleanup.dropJunk(art.blocks) // 맛보기 판정(끝의 구독 권유 문구)을 본 뒤에 군더더기를 뺀다
         a.blocks = art.blocks

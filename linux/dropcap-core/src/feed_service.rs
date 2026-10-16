@@ -152,6 +152,7 @@ impl FeedService {
                     let mut it = NewsItem::new(&e.id, &e.title, &e.link, &source.id, &source.name, &source.tier);
                     it.date = e.date;
                     it.summary = e.summary.clone();
+                    it.paid = e.paid;
                     it.image = e.image.and_then(|u| url::Url::parse(&e.link).and_then(|b| b.join(&u)).ok().map(|u| u.to_string()));
                     it.kind = source.kind.clone();
                     it

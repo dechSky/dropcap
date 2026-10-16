@@ -217,17 +217,17 @@ fn li(s: &str) -> Block {
 fn teaser() {
     let short: Vec<Block> = (1..=8).map(|n| p(&p_(n))).collect(); // 약 1,000자
     let long: Vec<Block> = (1..=30).map(|n| p(&p_(n))).collect(); // 약 3,800자
-    assert!(!paywall::is_teaser(&short, None, None));
-    assert!(paywall::is_teaser(&short, Some(true), None));
-    assert!(!paywall::is_teaser(&long, Some(true), None)); // 무료 건수 제한 사이트가 전문을 준 경우(Verge)
-    assert!(paywall::is_teaser(&short, None, Some(PaywallKind::Hard)));
-    assert!(!paywall::is_teaser(&short, None, Some(PaywallKind::Metered)));
+    assert!(!paywall::is_teaser(&short, None, None, None));
+    assert!(paywall::is_teaser(&short, Some(true), None, None));
+    assert!(!paywall::is_teaser(&long, Some(true), None, None)); // 무료 건수 제한 사이트가 전문을 준 경우(Verge)
+    assert!(paywall::is_teaser(&short, None, Some(PaywallKind::Hard), None));
+    assert!(!paywall::is_teaser(&short, None, Some(PaywallKind::Metered), None));
     let mut stat = long.clone();
     stat.push(p("This article is exclusive to STAT+ subscribers. Unlock this article by subscribing."));
-    assert!(paywall::is_teaser(&stat, None, None));
+    assert!(paywall::is_teaser(&stat, None, None, None));
     let mut hk = short.clone();
     hk.push(p("한경 프리미엄9의 모든 콘텐츠는 한국경제신문의 저작물로 저작권법의 보호를 받습니다."));
-    assert!(paywall::is_teaser(&hk, None, None));
+    assert!(paywall::is_teaser(&hk, None, None, None));
 }
 
 // 군더더기: 줄 단위 규칙과 끝부분 자르기, 본문을 지우지 않는 안전장치

@@ -30,7 +30,7 @@ public sealed record ItemView
     public bool Important { get; init; }
     public bool Read { get; init; }
     public bool Saved { get; init; }
-    public string? Paywall { get; init; }            // hard · metered · learned(G-14 자물쇠). 없으면 무료
+    public string? Paywall { get; init; }            // hard · metered · learned · teaser(G-14 자물쇠, teaser 는 '앞부분만'). 없으면 무료
     public string? PaywallHelp { get; init; }        // 마우스를 올리면 보이는 이유
     public string? Watch { get; init; }              // 걸린 지켜볼 낱말(N-27 눈 표시 — 꼭 알림 ★ 와 겹치면 ★ 만)
 
@@ -41,7 +41,9 @@ public sealed record ItemView
     public static ItemView From(NewsItem it, AppModel? m, DateTimeOffset? now = null)
     {
         var src = m?.SourceById(it.SourceId);
-        var pw = it.ItemKind == ItemKind.Article && it.Link.Length > 0 ? Core.Paywall.Kind(it.SourceId, it.Link, stats: PaywallBook.Loaded?.Stats) : null;
+        // 맛보기 판정 > 피드의 기사 표시 > 출처 값 > 배운 막힘(맥 PaywallBook.kind)
+        var pw = it.ItemKind == ItemKind.Article && it.Link.Length > 0
+            ? Core.Paywall.Kind(it.SourceId, it.Link, stats: PaywallBook.Loaded?.Stats, paid: it.Paid, teaser: PaywallBook.Loaded?.Teasers.Contains(it.Link) == true) : null;
         return new ItemView
         {
             Key = it.Key, Title = it.DisplayTitle, Original = it.Title, Translated = it.TitleKo is not null && it.TitleKo != it.Title,

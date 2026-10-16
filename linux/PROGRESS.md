@@ -183,3 +183,8 @@
   - 기존 시험 고침: `fast_path_extracts_without_scripts` 의 같은 글 세 문단 → 글을 다르게(같은 글은 한 번만 규칙), `free_reason` 문구.
   - `cargo test --workspace` 전체 통과(288 · 1 무시), 리눅스 전 기능 형 검사 통과(경고 없음). 앱 창은 띄우지 않음 — 띠·끝줄·원문 단추 모양은 리눅스에서 확인 필요.
 - FEATURES '리' 칸: R-01 · R-03 · R-05 · R-15 · R-18 · R-21 · G-14 · G-15 · T-01 · T-02 · T-03.
+
+## 2026-10-16 — 보안 점검 낮음 나머지(wt/seclow3 — 맥 AUDIT.md 8절)
+
+- X2: WebKit 추출 스크립트(`reader_webkit.rs` SCRIPT) 여러 덩어리 모으기 상자를 사본 문서(`fresh.createElement`)에서 만든다(내용 차단 규칙이 막던 사진 받기·onerror 에 한 겹 더). Rust 판(`reader_extract.rs`)은 DOM 을 쓰지 않아 해당 없음. 시험 `dropcap-gtk/tests/security_low3_tests.rs` — 고치기 전 실패 → 고친 뒤 통과.
+- M15(피드 본문 출처 확인)는 리눅스에 피드 본문 전문 기능이 없어 해당 없음. 남은 리눅스 낮음 항목(L2~L9·L12)은 모두 앞 절에서 닫힘.

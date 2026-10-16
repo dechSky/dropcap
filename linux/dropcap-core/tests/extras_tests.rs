@@ -36,9 +36,9 @@ fn p(t: &str) -> Block {
 fn declared_beats_domain_and_learning() {
     let m = meta();
     let none = HashMap::new();
-    assert_eq!(paywall::kind("wsj", "https://www.wsj.com/a", &m, &none), Some(PaywallKind::Hard));
-    assert_eq!(paywall::kind("nyt", "https://www.nytimes.com/a", &m, &none), Some(PaywallKind::Metered));
-    assert_eq!(paywall::kind("verge", "https://www.theverge.com/a", &m, &none), None);
+    assert_eq!(paywall::kind("wsj", "https://www.wsj.com/a", None, false, &m, &none), Some(PaywallKind::Hard));
+    assert_eq!(paywall::kind("nyt", "https://www.nytimes.com/a", None, false, &m, &none), Some(PaywallKind::Metered));
+    assert_eq!(paywall::kind("verge", "https://www.theverge.com/a", None, false, &m, &none), None);
 }
 
 #[test]
@@ -48,16 +48,16 @@ fn custom_sources_use_known_domains_including_subdomains() {
     assert_eq!(paywall::domain_kind("https://cooking.nytimes.com/r"), Some(PaywallKind::Metered));
     assert_eq!(paywall::domain_kind("https://notft.com/x"), None);
     assert_eq!(paywall::domain_kind("https://ft.com.evil.example/x"), None);
-    assert_eq!(paywall::kind("custom-1", "https://www.bloomberg.com/news/a", &meta(), &HashMap::new()), Some(PaywallKind::Hard));
+    assert_eq!(paywall::kind("custom-1", "https://www.bloomberg.com/news/a", None, false, &meta(), &HashMap::new()), Some(PaywallKind::Hard));
 }
 
 #[test]
 fn learns_from_failure_rate_only_after_enough_tries() {
     let m = meta();
     let st = |t, f, b| HashMap::from([("verge".to_string(), ExtractStat { tries: t, fails: f, blocked: b })]);
-    assert_eq!(paywall::kind("verge", "https://www.theverge.com/a", &m, &st(4, 4, 0)), None);
-    assert_eq!(paywall::kind("verge", "https://www.theverge.com/a", &m, &st(10, 4, 3)), Some(PaywallKind::Learned));
-    assert_eq!(paywall::kind("verge", "https://www.theverge.com/a", &m, &st(10, 2, 1)), None);
+    assert_eq!(paywall::kind("verge", "https://www.theverge.com/a", None, false, &m, &st(4, 4, 0)), None);
+    assert_eq!(paywall::kind("verge", "https://www.theverge.com/a", None, false, &m, &st(10, 4, 3)), Some(PaywallKind::Learned));
+    assert_eq!(paywall::kind("verge", "https://www.theverge.com/a", None, false, &m, &st(10, 2, 1)), None);
 }
 
 #[test]
@@ -84,7 +84,7 @@ fn free_alternatives_skip_paywalled_hidden_self_and_channels() {
         news("6", "verge", "press", 0), // 같은 출처 두 번은 한 번만
         video,
     ];
-    let alts = paywall::free_alternatives(&me, &story, &HashSet::from(["hidden".to_string()]), &meta(), &HashMap::new(), 3);
+    let alts = paywall::free_alternatives(&me, &story, &HashSet::from(["hidden".to_string()]), &meta(), &HashMap::new(), &HashSet::new(), 3);
     assert_eq!(alts.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(), vec!["4", "6"]); // 국내 먼저, 그다음 언론 최신
 }
 
@@ -438,10 +438,10 @@ fn scores_persist() {
 // MARK: 6. 짧은 글 추출(맥 8e9fde9: 100자 기준 · 본문 영역 대체 · 글 있는 페이지는 느린 길 건너뜀)
 #[test]
 fn short_posts_are_accepted_at_100_chars() {
-    let art = |t: &str| Article { title: None, byline: None, site_name: None, blocks: vec![p(t)], paid: None, partial: None };
+    let art = |t: &str| Article { title: None, byline: None, site_name: None, blocks: vec![p(t)], paid: None, partial: None, ld_body: None };
     assert!(art(&"짧은 소개글입니다. ".repeat(10)).acceptable()); // 한 문단 100자 넘음
     assert!(!art("너무 짧음").acceptable());
-    assert!(!Article { title: None, byline: None, site_name: None, blocks: vec![], paid: None, partial: None }.acceptable());
+    assert!(!Article { title: None, byline: None, site_name: None, blocks: vec![], paid: None, partial: None, ld_body: None }.acceptable());
 }
 
 #[test]

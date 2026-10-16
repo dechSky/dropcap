@@ -84,9 +84,14 @@ CREATE TABLE IF NOT EXISTS scraps(
 CREATE INDEX IF NOT EXISTS scraps_collection ON scraps(collection, created);
 CREATE TABLE IF NOT EXISTS extract_stats(
   source TEXT PRIMARY KEY, tries INTEGER NOT NULL, fails INTEGER NOT NULL, blocked INTEGER NOT NULL, updated REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS teasers(
+  link TEXT PRIMARY KEY, updated REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS image_scores(
   url TEXT PRIMARY KEY, score REAL NOT NULL, text REAL NOT NULL, colors REAL NOT NULL, flat REAL NOT NULL, updated REAL NOT NULL);
 ";
+
+pub const TEASER_LIFE_SECS: i64 = 30 * 24 * 3600;
+pub const TEASER_LIMIT: usize = 2000;
 
 impl Database {
     pub fn open(dir: &Path) -> Database {
@@ -356,6 +361,33 @@ impl Database {
         let c = self.conn.lock().unwrap();
         let Ok(mut st) = c.prepare("SELECT source,tries,fails,blocked FROM extract_stats") else { return HashMap::new() };
         st.query_map([], |r| Ok((r.get::<_, String>(0)?, ExtractStat { tries: r.get(1)?, fails: r.get(2)?, blocked: r.get(3)? })))
+            .map(|rows| rows.flatten().collect())
+            .unwrap_or_default()
+    }
+
+    // MARK: 맛보기로 판정된 기사(미리 받기·읽기 — 목록·카드·물방울에 열기 전부터 '앞부분만', 맥 Database.markTeaser)
+    // 다시 받아 맛보기가 아니면 지운다. 30일 지난 것·2,000건 넘는 오래된 것·5분 넘게 미래 시각인 것은 버린다
+    pub fn mark_teaser(&self, link: &str, teaser: bool, now: DateTime<Utc>) {
+        let c = self.conn.lock().unwrap();
+        if teaser {
+            let _ = c.execute("INSERT OR REPLACE INTO teasers(link,updated) VALUES(?,?)", params![link, ts(now)]);
+            let _ = c.execute(
+                "DELETE FROM teasers WHERE updated < ? OR updated > ?",
+                params![ts(now - chrono::Duration::seconds(TEASER_LIFE_SECS)), ts(now + chrono::Duration::seconds(300))],
+            );
+            let _ = c.execute(
+                &format!("DELETE FROM teasers WHERE link NOT IN (SELECT link FROM teasers ORDER BY updated DESC LIMIT {TEASER_LIMIT})"),
+                [],
+            );
+        } else {
+            let _ = c.execute("DELETE FROM teasers WHERE link=?", params![link]);
+        }
+    }
+
+    pub fn teaser_links(&self, now: DateTime<Utc>) -> HashSet<String> {
+        let c = self.conn.lock().unwrap();
+        let Ok(mut st) = c.prepare("SELECT link FROM teasers WHERE updated >= ?") else { return HashSet::new() };
+        st.query_map(params![ts(now - chrono::Duration::seconds(TEASER_LIFE_SECS))], |r| r.get::<_, String>(0))
             .map(|rows| rows.flatten().collect())
             .unwrap_or_default()
     }

@@ -85,7 +85,8 @@ const SCRIPT: &str = r#"(() => {
       const texty = kids.filter((k) => longP(k).length > 0);
       if (texty.length < 2 || !texty.includes(el)) continue;
       const from = kids.indexOf(texty[0]), to = kids.indexOf(texty[texty.length - 1]);
-      const box = document.createElement('div');
+      // 모은 상자는 비활성 사본 문서(fresh)에서 만든다 — 살아 있는 문서에 붙이면 <img> 받기·onerror 가 돌 수 있다
+      const box = fresh.createElement('div');
       // 모은 글이 원문 글의 2배를 넘으면(겹친 상자를 거듭 담은 꼴) 모으기를 그만둔다
       let size = 0; const cap = fresh.body ? fresh.body.textContent.length * 2 + 1000 : 0;
       kids.slice(from, to + 1).forEach((k) => cores(k, el).forEach((c) => { size += c.textContent.length; if (size <= cap) box.appendChild(prune(c.cloneNode(true))); }));
@@ -107,10 +108,13 @@ const SCRIPT: &str = r#"(() => {
   }
   const box = prune(parse(content));
   // 유료 표시: ld+json isAccessibleForFree=false 또는 한경 articlePayment="Y"
-  let paid = null;
+  // ldBody: 사이트가 ld+json articleBody 로 적은 본문 글자 수(맛보기 판정 — 맥과 같음)
+  let paid = null, ldBody = null;
   document.querySelectorAll('script[type="application/ld+json"]').forEach((s) => {
     const m = (s.textContent || '').match(/"isAccessibleForFree"\s*:\s*"?(true|false)"?/i);
     if (m && paid === null) paid = m[1].toLowerCase() === 'false';
+    const find = (v, d) => { if (!v || typeof v !== 'object' || d > 64) return null; if (typeof v.articleBody === 'string' && v.articleBody) return v.articleBody; for (const k in v) { const r = find(v[k], d + 1); if (r) return r; } return null; };
+    try { const b = find(JSON.parse(s.textContent || ''), 0); if (b) ldBody = Math.max(ldBody || 0, norm(b.replace(/<[^>]*>/g, ' ')).length); } catch (e) {}
   });
   if (paid !== true) for (const s of document.querySelectorAll('script:not([src])')) { if (/articlePayment\s*=\s*["']Y["']/.test(s.textContent || '')) { paid = true; break; } }
   const blocks = [];
@@ -185,7 +189,7 @@ const SCRIPT: &str = r#"(() => {
   const sum = (types) => blocks.filter((b) => types.includes(b.type)).reduce((s, b) => s + (b.text || '').length, 0);
   const prose = sum(['p', 'quote', 'h']), listed = sum(['li']);
   if (prose < 150 && listed > prose * 2) return JSON.stringify({ title: art.title, blocks: [] });
-  return JSON.stringify({ title: art.title, byline: art.byline, siteName: art.siteName, blocks, paid, partial: partial || null });
+  return JSON.stringify({ title: art.title, byline: art.byline, siteName: art.siteName, blocks, paid, partial: partial || null, ldBody });
 })();"#;
 
 thread_local! {

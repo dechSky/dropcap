@@ -22,6 +22,7 @@ public sealed record Article
     public string? SiteName { get; init; }
     public List<Block> Blocks { get; init; } = new();
     public bool? Paid { get; init; }      // 사이트가 유료 기사라고 적음(ld+json isAccessibleForFree=false · 한경 articlePayment="Y")
+    public int? LdBody { get; init; }     // 사이트가 ld+json articleBody 로 적은 본문 글자 수(맛보기 판정 — Paywall.MatchesSiteBody)
     public bool? Partial { get; init; }   // 본문 일부만 가져왔을 수 있음(본문 영역에 우리 글에 없는 긴 문단이 남음)
 
     // 본문으로 볼 만한가: 글 블록 1개 이상, 100자 이상
@@ -79,7 +80,8 @@ public static class ArticleExtraction
             {
                 var html = SafeHttp.Decode(got.Data, got.Encoding ?? SniffCharset(got.Data));
                 // 유료 표시는 추출 스크립트가 읽지만, 못 읽었으면 받은 HTML 에서 직접(맥과 같음)
-                if (await x.FromHtmlAsync(html, url) is { LooksLikeArticle: true } fast) return fast.Paid is null ? fast with { Paid = PaidFlag(html) } : fast;
+                if (await x.FromHtmlAsync(html, url) is { LooksLikeArticle: true } fast)
+                    return fast with { Paid = fast.Paid ?? PaidFlag(html), LdBody = fast.LdBody ?? LdBodyLength(html) };
                 richPage = VisibleTextLength(html) > 600; // 스크립트로 그리는 빈 껍데기는 보이는 글이 거의 없다
             }
         }
@@ -110,6 +112,47 @@ public static class ArticleExtraction
         var m = Regex.Match(h, @"""isAccessibleForFree""\s*:\s*""?(true|false|True|False)");
         if (m.Success) return m.Groups[1].Value.Equals("false", StringComparison.OrdinalIgnoreCase);
         if (Regex.IsMatch(h, @"articlePayment\s*=\s*[""']Y[""']")) return true;
+        return null;
+    }
+
+    // 사이트가 ld+json articleBody 로 적은 본문 글자 수(여러 개면 가장 긴 것, 앞 1MB만 — 맥 ldBodyLength). 태그를 빼고 빈칸을 하나로 센다
+    public static int? LdBodyLength(string html)
+    {
+        var h = html.Length > 1_000_000 ? html[..1_000_000] : html;
+        int? best = null;
+        var at = 0;
+        while (true)
+        {
+            var start = h.IndexOf("application/ld+json", at, StringComparison.OrdinalIgnoreCase);
+            if (start < 0) break;
+            var gt = h.IndexOf('>', start);
+            if (gt < 0) break;
+            var close = h.IndexOf("</script>", gt, StringComparison.OrdinalIgnoreCase);
+            if (close < 0) break;
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(h.AsMemory(gt + 1, close - gt - 1), new System.Text.Json.JsonDocumentOptions { MaxDepth = 64 });
+                if (FindArticleBody(doc.RootElement) is { } body)
+                {
+                    var n = Regex.Replace(System.Net.WebUtility.HtmlDecode(Regex.Replace(body, "<[^>]*>", " ")), @"\s+", " ").Trim().Length;
+                    best = Math.Max(best ?? 0, n);
+                }
+            }
+            catch { }
+            at = close + 9;
+        }
+        return best;
+    }
+
+    private static string? FindArticleBody(System.Text.Json.JsonElement v)
+    {
+        if (v.ValueKind == System.Text.Json.JsonValueKind.Object)
+        {
+            if (v.TryGetProperty("articleBody", out var b) && b.ValueKind == System.Text.Json.JsonValueKind.String && b.GetString() is { Length: > 0 } s) return s;
+            foreach (var p in v.EnumerateObject()) if (FindArticleBody(p.Value) is { } r) return r;
+        }
+        else if (v.ValueKind == System.Text.Json.JsonValueKind.Array)
+            foreach (var x in v.EnumerateArray()) if (FindArticleBody(x) is { } r) return r;
         return null;
     }
 
@@ -205,7 +248,10 @@ public sealed class ArticleService
     public void StopObserving(string link, Guid id) { lock (gate) if (listeners.TryGetValue(link, out var m)) m.Remove(id); }
 
     // 출처의 유료 종류(맛보기 판정용). 앱에서는 PaywallBook — 시험은 바꿔 끼움(DB 를 만들지 않게 이미 만든 것만 봄)
-    public Func<NewsItem, PaywallKind?> KindOf { get; set; } = item => PaywallBook.Loaded?.Kind(item);
+    // 지난 맛보기 판정은 빼고 피드·출처만(PaywallBook.SourceKind)
+    public Func<NewsItem, PaywallKind?> KindOf { get; set; } = item => PaywallBook.Loaded?.SourceKind(item);
+    // 맛보기 판정 남기기(미리 받기 포함 — 목록·카드에 열기 전부터 '앞부분만'). 시험은 바꿔 끼움
+    public Action<NewsItem, bool> RecordTeaser { get; set; } = (item, teaser) => PaywallBook.Loaded?.RecordTeaser(item, teaser);
 
     // 맛보기·일부만 기사는 6시간 뒤 다시 받는다(사이트가 풀거나 앱이 고쳐지면 다시 열 때 온전히). 그 밖은 그대로 오래 둔다(맥 isStale)
     public static readonly TimeSpan CutCacheLife = TimeSpan.FromHours(6);
@@ -318,7 +364,8 @@ public sealed class ArticleService
         // 맛보기 판정(끝의 구독 권유 문구)을 본 뒤에 군더더기를 뺀다 — 번역 전에 빼서 번역 시간도 줄임(READER-CUT 2단계)
         PaywallKind? kind = null;
         try { kind = KindOf(item); } catch { }
-        var teaser = Paywall.IsTeaser(art.Blocks, art.Paid, kind);
+        var teaser = Paywall.IsTeaser(art.Blocks, art.Paid, kind, art.LdBody);
+        try { RecordTeaser(item, teaser); } catch { }
         art = art with { Blocks = BodyCleanup.DropJunk(art.Blocks) };
         var blocks = art.Blocks.ToList();
         a = a with { OriginalTitle = artTitle, Blocks = blocks, Paywalled = teaser ? true : null, Partial = art.Partial == true ? true : null };

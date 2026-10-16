@@ -163,6 +163,8 @@ pub struct NewsItem {
     pub important: Option<bool>, // '꼭 알림' 낱말에 걸림
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub watch: Option<String>, // 걸린 '지켜볼 낱말'(★ 와 겹치면 표시는 ★, N-27)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paid: Option<bool>, // 피드가 이 기사에 적은 유료 표시(feed_parser::paid_mark): true 유료 · false 무료로 풀림 · None 표시 없음(출처 값)
 }
 
 impl NewsItem {
@@ -183,6 +185,7 @@ impl NewsItem {
             kind: None,
             important: None,
             watch: None,
+            paid: None,
         }
     }
     pub fn key(&self) -> String {

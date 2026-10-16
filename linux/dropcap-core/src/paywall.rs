@@ -13,6 +13,7 @@ pub enum PaywallKind {
     Hard,    // 구독해야만 읽힘
     Metered, // 한 달 몇 건까지 무료
     Learned, // 표시는 없지만 여기서 열어 보면 자주 막힘
+    Teaser,  // 이 기사를 미리 받아 보니 맛보기(앞부분만)였음(is_teaser) — 출처·피드 표시보다 앞선다
 }
 
 impl PaywallKind {
@@ -29,6 +30,15 @@ impl PaywallKind {
             PaywallKind::Hard => "유료 기사",
             PaywallKind::Metered => "일부 유료(무료 건수 제한)",
             PaywallKind::Learned => "자주 막히는 곳",
+            PaywallKind::Teaser => "앞부분만 공개된 기사",
+        }
+    }
+    // 목록·카드에서 자물쇠 옆에 붙는 짧은 글(맛보기만 — 다른 자물쇠와 구분)
+    pub fn short_text(&self) -> Option<&'static str> {
+        if *self == PaywallKind::Teaser {
+            Some("앞부분만")
+        } else {
+            None
         }
     }
     // 아이콘(Adwaita): metered 는 열린 자물쇠, 나머지는 잠긴 자물쇠
@@ -45,6 +55,9 @@ impl PaywallKind {
     }
     // 마우스를 올리면 보이는 이유
     pub fn tooltip(&self) -> String {
+        if *self == PaywallKind::Teaser {
+            return "미리 받아 보니 사이트가 앞부분만 공개한 기사예요 — 열면 같은 소식의 무료 보도를 먼저 권합니다".to_string();
+        }
         if self.blocks() {
             format!("{} — 열면 같은 소식의 무료 보도를 먼저 권합니다", self.label())
         } else {
@@ -100,7 +113,22 @@ pub fn domain_kind(link: &str) -> Option<PaywallKind> {
     None
 }
 
-pub fn kind(source_id: &str, link: &str, meta: &HashMap<String, SourceMeta>, stats: &HashMap<String, ExtractStat>) -> Option<PaywallKind> {
+// paid: 피드가 이 기사에 적은 표시(NewsItem.paid) — 출처 값보다 앞선다. true 면 구독해야만(Hard), false 면 무료로 풀린 기사
+// teaser: 이 기사를 받아 보니 맛보기였음(PaywallBook 의 teasers) — 무엇보다 앞선다
+pub fn kind(
+    source_id: &str,
+    link: &str,
+    paid: Option<bool>,
+    teaser: bool,
+    meta: &HashMap<String, SourceMeta>,
+    stats: &HashMap<String, ExtractStat>,
+) -> Option<PaywallKind> {
+    if teaser {
+        return Some(PaywallKind::Teaser);
+    }
+    if let Some(p) = paid {
+        return if p { Some(PaywallKind::Hard) } else { None };
+    }
     if let Some(p) = meta.get(source_id).and_then(|m| m.paywall.as_deref()) {
         return PaywallKind::from_raw(p);
     }
@@ -142,7 +170,18 @@ pub const HARD_TEASER_CHARS: usize = 2500; // 하드 유료 출처일 때
 
 // 맛보기(유료벽 뒤 앞부분만)인가 — READER-CUT.md C(맥 Paywall.isTeaser). 지금의 문구 판정에 더해
 // 사이트가 유료라고 적었고(isAccessibleForFree=false · 한경 articlePayment) 본문이 1,500자 미만, 하드 유료 출처인데 2,500자 미만, 끝쪽에 강한 문구
-pub fn is_teaser(blocks: &[Block], paid: Option<bool>, kind: Option<PaywallKind>) -> bool {
+// ld_body: 사이트가 ld+json articleBody 로 적은 본문 글자 수. 우리 본문과 거의 같으면(±10%) 그 길이가 기사 전부다 —
+// 늘 isAccessibleForFree=false 라고 적지만 전문을 주는 사이트(Verge)의 짧은 기사를 맛보기로 잘못 보지 않게 '유료+1,500자' 규칙을 쓰지 않는다
+// (하드 유료 2,500자·강한 문구·구독 권유 문구 판정은 그대로 — 맥 ld-body-match)
+pub const LD_BODY_SLACK: f64 = 0.1;
+pub fn matches_site_body(length: usize, ld_body: Option<usize>) -> bool {
+    match ld_body {
+        Some(ld) if ld > 0 => (length as f64 - ld as f64).abs() <= ld as f64 * LD_BODY_SLACK,
+        _ => false,
+    }
+}
+
+pub fn is_teaser(blocks: &[Block], paid: Option<bool>, kind: Option<PaywallKind>, ld_body: Option<usize>) -> bool {
     if looks_blocked(blocks) {
         return true;
     }
@@ -151,7 +190,16 @@ pub fn is_teaser(blocks: &[Block], paid: Option<bool>, kind: Option<PaywallKind>
     if STRONG_WALL.is_match(&texts[texts.len().saturating_sub(4)..].join(" ")) {
         return true;
     }
-    (paid == Some(true) && length < PAID_TEASER_CHARS) || (kind == Some(PaywallKind::Hard) && length < HARD_TEASER_CHARS)
+    // ld 본문과는 군더더기(기자 소개·'Follow topics…')를 뺀 길이로도 견준다(Verge: 뺀 뒤 899자 = ld 902자)
+    let cleaned: usize = crate::article::body_cleanup::drop_junk(blocks)
+        .iter()
+        .filter_map(|b| b.original.as_deref().or(b.text.as_deref()))
+        .map(|t| t.chars().count())
+        .sum();
+    if paid == Some(true) && length < PAID_TEASER_CHARS && !matches_site_body(length, ld_body) && !matches_site_body(cleaned, ld_body) {
+        return true;
+    }
+    kind == Some(PaywallKind::Hard) && length < HARD_TEASER_CHARS
 }
 
 pub fn looks_blocked(blocks: &[Block]) -> bool {
@@ -181,6 +229,7 @@ pub fn free_alternatives(
     hidden: &HashSet<String>,
     meta: &HashMap<String, SourceMeta>,
     stats: &HashMap<String, ExtractStat>,
+    teasers: &HashSet<String>,
     limit: usize,
 ) -> Vec<NewsItem> {
     let rank = |t: &str| match t {
@@ -196,7 +245,7 @@ pub fn free_alternatives(
                 && !hidden.contains(&s.source_id)
                 && !s.link.is_empty()
                 && s.item_kind() == ItemKind::Article
-                && kind(&s.source_id, &s.link, meta, stats).is_none()
+                && kind(&s.source_id, &s.link, s.paid, teasers.contains(&s.link), meta, stats).is_none()
         })
         .collect();
     cands.sort_by(|a, b| rank(&a.tier).cmp(&rank(&b.tier)).then_with(|| b.date_or_past().cmp(&a.date_or_past())));
@@ -218,27 +267,62 @@ pub fn free_reason(has_alternatives: bool, failed: bool, paywalled: bool, kind: 
     match kind {
         Some(PaywallKind::Hard) => Some("유료 기사입니다"),
         Some(PaywallKind::Learned) => Some("이곳 기사는 자주 막힙니다"),
+        Some(PaywallKind::Teaser) => Some("앞부분만 공개된 기사예요"),
         _ => None,
     }
 }
 
 // 앱 안에서 쓰는 쪽: 출처별 기록을 기억해 두고 화면(자물쇠)·읽기 창(무료 보도 권하기)에 알려 준다
+// 맛보기로 판정된 기사(teasers)는 DB 에 남겨 목록·카드·물방울이 열기 전부터 '앞부분만'을 보이게 한다
 pub struct PaywallBook {
     db: Arc<Database>,
     stats: Mutex<HashMap<String, ExtractStat>>,
+    teasers: Mutex<HashSet<String>>,
 }
 
 impl PaywallBook {
     pub fn new(db: Arc<Database>) -> PaywallBook {
         let stats = db.extract_stats();
-        PaywallBook { db, stats: Mutex::new(stats) }
+        let teasers = db.teaser_links(chrono::Utc::now());
+        PaywallBook { db, stats: Mutex::new(stats), teasers: Mutex::new(teasers) }
     }
 
+    // 화면 표시용: 맛보기 판정 > 피드의 기사 표시 > 출처 값 > 배운 막힘
     pub fn kind(&self, item: &NewsItem) -> Option<PaywallKind> {
         if item.item_kind() != ItemKind::Article || item.link.is_empty() {
             return None;
         }
-        kind(&item.source_id, &item.link, &crate::sections::META, &self.stats.lock().unwrap())
+        let teaser = self.teasers.lock().unwrap().contains(&item.link);
+        kind(&item.source_id, &item.link, item.paid, teaser, &crate::sections::META, &self.stats.lock().unwrap())
+    }
+
+    // 맛보기 판정(is_teaser)·읽기 창에 넘기는 값: 지난 판정은 빼고 피드·출처만 본다(다시 받을 때 지난 판정에 끌려가지 않게)
+    pub fn source_kind(&self, item: &NewsItem) -> Option<PaywallKind> {
+        if item.item_kind() != ItemKind::Article || item.link.is_empty() {
+            return None;
+        }
+        kind(&item.source_id, &item.link, item.paid, false, &crate::sections::META, &self.stats.lock().unwrap())
+    }
+
+    pub fn teasers(&self) -> HashSet<String> {
+        self.teasers.lock().unwrap().clone()
+    }
+
+    // 본문을 받은 기사(미리 받기 포함)의 맛보기 판정을 남긴다 — 맛보기가 아니면 지난 기록을 지운다
+    pub fn record_teaser(&self, item: &NewsItem, teaser: bool) {
+        if item.id == crate::app_model::PREVIEW_ID || item.link.is_empty() {
+            return;
+        }
+        let mut t = self.teasers.lock().unwrap();
+        if teaser == t.contains(&item.link) {
+            return;
+        }
+        self.db.mark_teaser(&item.link, teaser, chrono::Utc::now());
+        if teaser {
+            t.insert(item.link.clone());
+        } else {
+            t.remove(&item.link);
+        }
     }
 
     // 사용자가 연 기사의 결과(미리 받기는 스크립트 없이 해서 실패가 잦으므로 세지 않는다)
@@ -255,6 +339,7 @@ impl PaywallBook {
     pub fn alternatives(&self, item: &NewsItem, filter: &crate::source_filter::SourceFilter) -> Vec<NewsItem> {
         let Some(c) = self.db.cluster_of(&item.key()) else { return vec![] };
         let story: Vec<NewsItem> = filter.visible(&self.db.items_in_cluster(&c).into_iter().map(|s| s.item).collect::<Vec<_>>());
-        free_alternatives(item, &story, &HashSet::new(), &crate::sections::META, &self.stats.lock().unwrap(), 3)
+        let teasers = self.teasers();
+        free_alternatives(item, &story, &HashSet::new(), &crate::sections::META, &self.stats.lock().unwrap(), &teasers, 3)
     }
 }

@@ -178,3 +178,8 @@
 - 시험: `ReaderCutTests.cs` — 추출(ReaderCutExtractTests 12: 맥 Fixtures/reader-cut 의 실제 꼴 4종 + 지어낸 HTML, 머리 없는 Chromium 에서 앱 격리 칸과 같은 CSP 로 `extract.js` 를 돌림 — `js/extract-runner.mjs`, `scripts/test-extract.sh`), 규칙·서비스·보기(ReaderCutRuleTests 11). `TranslatePhase2Tests.cs` 7.
 - **고치기 전 실패**(같은 시험을 고치기 전 코드 + 빈 껍데기 함수로): 30개 중 25개 실패 → 고친 뒤 모두 통과. 고치기 전에도 통과한 5개: 지어낸 Ars 두 덩어리·BBC 블록·실제 꼴 매경·지어낸 동아 맨 글자(예전 Readability 결과로도 이 꼴은 이미 다 옴), 작은 그림(원래 맞음).
 - 확인: 전체 498 통과·8 건너뜀, `scripts/check-on-mac.sh` 경고 0·오류 0. 읽기 창 미리 보기(`reader.html?teaser=1&free=1` · `?partial=1`)를 머리 없는 브라우저로 라이트·다크 그림 확인. 실제 윈도우 PC 에서 WebView2 로 기사 몇 개 확인 필요.
+
+## 보안 점검 낮음 나머지(2026-10-16, wt/seclow3 — 맥 AUDIT.md 8절)
+
+- X2: 추출 스크립트(`Dropcap.Ui/web/extract.js`) 여러 덩어리 모으기 상자를 살아 있는 문서 대신 사본 문서(`fresh.createElement`)에서 만든다(격리 칸 CSP 가 막던 사진 받기·onerror 에 한 겹 더). 시험 `SecurityLow3Tests` — 고치기 전 실패 → 고친 뒤 통과.
+- M15(피드 본문 출처 확인)는 윈도우에 피드 본문 전문 기능이 없어 해당 없음. 남은 윈도우 낮음 항목(W4~W8·W10)은 모두 앞 절에서 닫힘.

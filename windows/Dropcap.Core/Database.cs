@@ -40,6 +40,8 @@ public sealed class Database : IDisposable
         CREATE INDEX IF NOT EXISTS scraps_collection ON scraps(collection, created);
         CREATE TABLE IF NOT EXISTS extract_stats(
           source TEXT PRIMARY KEY, tries INTEGER NOT NULL, fails INTEGER NOT NULL, blocked INTEGER NOT NULL, updated REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS teasers(
+          link TEXT PRIMARY KEY, updated REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS image_scores(
           url TEXT PRIMARY KEY, score REAL NOT NULL, text REAL NOT NULL, colors REAL NOT NULL, flat REAL NOT NULL, updated REAL NOT NULL);
         """);
@@ -370,6 +372,33 @@ public sealed class Database : IDisposable
     {
         var o = new Dictionary<string, ExtractStat>();
         Run("SELECT source,tries,fails,blocked FROM extract_stats", [], r => o[r.GetString(0)] = new ExtractStat(r.GetInt32(1), r.GetInt32(2), r.GetInt32(3)));
+        return o;
+    }
+
+    // MARK: 맛보기로 판정된 기사(미리 받기·읽기 — 목록·카드·물방울에 열기 전부터 '앞부분만'). 맥 Database.markTeaser 와 같음
+    // 다시 받아 맛보기가 아니면 지운다. 30일 지난 것·2,000건 넘는 오래된 것·5분 넘게 미래 시각인 것은 버린다
+    public static readonly TimeSpan TeaserLife = TimeSpan.FromDays(30);
+    public const int TeaserLimit = 2000;
+    public void MarkTeaser(string link, bool teaser) => MarkTeaser(link, teaser, DateTimeOffset.Now);
+    public void MarkTeaser(string link, bool teaser, DateTimeOffset now)
+    {
+        lock (gate)
+        {
+            if (teaser)
+            {
+                Run("INSERT OR REPLACE INTO teasers(link,updated) VALUES(?,?)", [link, Unix(now)]);
+                Run("DELETE FROM teasers WHERE updated < ? OR updated > ?", [Unix(now - TeaserLife), Unix(now.AddSeconds(300))]);
+                Run($"DELETE FROM teasers WHERE link NOT IN (SELECT link FROM teasers ORDER BY updated DESC LIMIT {TeaserLimit})", []);
+            }
+            else Run("DELETE FROM teasers WHERE link=?", [link]);
+        }
+    }
+
+    public HashSet<string> TeaserLinks() => TeaserLinks(DateTimeOffset.Now);
+    public HashSet<string> TeaserLinks(DateTimeOffset now)
+    {
+        var o = new HashSet<string>();
+        lock (gate) Run("SELECT link FROM teasers WHERE updated >= ?", [Unix(now - TeaserLife)], r => o.Add(r.GetString(0)));
         return o;
     }
 

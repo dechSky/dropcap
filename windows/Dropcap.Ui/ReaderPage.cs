@@ -195,7 +195,7 @@ public sealed class ReaderPage : IPage
         var original = blocks.Select(b => b.Original ?? b.Text).OfType<string>().ToList();
         var phase = Phase(a);
         var title = a?.Title ?? item.DisplayTitle;
-        var kind = pw?.Kind(item);
+        var kind = pw?.SourceKind(item); // 맛보기 여부는 받은 본문의 Paywalled 가 맡는다(맥 ReaderView)
         var alts = Alternatives(item, m, pw);
         var paywalled = a?.Paywalled == true;
         var originalTitle = a?.OriginalTitle is { Length: > 0 } ot ? ot : item.Title;

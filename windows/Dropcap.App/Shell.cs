@@ -85,6 +85,8 @@ internal sealed class Shell : IAppUi
         // 상태가 바뀌면: 트레이 아이콘(안 읽음), 열린 화면들에 알림
         Model.Changed += () => ui.TryEnqueue(Refresh);
         Magazine.Changed += () => ui.TryEnqueue(() => Bridge.Emit("magazine", "changed"));
+        // 미리 받기가 맛보기로 판정함: 목록·카드의 자물쇠를 '앞부분만'으로 다시 그림(물방울은 다음 그리기에서)
+        PaywallBook.Shared.TeasersChanged += () => ui.TryEnqueue(Refresh);
         messages.HotKey += OnHotKey;
         messages.Resumed += () => ui.TryEnqueue(Model.OnWake);   // 잠자기에서 깨면 10초 뒤 확인(C-11)
         messages.DisplayChanged += () => ui.TryEnqueue(toasts.Replace);   // 화면 구성이 바뀌면 다시 자리 잡음(N-11)

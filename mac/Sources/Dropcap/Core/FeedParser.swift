@@ -41,7 +41,7 @@ enum FeedError: LocalizedError {
 }
 
 enum FeedParser {
-    struct Entry { var id: String; var title: String; var link: String; var date: Date?; var summary: String; var image: String? = nil; var body: String? = nil }
+    struct Entry { var id: String; var title: String; var link: String; var date: Date?; var summary: String; var image: String? = nil; var body: String? = nil; var paid: Bool? = nil }
 
     // 피드가 실어 준 본문 전문(content:encoded · Atom content). 읽기 창이 사이트 HTML 이 앞부분만 줄 때 대신 쓴다(Politico 등 — mac/READER-CUT.md '피드 전문 우선').
     // 글이 bodyMinText 자 미만이면 요약일 뿐이라 두지 않는다. script·style·주석을 빼고 bodyMaxHTML 자까지(넘으면 마지막 문단 끝에서 자름)
@@ -54,6 +54,23 @@ enum FeedParser {
         let html = compactBody(String(raw.prefix(400_000)))
         guard Plain.clean(html).count >= bodyMinText else { return nil }
         return html
+    }
+
+    // 피드가 기사마다 적은 유료 표시(feed-paid-mark — 출처의 paywall 값보다 앞선다). 2026-10-16 147개 피드에서 실제로 보인 것만:
+    // STAT 'STAT+:' 제목 머리·'STAT+' 분류, MIT TR 'Subscriber-Only Stories' 분류 → 유료(true) · NYT 'internal-paywall-exempt' 분류 → 무료로 풀림(false).
+    // 한경은 피드에 표시가 없다(프리미엄9 도 주소 끝 'i' 뿐인데 무료 기사도 같은 꼴) — 미리 받기 판정(맛보기)으로 알린다
+    static let paidCategories: Set<String> = ["stat+", "subscriber-only stories"]
+    static let freeCategories: Set<String> = ["internal-paywall-exempt"]
+    static let paidTitlePrefixes = ["STAT+:"]
+    static func paidMark(_ it: XNode) -> Bool? {
+        let cats = Set((it.all("category") + it.all("dc:subject")).map {
+            Plain.clean($0.attrs["term"] ?? $0.text).lowercased()
+        })
+        if !cats.isDisjoint(with: freeCategories) { return false }
+        if !cats.isDisjoint(with: paidCategories) { return true }
+        let title = Plain.clean(it.value("title"))
+        if paidTitlePrefixes.contains(where: { title.hasPrefix($0) }) { return true }
+        return nil
     }
 
     static func compactBody(_ s: String) -> String {
@@ -139,7 +156,7 @@ enum FeedParser {
                 let link = it.value("link")
                 return Entry(id: it.value("guid").nonEmpty ?? link.nonEmpty ?? fallbackID(it.value("title"), it.value("pubDate")), title: Plain.clean(it.value("title")), link: link,
                              date: Dates.parse(it.value("pubDate").nonEmpty ?? it.value("dc:date")),
-                             summary: String(Plain.clean(it.value("description")).prefix(300)), image: image(it), body: body(it))
+                             summary: String(Plain.clean(it.value("description")).prefix(300)), image: image(it), body: body(it), paid: paidMark(it))
             }
         }
         if let feed = root.child("feed") {
@@ -149,7 +166,7 @@ enum FeedParser {
                 let link = alt?.attrs["href"] ?? alt?.text ?? ""
                 return Entry(id: it.value("id").nonEmpty ?? link.nonEmpty ?? fallbackID(it.value("title"), it.value("updated")), title: Plain.clean(it.value("title")), link: link,
                              date: Dates.parse(it.value("published").nonEmpty ?? it.value("updated")),
-                             summary: String(Plain.clean(it.value("summary").nonEmpty ?? it.value("content")).prefix(300)), image: image(it), body: body(it))
+                             summary: String(Plain.clean(it.value("summary").nonEmpty ?? it.value("content")).prefix(300)), image: image(it), body: body(it), paid: paidMark(it))
             }
         }
         if let rdf = root.child("rdf:RDF") {

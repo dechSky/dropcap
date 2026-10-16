@@ -80,7 +80,7 @@ public sealed class FeedService
             Id = e.Id, Title = e.Title, Link = e.Link, Date = e.Date, Summary = e.Summary,
             SourceId = source.Id, SourceName = source.Name, Tier = source.Tier,
             Image = e.Image is not null && Uri.TryCreate(e.Link, UriKind.Absolute, out var baseUri) && Uri.TryCreate(baseUri, e.Image, out var img) ? img.AbsoluteUri : null,
-            Kind = source.Kind,
+            Kind = source.Kind, Paid = e.Paid,
         }).ToList();
     }
 

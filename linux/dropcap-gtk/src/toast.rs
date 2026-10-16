@@ -1443,10 +1443,21 @@ fn draw_header(cr: &cairo::Context, area: &gtk::DrawingArea, it: &NewsItem, x: f
     // 분야 칩(N-05): AI 분야는 'AI·모델·제품'처럼 하위 분류까지, 나머지는 분야 이름(맥 TopicChip)
     let chip = layout(area, &it.topic_label(), 10.5, pango::Weight::Semibold, None, 1);
     let more = it.related.as_ref().filter(|r| !r.is_empty()).map(|r| layout(area, &format!("외 {}곳", r.len()), 10.5, pango::Weight::Medium, None, 1));
-    let tail = lw(&chip) + 12.0 + 6.0 + more.as_ref().map(|m| lw(m) + 6.0).unwrap_or(0.0);
+    // 유료 표시(맥 PaywallMark): 미리 받기가 맛보기로 판정하면 '🔒 앞부분만'(주황)이 곧 붙는다
+    let pay = crate::app::ui().core.paywall.kind(it).map(|k| {
+        let teaser = k.short_text().is_some();
+        let glyph = if k == dropcap_core::paywall::PaywallKind::Metered { "🔓" } else { "🔒" };
+        let txt = k.short_text().map(|t| format!("{glyph} {t}")).unwrap_or_else(|| glyph.to_string());
+        (layout(area, &txt, 9.5, pango::Weight::Semibold, None, 1), teaser)
+    });
+    let tail = lw(&chip) + 12.0 + 6.0 + more.as_ref().map(|m| lw(m) + 6.0).unwrap_or(0.0) + pay.as_ref().map(|(p, _)| lw(p) + 6.0).unwrap_or(0.0);
     let name = layout(area, &it.source_name, 11.5, pango::Weight::Semibold, Some((limit - cx - tail).max(30.0)), 1);
     show_layout(cr, &name, cx, y, ink(PRIMARY), a);
     cx += lw(&name) + 6.0;
+    if let Some((p, teaser)) = pay {
+        show_layout(cr, &p, cx, y + 1.5, if teaser { (1.0, 0.58, 0.0, 1.0) } else { ink(SECONDARY) }, a);
+        cx += lw(&p) + 6.0;
+    }
     // 분야 칩(분야 색 13%)
     let (r, g, b) = dropcap_core::models::hex_rgb(&it.topic_color(dark()));
     let cw = lw(&chip) + 12.0;

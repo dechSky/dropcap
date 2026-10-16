@@ -85,6 +85,8 @@ final class Database: @unchecked Sendable {
         CREATE INDEX IF NOT EXISTS scraps_collection ON scraps(collection, created);
         CREATE TABLE IF NOT EXISTS extract_stats(
           source TEXT PRIMARY KEY, tries INTEGER NOT NULL, fails INTEGER NOT NULL, blocked INTEGER NOT NULL, updated REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS teasers(
+          link TEXT PRIMARY KEY, updated REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS image_scores(
           url TEXT PRIMARY KEY, score REAL NOT NULL, text REAL NOT NULL, colors REAL NOT NULL, flat REAL NOT NULL, updated REAL NOT NULL);
         """)
@@ -446,6 +448,33 @@ final class Database: @unchecked Sendable {
             run("SELECT source,tries,fails,blocked FROM extract_stats", []) { st in
                 guard let s = Self.text(st, 0) else { return }
                 out[s] = ExtractStat(tries: Int(sqlite3_column_int64(st, 1)), fails: Int(sqlite3_column_int64(st, 2)), blocked: Int(sqlite3_column_int64(st, 3)))
+            }
+        }
+        return out
+    }
+
+    // MARK: 맛보기로 판정된 기사(미리 받기·읽기 — 목록·카드·물방울에 열기 전부터 '앞부분만')
+    // 다시 받아 맛보기가 아니면 지운다. 30일 지난 것·2,000건 넘는 오래된 것은 버린다
+    static let teaserLife: TimeInterval = 30 * 24 * 3600
+    static let teaserLimit = 2000
+    func markTeaser(_ link: String, _ teaser: Bool, now: Date = Date()) {
+        queue.sync {
+            if teaser {
+                run("INSERT OR REPLACE INTO teasers(link,updated) VALUES(?,?)", [.text(link), .real(now.timeIntervalSince1970)])
+                run("DELETE FROM teasers WHERE updated < ? OR updated > ?",
+                    [.real(now.addingTimeInterval(-Self.teaserLife).timeIntervalSince1970), .real(now.addingTimeInterval(300).timeIntervalSince1970)])
+                run("DELETE FROM teasers WHERE link NOT IN (SELECT link FROM teasers ORDER BY updated DESC LIMIT \(Self.teaserLimit))", [])
+            } else {
+                run("DELETE FROM teasers WHERE link=?", [.text(link)])
+            }
+        }
+    }
+
+    func teaserLinks(now: Date = Date()) -> Set<String> {
+        var out: Set<String> = []
+        queue.sync {
+            run("SELECT link FROM teasers WHERE updated >= ?", [.real(now.addingTimeInterval(-Self.teaserLife).timeIntervalSince1970)]) { st in
+                if let l = Self.text(st, 0) { out.insert(l) }
             }
         }
         return out

@@ -236,13 +236,28 @@ pub fn later(ms: u64, f: impl FnOnce() + 'static) {
     glib::timeout_add_local_once(std::time::Duration::from_millis(ms), f);
 }
 
-// 목록 줄·매거진 카드·스토리에 붙는 작은 자물쇠(G-14): hard·배움 = 잠긴 자물쇠, metered = 열린 자물쇠, 마우스를 올리면 이유
-pub fn paywall_mark(item: &NewsItem) -> Option<gtk::Image> {
+// 목록 줄·매거진 카드·스토리에 붙는 작은 자물쇠(G-14): hard·배움 = 잠긴 자물쇠, metered = 열린 자물쇠, 마우스를 올리면 이유.
+// 맛보기로 판정된 기사(미리 받기 포함)는 잠긴 자물쇠 + '앞부분만'(주황)으로 따로(맥 PaywallMark)
+pub fn paywall_mark(item: &NewsItem) -> Option<gtk::Widget> {
     let k = crate::app::ui().core.paywall.kind(item)?;
     let i = icon(k.icon(), 9);
-    i.add_css_class("dc-secondary");
     i.set_valign(gtk::Align::Center);
-    i.set_tooltip_text(Some(&k.tooltip()));
-    i.update_property(&[gtk::accessible::Property::Label(k.label())]);
-    Some(i)
+    let Some(t) = k.short_text() else {
+        i.add_css_class("dc-secondary");
+        i.set_tooltip_text(Some(&k.tooltip()));
+        i.update_property(&[gtk::accessible::Property::Label(k.label())]);
+        return Some(i.upcast());
+    };
+    let b = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+    b.set_valign(gtk::Align::Center);
+    b.append(&i);
+    let l = label(t, 9.5, 600, &[]);
+    l.set_wrap(false);
+    b.append(&l);
+    crate::magazine::tint(&b, "#FF9500");
+    crate::magazine::tint(&i, "#FF9500");
+    crate::magazine::tint(&l, "#FF9500");
+    b.set_tooltip_text(Some(&k.tooltip()));
+    b.update_property(&[gtk::accessible::Property::Label(k.label())]);
+    Some(b.upcast())
 }

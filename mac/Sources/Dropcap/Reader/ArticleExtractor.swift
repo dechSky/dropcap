@@ -67,7 +67,7 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
     private var loadDone = false // 이번 기다림이 끝났다(다 뜸·실패·시간 초과) — 늦게 등록된 기다림은 바로 깨운다(A-22)
     private static let readability = (try? String(contentsOf: Resources.url("Readability.js"), encoding: .utf8)) ?? ""
 
-    private static let script = """
+    static let script = """
     (() => {
       const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
       const doc = document.cloneNode(true);
@@ -158,7 +158,8 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
           const texty = kids.filter((k) => longP(k).length > 0);
           if (texty.length < 2 || !texty.includes(el)) continue;
           const from = kids.indexOf(texty[0]), to = kids.indexOf(texty[texty.length - 1]);
-          const box = document.createElement('div');
+          // 모은 상자는 비활성 사본 문서(fresh)에서 만든다 — 살아 있는 문서에 붙이면 <img> 받기·onerror 가 돌 수 있다
+          const box = fresh.createElement('div');
           // 모은 글이 원문 글의 2배를 넘으면(겹친 상자를 거듭 담은 꼴) 모으기를 그만둔다
           let size = 0; const cap = fresh.body ? fresh.body.textContent.length * 2 + 1000 : 0;
           kids.slice(from, to + 1).forEach((k) => cores(k, el).forEach((c) => { size += c.textContent.length; if (size <= cap) box.appendChild(prune(c.cloneNode(true))); }));

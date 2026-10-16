@@ -204,7 +204,7 @@ public class MagazineTests : IDisposable
         cmd.CommandText = "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name";
         var names = new List<string>();
         using (var r = cmd.ExecuteReader()) while (r.Read()) names.Add(r.GetString(0));
-        Assert.Equal(["clusters", "extract_stats", "image_scores", "issues", "items", "scraps"], names); // 맥과 같은 표(유료 기록·사진 점수 포함)
+        Assert.Equal(["clusters", "extract_stats", "image_scores", "issues", "items", "scraps", "teasers"], names); // 맥과 같은 표(유료 기록·사진 점수·맛보기 기사 포함)
         cmd.CommandText = "PRAGMA user_version";
         Assert.Equal(1L, cmd.ExecuteScalar());
     }

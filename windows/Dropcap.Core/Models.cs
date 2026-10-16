@@ -105,6 +105,7 @@ public sealed record NewsItem
     public string? Kind { get; init; }           // ItemKind
     public bool? Important { get; init; }        // '꼭 알림' 낱말에 걸림
     public string? Watch { get; init; }          // 걸린 '지켜볼 낱말'(★ 와 겹치면 표시는 ★, N-27)
+    public bool? Paid { get; init; }             // 피드가 이 기사에 적은 유료 표시(FeedParser.PaidMark): true 유료 · false 무료로 풀림 · null 표시 없음(출처 값)
 
     [JsonIgnore] public ItemKind ItemKind => ItemKinds.Parse(Kind);
     [JsonIgnore] public string Key => $"{SourceId}|{Id}";

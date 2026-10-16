@@ -108,3 +108,15 @@
   - 그대로 둔 것: `DROPCAP_DATA_DIR`(데이터 폴더 바꾸기 — 바꿔도 다른 폴더에 쓸 뿐)·`DROPCAP_DEBUG_EXTRACT`·`DROPCAP_DEBUG_DRIP`(진단 로그·색)는 시험 장치가 아니라 남김.
 - **M10 고침 — 단축어 저장**: `IntentLogic.savableURL` 이 `SaveLink.normalize` 를 그대로 씀. 아이디·암호가 든 주소를 거르고, 조각(#…)·꺾쇠·따옴표 정리도 서비스 메뉴·dropcap:// 저장과 같아짐.
 - **M11 고침 — 사진 압축 폭탄**: `ImageLoader.decode` 가 풀기 전에 머리의 가로·세로를 읽어 4천만 픽셀(약 8000×5000) 또는 한 변 10만을 넘거나 크기를 모르면 풀지 않음. 시험은 진짜로 풀리는 8000×8000 PNG(수십 KB).
+
+## 8. 보안 점검 낮음 등급 나머지(wt/seclow3 · 2026-10-16)
+
+두 점검(2026-10-14 · 2026-10-15)의 낮음·정보 항목 가운데 아직 열린 것을 main(e30f0c6)에서 다시 확인해 정리했다. 이미 닫힌 것: M6·M8~M11(7절), M7(7절 받아들인 위험), M12(설정 › 번역 방식 '번역 안 함' + README '번역과 개인정보'), X3·M13·W10·P1~P3(secfix-2), 윈도우 W4~W8·리눅스 L2~L9(각 PROGRESS).
+고친 항목은 고치기 전 실패 → 고친 뒤 통과를 확인했다(맥 `SecurityLow3Tests` · 윈도우 `SecurityLow3Tests` · 리눅스 `security_low3_tests`).
+
+- **X2 고침(세 판) — 여러 덩어리 모으기를 비활성 문서에서**: 모은 상자를 `document.createElement`(살아 있는 문서) 대신 `fresh.createElement`(사본 문서)로 만든다. 살아 있는 문서에 붙인 `<img>` 는 받기·`onerror` 가 돌 수 있었다(지금은 빠른 길 JS 꺼짐·사진 차단·윈도우 CSP 로 막혀 있었음 — 한 겹 방어 복구). 시험은 세 판 추출 스크립트에 살아 있는 문서로 노드를 만드는 호출(`document.createElement`·`importNode`·`adoptNode`·`body.append`·`write`)이 없는지 본다.
+- **M15 고침(맥만 — 피드 본문은 맥에만 있음)**: 피드 본문 전문(`feedBody`)은 글 링크가 출처 피드와 같은 사이트일 때만 받는다(`FeedService.sameSite` — 등록 도메인 근사: 마지막 두 마디, `co.kr`·`co.uk` 같은 2단계면 세 마디). `feeds.arstechnica.com` → `arstechnica.com`, `rss.politico.com` → `politico.com` 은 그대로 받고, 남의 링크에 본문을 실은 집계 피드(hnrss 등)의 본문은 버려 사이트 추출이 실패해도 남의 기사처럼 보이지 않는다. 시험: 로컬 피드가 다른 사이트 링크에 1,000자 넘는 본문을 실으면 `feedBody == nil`(고치기 전 본문이 남음).
+  - 남은 것: 이 고침 전에 피드 기록 DB 에 이미 들어간 본문은 그대로 쓴다(피드 본문 기능이 생긴 지 며칠이고, 같은 글을 다시 받으면 빈 본문으로 덮이지 않고 DB 값이 남는다 — DB 쪽은 Paywall 작업자가 고치는 `ArticleService` 를 건드려야 해서 이번엔 받는 곳만). 기본 출처 중 피드와 글 사이트가 다른 BBC(`feeds.bbci.co.uk` → `bbc.co.uk`)·WSJ(dowjones)는 피드에 전문을 싣지 않아 잃는 것이 없다.
+- **P4 고침 — 문서의 실제 기사 주소**: `mac/READER-CUT.md` 의 기사 주소 11개를 경로 생략(`theverge.com/…`)으로. 다른 문서(PROGRESS·README 등)에는 실제 기사 주소가 없음을 확인. `docs/research/COMPETITIVE.md` 의 주소는 조사 출처 인용(시험 HTML 과 이어지지 않음)이라 그대로.
+- **M14 받아들인 위험 — '일부만' 판정 P×G**: 긴 문단 수 × 본문 글 길이. 2MB 안 최악 수 초(점검 재현 0.47초/2,000문단). secfix-2 의 추출 스크립트 시간 제한(`scriptSeconds` 8초, 윈도우·리눅스도 같은 장치)으로 멈춤까지는 가지 않고, 고치려면 문단마다 찾기를 색인으로 바꿔야 해 판정이 달라질 위험이 이득보다 크다.
+- **E2E.md 의 내부 도구 이름(2026-10-14 A 낮음) 받아들임**: 개인정보가 아니고 개발 절차 설명이라 그대로 둔다.

@@ -530,7 +530,7 @@ impl ReaderWindow {
             bg(
                 async move {
                     let filter = core.source_filter();
-                    (core.paywall.kind(&item), core.paywall.alternatives(&item, &filter), item.key())
+                    (core.paywall.source_kind(&item), core.paywall.alternatives(&item, &filter), item.key())
                 },
                 move |(kind, alts, key)| {
                     let Some(me) = w.upgrade() else { return };

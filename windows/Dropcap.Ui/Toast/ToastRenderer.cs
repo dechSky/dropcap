@@ -434,13 +434,35 @@ public sealed class ToastRenderer(ToastEngine engine)
         var more = it.Related is { Count: > 0 } rel ? $"외 {rel.Count}곳" : null;
         float moreW = 0;
         if (more is not null) using (var mf = Font(10.5f, 500, more)) moreW = mf.MeasureText(more) + 6;
+        // 유료 자물쇠(G-14): 맛보기로 판정되면(미리 받기) 잠긴 자물쇠 + '앞부분만'(주황) — 맥 ToastView 의 PaywallMark
+        var pw = it.ItemKind == ItemKind.Article && it.Link.Length > 0 ? PaywallBook.Loaded?.Kind(it) : null;
+        var pwText = pw?.ShortText();
+        float pwW = 0;
+        if (pw is not null)
+        {
+            pwW = 9 + 4;
+            if (pwText is not null) using (var pf = Font(9.5f, 600, pwText)) pwW += 2 + pf.MeasureText(pwText);
+        }
         using (var sf = Font(11.5f, 600, it.SourceName))
         {
-            var room = tx + tw - timeW - 4 - mx - 6 - chipW - 6 - moreW;
+            var room = tx + tw - timeW - 4 - mx - 6 - chipW - 6 - moreW - pwW;
             var name = TextLayout.Ellipsize(it.SourceName, sf, Math.Max(24, room));
             DrawText(c, name, mx, by, 11.5f, 600, Primary, rise1);
-            mx += sf.MeasureText(name) + 6;
+            mx += sf.MeasureText(name) + 4;
         }
+        if (pw is { } k)
+        {
+            var col = k == PaywallKind.Teaser ? Orange : Secondary;
+            if (rise1 > 0) Icons.Draw(c, k == PaywallKind.Metered ? "lock.open" : "lock.fill", mx, by - 8.5f, 9, A(col, rise1 * col.Alpha / 255.0));
+            mx += 9 + 2;
+            if (pwText is not null)
+            {
+                DrawText(c, pwText, mx, by, 9.5f, 600, col, rise1);
+                using var pf = Font(9.5f, 600, pwText);
+                mx += pf.MeasureText(pwText);
+            }
+        }
+        mx += 2;
         mx += DrawChip(c, it.TopicLabel(), it.TopicIcon(), Hex(it.TopicColor().For(Dark)), mx, y0, rise1) + 6;
         if (more is not null) DrawText(c, more, mx, by, 10.5f, 500, Secondary, rise1);
         DrawText(c, time, tx + tw - timeW, by, 11, 400, Tertiary, rise1);

@@ -67,6 +67,8 @@ pub struct Article {
     pub paid: Option<bool>, // 사이트가 유료 기사라고 적음(ld+json isAccessibleForFree=false · 한경 articlePayment="Y")
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub partial: Option<bool>, // 본문 일부만 가져왔을 수 있음(앞 문단이 본문 영역에 더 있음)
+    #[serde(rename = "ldBody", default, skip_serializing_if = "Option::is_none")]
+    pub ld_body: Option<usize>, // 사이트가 ld+json articleBody 로 적은 본문 글자 수(맛보기 판정 — paywall::matches_site_body)
 }
 
 impl Article {
@@ -80,7 +82,7 @@ impl Article {
 
 pub const MIN_CHARS: usize = 100;
 
-pub use crate::reader_extract::paid_flag;
+pub use crate::reader_extract::{ld_body_length, paid_flag};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stage {
@@ -301,6 +303,7 @@ pub fn extract_html(html: &str, base: &str) -> Option<Article> {
     };
     let fresh = dom_query::Document::from(pre.as_str());
     let paid = rx::paid_flag(html);
+    let ld_body = rx::ld_body_length(html);
     // (본문 HTML, 제목, 기자, 매체) → 기사. Err 는 '글 거의 없음'(다음 기준으로 넘어가지 않음)
     let finish = |content: &str, title: Option<String>, byline: Option<String>, site: Option<String>| -> Result<Option<Article>, ()> {
         let (content, partial) = rx::gather(content, &fresh);
@@ -309,7 +312,7 @@ pub fn extract_html(html: &str, base: &str) -> Option<Article> {
         if rx::only_lists(&blocks) {
             return Err(());
         }
-        let art = Article { title, byline, site_name: site, blocks, paid, partial: partial.then_some(true) };
+        let art = Article { title, byline, site_name: site, blocks, paid, partial: partial.then_some(true), ld_body };
         Ok(art.acceptable().then_some(art))
     };
     let readable = |threshold: Option<usize>| -> Result<Option<Article>, ()> {
@@ -427,11 +430,13 @@ pub struct ArticleService {
     pinned: Mutex<Arc<dyn Fn() -> Vec<String> + Send + Sync>>, // 저장한 기사 링크(디스크 정리에서 제외)
     recorder: Mutex<Arc<Recorder>>, // 사용자가 연 기사의 추리기 결과(유료 기사 배우기, G-14)
     paywall_kind: Mutex<Arc<KindOf>>, // 출처의 유료 표시(하드 유료 + 짧은 본문이면 맛보기, READER-CUT.md C)
+    teaser_recorder: Mutex<Arc<TeaserRecorder>>, // 맛보기 판정 남기기(미리 받기 포함 — 목록에 열기 전부터 '앞부분만')
 }
 
 type KindOf = dyn Fn(&NewsItem) -> Option<crate::paywall::PaywallKind> + Send + Sync;
 
 type Recorder = dyn Fn(&NewsItem, bool, bool) + Send + Sync; // (기사, 실패, 막힘)
+type TeaserRecorder = dyn Fn(&NewsItem, bool) + Send + Sync; // (기사, 맛보기)
 
 pub const MEMORY_LIMIT: usize = 40;
 pub const DISK_LIMIT: usize = 150;
@@ -450,6 +455,7 @@ impl ArticleService {
             pinned: Mutex::new(Arc::new(Vec::new)),
             recorder: Mutex::new(Arc::new(|_, _, _| {})),
             paywall_kind: Mutex::new(Arc::new(|_| None)),
+            teaser_recorder: Mutex::new(Arc::new(|_, _| {})),
         })
     }
 
@@ -464,6 +470,9 @@ impl ArticleService {
     }
     pub fn set_paywall_kind(&self, f: Arc<KindOf>) {
         *self.paywall_kind.lock().unwrap() = f;
+    }
+    pub fn set_teaser_recorder(&self, f: Arc<TeaserRecorder>) {
+        *self.teaser_recorder.lock().unwrap() = f;
     }
     fn record(&self, item: &NewsItem, failed: bool, blocked: bool) {
         let f = self.recorder.lock().unwrap().clone();
@@ -605,6 +614,7 @@ impl ArticleService {
         let host = host_of(link);
         let mut refused = false; // 사이트가 접근을 거부(401·403·429)
         let mut rich_page = false; // 받은 HTML 에 글이 이미 많다(스크립트로 그리는 빈 껍데기가 아님)
+        let mut page_ld: Option<usize> = None; // 받은 HTML 의 ld 본문 길이(느린 길 스크립트가 못 읽었을 때 씀)
         // 2MB 를 넘는 페이지는 빠른 길을 건너 느린 길(웹 보기)로(S-12)
         let got = FEEDS.fetch_with_encoding(link, false, crate::feed_service::FetchLimit::Page).await;
         if let Err(crate::net::FeedError::Http(code)) = &got {
@@ -614,6 +624,8 @@ impl ArticleService {
             let html = decode_html(&body.data, body.encoding.as_deref());
             rich_page = visible_text_length(&html) > 600;
             let paid = crate::reader_extract::paid_flag(&html);
+            let ld_body = crate::reader_extract::ld_body_length(&html);
+            page_ld = ld_body;
             let art = match ex.fast(html.clone(), link.to_string()).await {
                 Some(a) if a.acceptable() => Some(a),
                 _ => {
@@ -626,6 +638,9 @@ impl ArticleService {
             if let Some(mut a) = art {
                 if a.paid.is_none() {
                     a.paid = paid; // 스크립트를 끈 빠른 길에서는 페이지의 <script> 를 못 읽을 수 있다
+                }
+                if a.ld_body.is_none() {
+                    a.ld_body = ld_body;
                 }
                 log::info!("[기사] 빠른 길 {:.2}초", t0.elapsed().as_secs_f64());
                 return Some(a);
@@ -644,7 +659,12 @@ impl ArticleService {
             log::info!("[기사] 빠른 길 실패, 글이 있는 페이지라 느린 길 건너뜀 {host}");
             return None;
         }
-        let art = ex.slow_for(link.to_string(), if refused { 6 } else { 15 }).await.filter(|a| a.acceptable());
+        let art = ex.slow_for(link.to_string(), if refused { 6 } else { 15 }).await.filter(|a| a.acceptable()).map(|mut a| {
+            if a.ld_body.is_none() {
+                a.ld_body = page_ld;
+            }
+            a
+        });
         if art.is_none() && refused {
             BLOCKED_HOSTS.lock().unwrap().insert(host);
         }
@@ -672,9 +692,11 @@ impl ArticleService {
         let art_title = art.title.clone().filter(|t| !t.is_empty()).unwrap_or_else(|| item.title.clone());
         a.original_title = art_title.clone();
         let kind = (self.paywall_kind.lock().unwrap().clone())(&item);
-        if crate::paywall::is_teaser(&art.blocks, art.paid, kind) {
+        if crate::paywall::is_teaser(&art.blocks, art.paid, kind, art.ld_body) {
             a.paywalled = Some(true);
         }
+        // 미리 받기에서도 남겨 목록·카드에 열기 전부터 '앞부분만'
+        (self.teaser_recorder.lock().unwrap().clone())(&item, a.paywalled == Some(true));
         a.partial = art.partial.filter(|p| *p);
         // 맛보기 판정(끝의 구독 권유 문구)을 본 뒤에 군더더기를 뺀다 — 번역 전에 빼서 번역 시간도 줄임
         let mut art = art;

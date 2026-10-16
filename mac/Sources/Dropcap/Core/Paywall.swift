@@ -7,14 +7,18 @@ enum PaywallKind: String, Equatable, Sendable {
     case hard      // 구독해야만 읽힘
     case metered   // 한 달 몇 건까지 무료
     case learned   // 표시는 없지만 여기서 열어 보면 자주 막힘
+    case teaser    // 이 기사를 미리 받아 보니 맛보기(앞부분만)였음(Paywall.isTeaser) — 출처·피드 표시보다 앞선다
 
     var label: String {
         switch self {
         case .hard: return "유료 기사"
         case .metered: return "일부 유료(무료 건수 제한)"
         case .learned: return "자주 막히는 곳"
+        case .teaser: return "앞부분만 공개된 기사"
         }
     }
+    // 목록·카드에서 자물쇠 옆에 붙는 짧은 글(맛보기만 — 다른 자물쇠와 구분)
+    var shortText: String? { self == .teaser ? "앞부분만" : nil }
     var symbol: String { self == .metered ? "lock.open" : "lock.fill" }
     // 열기 전에 다른 보도를 먼저 권할 만큼 막히는가
     var blocks: Bool { self != .metered }
@@ -46,8 +50,12 @@ enum Paywall {
         return nil
     }
 
-    static func kind(sourceId: String, link: String, meta: [String: SourceMeta] = Sections.meta,
+    // paid: 피드가 이 기사에 적은 표시(NewsItem.paid) — 출처 값보다 앞선다. true 면 구독해야만(hard), false 면 무료로 풀린 기사
+    // teaser: 이 기사를 받아 보니 맛보기였음(PaywallBook.teasers) — 무엇보다 앞선다
+    static func kind(sourceId: String, link: String, paid: Bool? = nil, teaser: Bool = false, meta: [String: SourceMeta] = Sections.meta,
                      stats: [String: Database.ExtractStat] = [:]) -> PaywallKind? {
+        if teaser { return .teaser }
+        if let paid { return paid ? .hard : nil }
         if let p = meta[sourceId]?.paywall { return PaywallKind(rawValue: p) }
         if let k = domainKind(link) { return k }
         if let s = stats[sourceId], s.tries >= learnMinTries, s.failRate >= learnFailRate { return .learned }
@@ -95,12 +103,12 @@ enum Paywall {
     // 같은 소식 중 열리는 보도: 유료가 아니고(배운 막힘 포함), 숨긴 출처가 아니고, 자기 자신이 아닌 것. 공식 발표 > 국내 > 언론, 최신 순
     static func freeAlternatives(_ item: NewsItem, story: [NewsItem], hidden: Set<String>,
                                  meta: [String: SourceMeta] = Sections.meta, stats: [String: Database.ExtractStat] = [:],
-                                 limit: Int = 3) -> [NewsItem] {
+                                 teasers: Set<String> = [], limit: Int = 3) -> [NewsItem] {
         let rank = ["lab": 0, "kr": 1, "press": 2]
         var seenSources: Set<String> = [item.sourceId]
         return story
             .filter { $0.key != item.key && !hidden.contains($0.sourceId) && !$0.link.isEmpty && $0.itemKind == .article
-                && kind(sourceId: $0.sourceId, link: $0.link, meta: meta, stats: stats) == nil }
+                && kind(sourceId: $0.sourceId, link: $0.link, paid: $0.paid, teaser: teasers.contains($0.link), meta: meta, stats: stats) == nil }
             .sorted { (rank[$0.tier] ?? 3, -($0.date?.timeIntervalSince1970 ?? 0)) < (rank[$1.tier] ?? 3, -($1.date?.timeIntervalSince1970 ?? 0)) }
             .filter { seenSources.insert($0.sourceId).inserted }
             .prefix(limit).map { $0 }
@@ -108,20 +116,37 @@ enum Paywall {
 }
 
 // 앱 안에서 쓰는 쪽: 출처별 기록을 기억해 두고 화면(자물쇠)·읽기 창(무료 보도 권하기)에 알려 준다
+// 맛보기로 판정된 기사(teasers)는 DB 에 남겨 목록·카드·물방울이 열기 전부터 '앞부분만'을 보이게 한다(바뀌면 화면이 다시 그림)
 @MainActor
-final class PaywallBook {
+final class PaywallBook: ObservableObject {
     static let shared = PaywallBook()
     private let db: Database
     private(set) var stats: [String: Database.ExtractStat]
+    @Published private(set) var teasers: Set<String>
 
     init(db: Database = .shared) {
         self.db = db
         stats = db.extractStats()
+        teasers = db.teaserLinks()
     }
 
+    // 화면 표시용: 맛보기 판정 > 피드의 기사 표시 > 출처 값 > 배운 막힘
     func kind(_ item: NewsItem) -> PaywallKind? {
         guard item.itemKind == .article, !item.link.isEmpty else { return nil }
-        return Paywall.kind(sourceId: item.sourceId, link: item.link, stats: stats)
+        return Paywall.kind(sourceId: item.sourceId, link: item.link, paid: item.paid, teaser: teasers.contains(item.link), stats: stats)
+    }
+
+    // 맛보기 판정(Paywall.isTeaser)에 넘기는 값: 지난 판정은 빼고 피드·출처만 본다(다시 받을 때 지난 판정에 끌려가지 않게)
+    func sourceKind(_ item: NewsItem) -> PaywallKind? {
+        guard item.itemKind == .article, !item.link.isEmpty else { return nil }
+        return Paywall.kind(sourceId: item.sourceId, link: item.link, paid: item.paid, stats: stats)
+    }
+
+    // 본문을 받은 기사(미리 받기 포함)의 맛보기 판정을 남긴다 — 맛보기가 아니면 지난 기록을 지운다
+    func recordTeaser(_ item: NewsItem, _ teaser: Bool) {
+        guard item.id != AppModel.previewID, !item.link.isEmpty, teaser != teasers.contains(item.link) else { return }
+        db.markTeaser(item.link, teaser)
+        if teaser { teasers.insert(item.link) } else { teasers.remove(item.link) }
     }
 
     // 사용자가 연 기사의 결과(미리 받기는 스크립트 없이 해서 실패가 잦으므로 세지 않는다)
@@ -134,6 +159,6 @@ final class PaywallBook {
     // 같은 스토리에서 무료로 읽을 수 있는 보도
     func alternatives(_ item: NewsItem) -> [NewsItem] {
         guard let c = Magazine.shared.clusterID(of: item.key) else { return [] }
-        return Paywall.freeAlternatives(item, story: Magazine.shared.storyItems(c), hidden: Set(AppModel.shared.state.hiddenSources), stats: stats) // storyItems 가 꺼진 출처를 이미 뺌
+        return Paywall.freeAlternatives(item, story: Magazine.shared.storyItems(c), hidden: Set(AppModel.shared.state.hiddenSources), stats: stats, teasers: teasers) // storyItems 가 꺼진 출처를 이미 뺌
     }
 }

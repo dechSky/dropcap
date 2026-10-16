@@ -130,9 +130,10 @@
     setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, 1600);
   }
 
-  // 유료 기사 자물쇠(G-14): 앱이 보낸 it.paywall(hard·metered·learned)·it.paywallHelp(이유). 없으면 빈 글자
+  // 유료 기사 자물쇠(G-14): 앱이 보낸 it.paywall(hard·metered·learned·teaser)·it.paywallHelp(이유). 없으면 빈 글자
+  // teaser(미리 받아 보니 맛보기)는 잠긴 자물쇠 + '앞부분만'(주황)으로 다른 자물쇠와 구분(맥 PaywallMark)
   const lock = (it) => it && it.paywall
-    ? `<span class="pw" title="${esc(it.paywallHelp || '')}" aria-label="${esc(it.paywallHelp || '')}">${ic(it.paywall === 'metered' ? 'lock.open' : 'lock.fill')}</span>` : '';
+    ? `<span class="pw${it.paywall === 'teaser' ? ' teaser' : ''}" title="${esc(it.paywallHelp || '')}" aria-label="${esc(it.paywallHelp || '')}">${ic(it.paywall === 'metered' ? 'lock.open' : 'lock.fill')}${it.paywall === 'teaser' ? '<span class="pwt">앞부분만</span>' : ''}</span>` : '';
 
   // 키보드 탐색(H-03, 맥 NavKey): ↓/J 다음 · ↑/K 이전 · ⏎ 열기 · S 나중에 읽기 · O 브라우저 · M 읽음/안 읽음.
   // Ctrl·Alt·Meta 가 함께면 탐색 키가 아니다(Ctrl+S 같은 다른 단축키와 겹치지 않게). 입력 칸에서 쓰는 글자도 아니다.

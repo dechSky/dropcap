@@ -1,16 +1,25 @@
 import SwiftUI
 
-// 목록 줄·매거진 카드·스토리에 붙는 작은 자물쇠(G-14)
+// 목록 줄·매거진 카드·스토리·물방울에 붙는 작은 자물쇠(G-14). 맛보기로 판정된 기사는 잠긴 자물쇠 + '앞부분만'(주황)으로 따로
 struct PaywallMark: View {
     let item: NewsItem
+    @ObservedObject private var book = PaywallBook.shared
     var body: some View {
-        if let k = PaywallBook.shared.kind(item) {
-            Image(systemName: k.symbol)
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .help(k.label + (k.blocks ? " — 열면 같은 소식의 무료 보도를 먼저 권합니다" : ""))
-                .accessibilityLabel(k.label)
+        if let k = book.kind(item) {
+            HStack(spacing: 2) {
+                Image(systemName: k.symbol)
+                if let t = k.shortText { Text(t).font(.system(size: 9.5, weight: .semibold)).fixedSize() }
+            }
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(k == .teaser ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
+            .help(Self.help(k))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(k.label)
         }
+    }
+    static func help(_ k: PaywallKind) -> String {
+        if k == .teaser { return "미리 받아 보니 사이트가 앞부분만 공개한 기사예요 — 열면 같은 소식의 무료 보도를 먼저 권합니다" }
+        return k.label + (k.blocks ? " — 열면 같은 소식의 무료 보도를 먼저 권합니다" : "")
     }
 }
 

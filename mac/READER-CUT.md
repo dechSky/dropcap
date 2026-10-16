@@ -1,6 +1,42 @@
 # 읽기 창 본문 잘림 — 케이스별 분석과 대응·표시 제안 (2026-10-15, 맥)
 
-> 상태: **3단계 반영(2026-10-15, reader-phase3 — 정책 표의 '남음' 4건 + Verge 짧은 기사 맛보기 오판)** — 아래 '3단계 결과'. 2단계 결과·1단계 분석은 그 아래에 그대로 둔다.
+> 상태: **4단계 반영(2026-10-16, paywall-early — 유료 기사를 목록 단계에서 알리기)** — 아래 '4단계 결과'. 3단계(2026-10-15, reader-phase3)·2단계 결과·1단계 분석은 그 아래에 그대로 둔다.
+
+## 4단계 결과 (paywall-early)
+
+1단계 ③ '목록·카드: 자물쇠 유지(열어 봐야 앎)'를 넓혀, **열기 전부터** 기사 단위로 알린다. 출처 단위 값(sources.json `paywall`·도메인 표·배운 막힘)보다 기사 단위 값을 앞세운다.
+
+### 고친 것
+
+| 갈래 | 고침 | 규칙 이름(세 판 같은 이름) | 자리 |
+|---|---|---|---|
+| 피드 단계 표시 | 피드가 기사마다 적은 유료 표시를 읽어 `NewsItem.paid`(true 유료 · false 무료로 풀림 · 없음): 분류(RSS `category`·`dc:subject`, Atom `category term`)가 `STAT+`·`Subscriber-Only Stories` 이거나 제목이 `STAT+:` 로 시작하면 유료, 분류가 `internal-paywall-exempt`(NYT)면 무료(둘 다면 무료). 유료면 `hard`(잠긴 자물쇠 '유료 기사'), 무료면 출처가 hard 여도 자물쇠 없음 — 무료 보도 고르기·맛보기 판정(hard 2,500자)에도 같은 값 | **feed-paid-mark** | `Core/FeedParser.paidMark` · `NewsItem.paid` · `Paywall.kind(paid:)` |
+| 미리 받기 단계 판정 | 본문을 받은 기사(알림 뒤 미리 받기 R-16 포함 — 지금은 읽기 창만 남기던 것)마다 `Paywall.isTeaser` 결과를 DB `teasers(link, updated)` 에 남김(맛보기 아니면 지움 · 30일 · 2,000건 · 미래 시각 버림). 목록 줄·매거진 카드·표지·스토리·**물방울 알림**의 자물쇠가 **잠긴 자물쇠 + '앞부분만'(주황)** 으로 바뀜(다른 자물쇠는 기호만·회색). 미리 받기가 끝나면 떠 있는 물방울·목록도 바로 다시 그림 | **teaser-mark** | `Database.markTeaser`·`teaserLinks` · `PaywallBook.recordTeaser`·`teasers` · `ArticleService.run` · `UI/PaywallViews.PaywallMark` · `Toast/ToastView` |
+| 판정 값 분리 | 맛보기 판정·읽기 창 안내에는 지난 판정을 뺀 값(`PaywallBook.sourceKind`)을 넘김 — '다시 받기'로 전문을 받으면 표시가 풀림. 판정 자체는 `Paywall.isTeaser` 그대로(Verge ld 길이 맞춤 포함) | – | `PaywallBook.sourceKind` · `ReaderView` |
+
+### 피드에 표시가 실제로 보이는 곳(2026-10-16, sources.json 147개 피드를 받아 봄)
+
+| 출처 | 피드 표시 | 결과 |
+|---|---|---|
+| STAT | 제목 머리 `STAT+: …`(이번 6건) + 분류 `STAT+`(5건) | 기사 단위 유료(출처 값은 metered) |
+| MIT Technology Review | 분류 `Subscriber-Only Stories`(1건) | 기사 단위 유료(출처 값 metered) |
+| NYT(건강 등) | 분류 `internal-paywall-exempt` | 무료로 풀린 기사 — 출처 hard 여도 자물쇠 없음 |
+| 한경 3곳 | **없음** — 프리미엄9 도 주소 끝 `…i` 뿐이고 무료 기사도 같은 꼴(hk-it 기사 1·2), 요약·분류 칸 없음 | 피드로는 못 가림 → 미리 받기 판정(`articlePayment="Y"`+짧은 본문)으로 '앞부분만' |
+| WSJ·Bloomberg·FT·Economist·Nikkei·Atlantic·Wired·MarketWatch | 없음(분류 없거나 주제뿐) | 출처 값 그대로 |
+| SBS `스브스프리미엄` | 분류는 있으나 무료 기획 연재 | 표시로 쓰지 않음 |
+
+### 남은 것
+
+- **Google 블로그 캐러셀 속 인용**: 이번에도 손대지 않음(값어치 낮음 — 페이지 스크립트를 돌려야 잴 수 있음, 3단계 '남은 것' 그대로).
+- 미리 받기는 알림 뜬 앞 3건만 하므로, 알림 없이 목록에만 있는 한경 프리미엄 기사는 열어 보기 전까지 출처 값(metered 열린 자물쇠)만 보인다.
+- 이미 DB 에 있는 예전 피드 기사에는 `paid` 가 없다(다음에 받는 기사부터).
+- (teaser-ld-port, 2026-10-16) 3단계 ld-body-match 를 윈도우·리눅스 맛보기 판정에도 옮김 — Verge 짧은 기사가 세 판 모두 '앞부분만'으로 뜨지 않음(윈도우 TeaserLdTests 6 · 리눅스 ld_body_tests 5).
+
+### 시험
+
+- `Tests/DropcapTests/PaywallEarlyTests.swift`(8): 피드 표시 있음(STAT+ 제목·STAT+ 분류·Subscriber-Only·Atom term)/풀림(exempt)/없음('Premium cars' 분류·제목 가운데 'STAT+:'), 기사 값이 출처·배운 막힘보다 앞섬, 무료 보도 고르기에 기사 값·맛보기 기록 반영, 예전 기록 읽힘, 맛보기 기록 DB(만료·미래 시각·지움), **미리 받기 맛보기 → 목록 표시 '앞부분만'**(앱 다시 켜도 남음 · 다시 받아 전문이면 풀림), Verge 꼴은 표시 안 됨. 글·주소는 지어냄.
+- **고치기 전 실패**: 같은 시험을 고치기 전 코드(e30f0c6)로는 `Entry.paid`·`NewsItem.paid`·`PaywallKind.teaser`·`markTeaser` 가 없어 컴파일부터 안 됨 — 고치기 전 판정으로는 STAT+ 피드 기사가 출처 값 metered(열린 자물쇠 '일부 유료'), NYT 풀린 기사가 hard, 미리 받은 한경 맛보기는 목록에 아무 표시 없음. **고친 뒤 통과**, 전체 `swift test` 327/327.
+- 화면 클릭 시험은 하지 않음(포커스를 뺏지 않게) — 자물쇠 표시는 `PaywallKind.shortText`·색 분기만.
 
 ## 3단계 결과 (reader-phase3)
 
@@ -39,7 +75,7 @@
 
 ### 사례: The Verge 짧은 기사(맛보기 오판)
 
-https://www.theverge.com/news/1011654/mckinsey-ai-client-interview — 사이트 HTML 본문 4문단과 ld+json articleBody(902자)가 같은, 원래 짧은 기사. Verge 는 늘 `isAccessibleForFree:false` 라고 적어 2단계의 '유료 표시+1,500자 미만' 규칙에 걸렸다. 추린 그대로는 기자 이름·소개·'Follow topics…' 까지 약 1,150자라 ld 와 27% 달라, 군더더기를 뺀 길이(899자)로도 견주게 했다. 그러면 사이트가 적은 본문 전부를 받은 것이므로 맛보기가 아니다. 사이트가 ld 에 전문을 적었는데 우리가 앞부분만 받았으면(ld 가 훨씬 김) 그대로 맛보기.
+theverge.com/… — 사이트 HTML 본문 4문단과 ld+json articleBody(902자)가 같은, 원래 짧은 기사. Verge 는 늘 `isAccessibleForFree:false` 라고 적어 2단계의 '유료 표시+1,500자 미만' 규칙에 걸렸다. 추린 그대로는 기자 이름·소개·'Follow topics…' 까지 약 1,150자라 ld 와 27% 달라, 군더더기를 뺀 길이(899자)로도 견주게 했다. 그러면 사이트가 적은 본문 전부를 받은 것이므로 맛보기가 아니다. 사이트가 ld 에 전문을 적었는데 우리가 앞부분만 받았으면(ld 가 훨씬 김) 그대로 맛보기.
 
 ### 남은 것
 
@@ -101,7 +137,7 @@ https://www.theverge.com/news/1011654/mckinsey-ai-client-interview — 사이트
 
 ### 사용자 사례: The Verge(유료처럼 잘려 보임)
 
-https://www.theverge.com/ai-artificial-intelligence/1011276/openai-employee-unreleased-product-plans
+theverge.com/…
 
 | | 고치기 전 앱 | 고친 뒤 |
 |---|---|---|
@@ -187,18 +223,18 @@ https://www.theverge.com/ai-artificial-intelligence/1011276/openai-employee-unre
 
 | # | 케이스 | 건 | 대표 주소 | 판별 신호(어떻게 알아채나) |
 |---|---|---|---|---|
-| **A** | **본문이 여러 덩어리 — Readability 가 한 덩어리만** | **9** (Ars 5·BBC 2·Politico 1·Google 1 — Ars·BBC 는 원문 HTML 대조로 확정) | https://arstechnica.com/science/2026/10/honey-bee-stingers-are-double-piston-venom-pumps/ (48%: 앞 4문단 빠짐, 정적 HTML 에 10문단 다 있음) · https://www.bbc.co.uk/news/articles/cw5y4nv05rp8o (소개 8문단만, 사진별 설명 수십 문단 빠짐) · https://www.politico.com/news/2026/10/12/democrats-are-making-corruption-messaging-a-pocketbook-issue-01115561 (34%) · https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-4-argon/ (66%, 중간 11문단) | 고른 덩어리의 부모 아래에 **같은 꼴(태그·class)의 형제 덩어리**가 더 있고 그 안에 긴 문단이 있음. 결과의 첫 문단이 기사 첫 문단(og:description·피드 요약과 겹침)과 다름 |
-| **B** | **본문 대신 옆 상자를 고름** | 1 (매일경제) | https://www.mk.co.kr/news/stock/12175428 (우리 499자 = 'AI 종목 이야기' 상자, 실제 본문 1,326자) | HTML 에 `itemprop="articleBody"`·ld+json `articleBody` 가 있는데 우리 결과와 겹치지 않음 |
-| **C** | **유료 맛보기(하드·구독)** | 1 확정(STAT) · 추정 14(WSJ 2·NYT 12) | https://www.statnews.com/2026/10/13/blackrock-humana-centerwell-deal-senior-care-medicare-clinics/ (1,455자, 끝이 'Subscribe') · WSJ 어제 600·731자(4~6문단) · NYT 어제 1,023~2,648자 | ld+json `isAccessibleForFree: false` + 짧은 본문, 구독 권유 문구, sources.json `paywall`(hard·metered). 지금 앱 판정 `Paywall.looksBlocked` 는 **1,500자 미만 + 문구 16개**뿐이라 WSJ·NYT 는 못 잡음 |
-| D | 무료 건수 제한(metered) | 0 잘림 · 신호 9 (Verge 4·STAT 2·한국경제 2·MIT TR 1) | https://www.theverge.com/tech/1010561/apple-homeview-commercial-reaction | `isAccessibleForFree: false` 인데 본문은 다 옴. 느린 길 웹 보기가 **비영속 저장소**라 매번 '첫 방문자'로 보여 건수가 차지 않음 → 지금은 문제 아님 |
+| **A** | **본문이 여러 덩어리 — Readability 가 한 덩어리만** | **9** (Ars 5·BBC 2·Politico 1·Google 1 — Ars·BBC 는 원문 HTML 대조로 확정) | arstechnica.com/… (48%: 앞 4문단 빠짐, 정적 HTML 에 10문단 다 있음) · bbc.co.uk/… (소개 8문단만, 사진별 설명 수십 문단 빠짐) · politico.com/… (34%) · blog.google/… (66%, 중간 11문단) | 고른 덩어리의 부모 아래에 **같은 꼴(태그·class)의 형제 덩어리**가 더 있고 그 안에 긴 문단이 있음. 결과의 첫 문단이 기사 첫 문단(og:description·피드 요약과 겹침)과 다름 |
+| **B** | **본문 대신 옆 상자를 고름** | 1 (매일경제) | mk.co.kr/… (우리 499자 = 'AI 종목 이야기' 상자, 실제 본문 1,326자) | HTML 에 `itemprop="articleBody"`·ld+json `articleBody` 가 있는데 우리 결과와 겹치지 않음 |
+| **C** | **유료 맛보기(하드·구독)** | 1 확정(STAT) · 추정 14(WSJ 2·NYT 12) | statnews.com/… (1,455자, 끝이 'Subscribe') · WSJ 어제 600·731자(4~6문단) · NYT 어제 1,023~2,648자 | ld+json `isAccessibleForFree: false` + 짧은 본문, 구독 권유 문구, sources.json `paywall`(hard·metered). 지금 앱 판정 `Paywall.looksBlocked` 는 **1,500자 미만 + 문구 16개**뿐이라 WSJ·NYT 는 못 잡음 |
+| D | 무료 건수 제한(metered) | 0 잘림 · 신호 9 (Verge 4·STAT 2·한국경제 2·MIT TR 1) | theverge.com/… | `isAccessibleForFree: false` 인데 본문은 다 옴. 느린 길 웹 보기가 **비영속 저장소**라 매번 '첫 방문자'로 보여 건수가 차지 않음 → 지금은 문제 아님 |
 | E | 로그인·가입벽 | 0 | – | 탐지 13건(노컷 등)은 모두 **댓글 로그인 안내**를 잘못 잡은 것, 본문은 다 옴 |
-| F | 지연 로딩·'더 보기' | 0 | https://kormedi.com/2884413/ ('더 보기'는 댓글 단추, 본문 1,403자 중 1,273자 옴 = 다 옴) | 본문 영역 안 '더 보기'·'Read more' 단추. 이번 목록에는 본문을 접는 사이트 없음 |
+| F | 지연 로딩·'더 보기' | 0 | kormedi.com/… ('더 보기'는 댓글 단추, 본문 1,403자 중 1,273자 옴 = 다 옴) | 본문 영역 안 '더 보기'·'Read more' 단추. 이번 목록에는 본문을 접는 사이트 없음 |
 | G | 여러 쪽 기사 | 0 | – | `rel=next`·쪽 번호 — 이번 목록 0 |
 | H | 페이지 2MB 상한 | 0 | – | 상한을 넘으면 잘리는 게 아니라 **받기 실패 → 느린 길**로 감(`FeedService.collect` 가 `tooLarge` 던짐). 이번 238건 중 넘는 것 0 |
 | I | BodyCleanup(R-21)·hiddenBlocks 과잉 | 0 | – | 기자 줄·짝 잃은 설명으로 뺀 글 46건 합계 982자, 한 기사에서 20% 넘게 뺀 일 0 |
 | J | 번역 단계 문단 빠짐 | 0(코드 확인) | – | `ArticleService` 는 문단 수를 그대로 두고 자리마다 바꿔 끼움. 구글 묶음 번역은 돌아온 문단 수가 안 맞으면 문단별로 다시, 실패한 문단은 원문 그대로 → 빠지지 않음 |
 | K | 화면 렌더 제한 | 0(코드 확인) | – | `articleBody` 는 블록 전부를 그림(개수·줄 제한 없음) |
-| L | 봇·지역 차단 | 16(측정 탓) | https://www.nytimes.com/2026/10/13/us/politics/georgia-senate-debate-ossoff-collins.html | 받은 페이지가 1.5KB 안팎·captcha-delivery. 지금은 '막힌 사이트' 실패 안내로 감(잘림 아님) |
+| L | 봇·지역 차단 | 16(측정 탓) | nytimes.com/… | 받은 페이지가 1.5KB 안팎·captcha-delivery. 지금은 '막힌 사이트' 실패 안내로 감(잘림 아님) |
 | M | **캐시에 남은 잘린 본문**(코드 확인) | – | – | `ArticleService.cached` 는 한 번 '완료'된 기사를 디스크에 150건까지 두고 **다시 받지 않음**. 맛보기·잘린 결과도 그대로 남아, 사이트가 고쳐지거나 앱이 고쳐져도 그 기사는 계속 잘려 보임. '다시 받기' 단추 없음 |
 
 ### 오판(판정에 걸렸지만 대조해 보니 정상) — 16건

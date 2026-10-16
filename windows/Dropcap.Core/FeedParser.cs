@@ -33,7 +33,24 @@ public sealed class BlockedException(string why) : FeedException($"안전하지 
 
 public static class FeedParser
 {
-    public sealed record Entry(string Id, string Title, string Link, DateTimeOffset? Date, string Summary, string? Image = null);
+    public sealed record Entry(string Id, string Title, string Link, DateTimeOffset? Date, string Summary, string? Image = null, bool? Paid = null);
+
+    // 피드가 기사마다 적은 유료 표시(feed-paid-mark — 출처의 paywall 값보다 앞선다). 맥 FeedParser.paidMark 와 같은 규칙:
+    // STAT 'STAT+:' 제목 머리·'STAT+' 분류, MIT TR 'Subscriber-Only Stories' 분류 → 유료(true) · NYT 'internal-paywall-exempt' 분류 → 무료로 풀림(false, 먼저 봄).
+    // 한경은 피드에 표시가 없다 — 미리 받기 판정(맛보기)으로 알린다
+    public static readonly IReadOnlySet<string> PaidCategories = new HashSet<string> { "stat+", "subscriber-only stories" };
+    public static readonly IReadOnlySet<string> FreeCategories = new HashSet<string> { "internal-paywall-exempt" };
+    public static readonly string[] PaidTitlePrefixes = ["STAT+:"];
+    public static bool? PaidMark(XNode it)
+    {
+        var cats = it.All("category").Concat(it.All("dc:subject"))
+            .Select(c => Plain.Clean(c.Attr("term") ?? c.Text.ToString()).ToLowerInvariant()).ToHashSet();
+        if (cats.Overlaps(FreeCategories)) return false;
+        if (cats.Overlaps(PaidCategories)) return true;
+        var title = Plain.Clean(it.Value("title"));
+        if (PaidTitlePrefixes.Any(p => title.StartsWith(p, StringComparison.Ordinal))) return true;
+        return null;
+    }
 
     static FeedParser()
     {
@@ -156,7 +173,7 @@ public static class FeedParser
                 var link = it.Value("link");
                 return new Entry(NonEmpty(it.Value("guid")) ?? link, Plain.Clean(it.Value("title")), link,
                     Dates.Parse(NonEmpty(it.Value("pubDate")) ?? it.Value("dc:date")),
-                    Prefix(Plain.Clean(it.Value("description")), 300), Image(it));
+                    Prefix(Plain.Clean(it.Value("description")), 300), Image(it), PaidMark(it));
             }).ToList();
         }
         if (root.Child("feed") is { } feed)
@@ -168,7 +185,7 @@ public static class FeedParser
                 var link = alt?.Attr("href") ?? alt?.Text.ToString() ?? "";
                 return new Entry(NonEmpty(it.Value("id")) ?? link, Plain.Clean(it.Value("title")), link,
                     Dates.Parse(NonEmpty(it.Value("published")) ?? it.Value("updated")),
-                    Prefix(Plain.Clean(NonEmpty(it.Value("summary")) ?? it.Value("content")), 300), Image(it));
+                    Prefix(Plain.Clean(NonEmpty(it.Value("summary")) ?? it.Value("content")), 300), Image(it), PaidMark(it));
             }).ToList();
         }
         if (root.Child("rdf:RDF") is { } rdf)

@@ -134,7 +134,7 @@ actor FeedService {
             NewsItem(id: $0.id, title: $0.title, titleKo: nil, link: $0.link, date: $0.date, summary: $0.summary,
                      sourceId: source.id, sourceName: source.name, tier: source.tier,
                      image: { e in e.image.flatMap { URL(string: $0, relativeTo: URL(string: e.link)) }.map(\.absoluteString) }($0),
-                     kind: source.kind, feedBody: $0.body)
+                     kind: source.kind, paid: $0.paid, feedBody: Self.sameSite($0.link, source.url) ? $0.body : nil)
         }
     }
 
@@ -143,6 +143,24 @@ actor FeedService {
     nonisolated static func sitemapPattern(_ source: Source, bundled: [Source] = Resources.config.sources) -> String? {
         guard let m = source.match, bundled.contains(where: { $0.id == source.id && $0.match == m }) else { return nil }
         return m
+    }
+
+    // 피드 본문 전문은 글 링크가 출처 피드와 같은 사이트(같은 등록 도메인)일 때만 받는다. 남의 링크에 본문을 실은
+    // 집계 피드면 사이트 추출이 실패했을 때 그 글이 링크한 기사처럼 읽기 창에 보일 수 있다(보안 점검 M15)
+    nonisolated static func sameSite(_ link: String, _ feed: String) -> Bool {
+        guard let a = URL(string: link)?.host, let b = URL(string: feed)?.host else { return false }
+        return siteKey(a) == siteKey(b)
+    }
+
+    // 등록 도메인 근사: 마지막 두 마디, 나라 도메인의 2단계(co.kr·co.uk·or.kr 등)면 세 마디. IP 는 그대로
+    nonisolated static func siteKey(_ host: String) -> String {
+        let h = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        if h.contains(":") || h.split(separator: ".").allSatisfy({ $0.allSatisfy(\.isNumber) }) { return h }
+        let parts = h.split(separator: ".")
+        guard parts.count > 2 else { return h }
+        let second: Set<Substring> = ["co", "com", "net", "org", "or", "ne", "go", "ac", "re", "gov", "edu", "ed", "mil", "ltd", "plc", "gen", "pe", "kg", "es", "hs", "ms", "sc"]
+        let n = parts.last!.count == 2 && second.contains(parts[parts.count - 2]) ? 3 : 2
+        return parts.suffix(n).joined(separator: ".")
     }
 
     // 사이트맵에서 찾은 새 글은 본문을 받아 제목·설명을 채운다

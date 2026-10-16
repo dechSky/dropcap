@@ -33,7 +33,7 @@ final class ReaderModel: ObservableObject {
 
     func load() async {
         Task { await findCover() }
-        paywall = PaywallBook.shared.kind(item)
+        paywall = PaywallBook.shared.sourceKind(item) // 맛보기 여부는 받은 본문의 paywalled 가 맡는다
         alternatives = PaywallBook.shared.alternatives(item)
         let svc = ArticleService.shared
         if let c = svc.cached(item.link) { apply(c); if !c.summarizing { return } }

@@ -36,6 +36,7 @@ pub struct Entry {
     pub date: Option<DateTime<Utc>>,
     pub summary: String,
     pub image: Option<String>,
+    pub paid: Option<bool>, // 피드가 이 기사에 적은 유료 표시(paid_mark)
 }
 
 fn non_empty(s: String) -> Option<String> {
@@ -282,6 +283,31 @@ pub fn fallback_id(title: &str, date: &str) -> String {
     format!("noid-{}", String::from_utf8(out).unwrap())
 }
 
+// 피드가 기사마다 적은 유료 표시(feed-paid-mark — 출처의 paywall 값보다 앞선다, 맥 FeedParser.paidMark). 2026-10-16 147개 피드에서 실제로 보인 것만:
+// STAT 'STAT+:' 제목 머리·'STAT+' 분류, MIT TR 'Subscriber-Only Stories' 분류 → 유료(true) · NYT 'internal-paywall-exempt' 분류 → 무료로 풀림(false).
+// 한경은 피드에 표시가 없다(프리미엄9 도 주소 끝 'i' 뿐인데 무료 기사도 같은 꼴) — 미리 받기 판정(맛보기)으로 알린다
+pub const PAID_CATEGORIES: &[&str] = &["stat+", "subscriber-only stories"];
+pub const FREE_CATEGORIES: &[&str] = &["internal-paywall-exempt"];
+pub const PAID_TITLE_PREFIXES: &[&str] = &["STAT+:"];
+pub fn paid_mark(it: &XNode) -> Option<bool> {
+    let cats: Vec<String> = it
+        .all("category")
+        .chain(it.all("dc:subject"))
+        .map(|c| plain::clean(c.attr("term").unwrap_or(&c.text)).to_lowercase())
+        .collect();
+    if cats.iter().any(|c| FREE_CATEGORIES.contains(&c.as_str())) {
+        return Some(false);
+    }
+    if cats.iter().any(|c| PAID_CATEGORIES.contains(&c.as_str())) {
+        return Some(true);
+    }
+    let title = plain::clean(&it.value("title"));
+    if PAID_TITLE_PREFIXES.iter().any(|p| title.starts_with(p)) {
+        return Some(true);
+    }
+    None
+}
+
 pub fn parse_feed(data: &[u8]) -> Result<Vec<Entry>, FeedError> {
     let root = tree(data)?;
     if let Some(channel) = root.child("rss").and_then(|r| r.child("channel")) {
@@ -295,6 +321,7 @@ pub fn parse_feed(data: &[u8]) -> Result<Vec<Entry>, FeedError> {
                     date: dates::parse(&non_empty(it.value("pubDate")).unwrap_or_else(|| it.value("dc:date"))),
                     summary: prefix(&plain::clean(&it.value("description")), 300),
                     image: image(it),
+                    paid: paid_mark(it),
                     link,
                 }
             })
@@ -313,6 +340,7 @@ pub fn parse_feed(data: &[u8]) -> Result<Vec<Entry>, FeedError> {
                     date: dates::parse(&non_empty(it.value("published")).unwrap_or_else(|| it.value("updated"))),
                     summary: prefix(&plain::clean(&non_empty(it.value("summary")).unwrap_or_else(|| it.value("content"))), 300),
                     image: image(it),
+                    paid: paid_mark(it),
                     link,
                 }
             })
@@ -328,6 +356,7 @@ pub fn parse_feed(data: &[u8]) -> Result<Vec<Entry>, FeedError> {
                 date: dates::parse(&it.value("dc:date")),
                 summary: prefix(&plain::clean(&it.value("description")), 300),
                 image: None,
+                paid: None,
             })
             .collect());
     }
@@ -347,7 +376,7 @@ pub fn parse_sitemap(data: &[u8], pattern: &Regex) -> Result<Vec<Entry>, FeedErr
             // 뉴스 사이트맵의 발행 시각(news:publication_date)을 먼저, 없으면 lastmod — 한국일보·문화일보는 발행 시각만 있다
             let published = u.child("news:news").map(|n| n.value("news:publication_date")).unwrap_or_default();
             let date = dates::parse(&non_empty(published).unwrap_or_else(|| u.value("lastmod")));
-            Some(Entry { id: loc.clone(), title: String::new(), link: loc, date, summary: String::new(), image: None })
+            Some(Entry { id: loc.clone(), title: String::new(), link: loc, date, summary: String::new(), image: None, paid: None })
         })
         .collect())
 }

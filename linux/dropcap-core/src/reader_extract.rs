@@ -469,3 +469,47 @@ pub fn paid_flag(html: &str) -> Option<bool> {
     }
     PAY.is_match(h).then_some(true)
 }
+
+// 사이트가 ld+json articleBody 로 적은 본문 글자 수(앞 1MB만, 여러 스크립트면 가장 긴 것 — 맥 ArticleExtractor.ldBodyLength).
+// 맛보기 판정이 우리 본문과 견준다(paywall::matches_site_body). JSON 깊이는 serde_json 이 128 에서 막고, 찾기는 64 단계까지만
+pub fn ld_body_length(html: &str) -> Option<usize> {
+    fn find(v: &serde_json::Value, depth: usize) -> Option<&str> {
+        if depth > 64 {
+            return None;
+        }
+        match v {
+            serde_json::Value::Object(m) => {
+                if let Some(serde_json::Value::String(b)) = m.get("articleBody") {
+                    if !b.is_empty() {
+                        return Some(b);
+                    }
+                }
+                m.values().find_map(|x| find(x, depth + 1))
+            }
+            serde_json::Value::Array(a) => a.iter().find_map(|x| find(x, depth + 1)),
+            _ => None,
+        }
+    }
+    let mut end = html.len().min(1_000_000);
+    while !html.is_char_boundary(end) {
+        end -= 1;
+    }
+    let lower = html[..end].to_ascii_lowercase(); // 아스키만 바꿔 바이트 자리가 그대로
+    let h = &html[..end];
+    let mut best: Option<usize> = None;
+    let mut from = 0;
+    while let Some(i) = lower[from..].find("application/ld+json") {
+        let start = from + i + "application/ld+json".len();
+        let Some(gt) = lower[start..].find('>') else { break };
+        let open = start + gt + 1;
+        let Some(close) = lower[open..].find("</script>") else { break };
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&h[open..open + close]) {
+            if let Some(b) = find(&v, 0) {
+                let n = crate::feed_parser::plain::clean(b).chars().count();
+                best = Some(best.unwrap_or(0).max(n));
+            }
+        }
+        from = open + close + "</script>".len();
+    }
+    best
+}

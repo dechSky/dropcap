@@ -1,6 +1,41 @@
 # 읽기 창 본문 잘림 — 케이스별 분석과 대응·표시 제안 (2026-10-15, 맥)
 
-> 상태: **4단계 반영(2026-10-16, paywall-early — 유료 기사를 목록 단계에서 알리기)** — 아래 '4단계 결과'. 3단계(2026-10-15, reader-phase3)·2단계 결과·1단계 분석은 그 아래에 그대로 둔다.
+> 상태: **5단계 반영(2026-10-16, carousel — 캐러셀·슬라이드 속 본문 글)** — 아래 '5단계 결과'. 4단계(paywall-early)·3단계(reader-phase3)·2단계 결과·1단계 분석은 그 아래에 그대로 둔다.
+
+## 5단계 결과 (carousel)
+
+1~4단계에서 '남음'이던 **Google 블로그 큰 발표 기사(65%)** 를 고쳤다. 받은 HTML 에 캐러셀 칸 글이 다 들어 있었다 — 3단계에서 '페이지 스크립트를 돌려야 잴 수 있다'고 본 것은 틀렸고, 인용 카드의 글이 요소 속성(`quote=`·`author-name=`·`author-title=`)에만 있어서 글자 수로 안 잡혔을 뿐이다.
+
+### 고친 것
+
+| 갈래 | 고침 | 규칙 이름(세 판 같은 이름) | 자리 |
+|---|---|---|---|
+| 캐러셀 칸이 통째로 빠짐(Google 블로그 `uni-media-carousel` 3개 22칸 — 영상 카드 설명 10 · 인용 카드 12) | 본문을 고른 뒤 원문에서 캐러셀(`aria-roledescription="carousel"`·swiper·glide·slick·splide·flickity·owl·class 에 carousel·`*-carousel` 요소)을 찾아, **앞 글과 뒤 글(문단·목록·소제목·인용)이 모두 우리 본문에 있는 것만** 칸(`aria-roledescription="slide"`·`swiper-slide`·`slick-slide`·`glide__slide`·`splide__slide`·`owl-item`·`carousel-item`·`*__slide`·`*-slide` 요소)마다 글·사진을 문서 순서대로 뒤 글 앞에 넣는다. 화면 밖 칸(aria-hidden)도 넣고, 복제 칸(`swiper-slide-duplicate`·`slick-cloned`·`cloned`·`--clone`)과 같은 칸은 한 번만, `data-swiper-slide-index` 가 다 있으면 그 차례로. 속성에만 든 인용(`quote=`·`data-quote=`, 20자 이상)은 인용 블록 + '— 이름, 직함' 문단. 사진 없는 칸의 설명 상자는 문단으로(짝 잃은 설명처럼 작게 보이지 않게). Readability 가 보이는 칸만 남겼으면(앞뒤 글 사이) 그것을 빼고 모든 칸을 차례대로 다시 넣음. 칸 안의 넘김 단추·점·쪽 번호는 뺌. 같은 글이 목차(li)에도 있으면 같은 태그의 것을 기준으로 | **carousel-slides** | 맥 추출 스크립트 · 윈도우 `web/extract.js` · 리눅스 `SCRIPT`(WebKitGTK) + `reader_extract::carousel`(웹 엔진 없는 빠른 길) |
+| 안전장치(본문 밖 추천 캐러셀) | 넣지 않음: nav·header·footer·aside 안 · class 에 related·recommend·promo·popular·most-read·trending·ranking·newsletter · 첫 소제목이 'Related…'·'Read more'·'관련 기사'·'많이 본' 등 · 칸 글의 60% 이상이 링크(추천 기사 줄) · 앞 글이나 뒤 글이 본문에 없음(본문 앞뒤·옆 상자 — 매경 '기사 속 종목 이야기' 캐러셀은 본문 뒤라 그대로 빠짐) · 칸이 없는 'carousel' 상자 | carousel-slides | 같음 |
+
+- 이전·되돌리기: 블록 꼴은 그대로(p·quote·img·cap)라 저장한 기사·다른 기기 기록에 영향 없음. 이미 받아 둔 기사는 그대로이고 '다시 받기'(⟳)나 다음 받기에서 새로 추림. 끄기는 추출 스크립트의 이 칸 하나를 빼면 됨.
+- 세 판의 캐러셀 칸 스크립트는 글자째 같다(맥 `CarouselTests.sameBlockInAllThreeScripts` 가 들여쓰기만 빼고 견줌). 리눅스 빠른 길은 같은 순서·같은 기준의 Rust 판.
+
+### 전·후
+
+- 대상: Google 블로그 큰 발표 기사(blog.google/… — 1단계와 같은 기사), 같은 받은 HTML 을 고치기 전(bc75cc9)·후 맥 추출기 빠른 길로. 원문 글자 수는 1단계 웹 보기 측정(24,178자).
+
+| | 전 | 후 |
+|---|---|---|
+| 우리 글자 / 원문 | 15,614 / 24,178 (**65%**) | 23,908 / 24,178 (**99%**) |
+| 블록 | 54 | 88 (영상 카드 설명 문단 10 · 인용 12 + 말한 사람 12) |
+| 빠진 것 | 캐러셀 칸 22개 전부 | 원문 쪽 각주 2문단(소개 가격 끝나는 날·'외부 의견' 고지 — `uni-footnotes`, 캐러셀 아님)·기자 직함 |
+
+- 다른 출처: sources.json 피드마다 최신 1건(147곳 중 받은 115곳)을 받아 캐러셀 꼴을 찾음 — 본문 사이 캐러셀은 Google 블로그 3개뿐. 나머지는 메뉴(연합·SBS·JTBC 검색어 줄)·본문 옆·아래 추천 줄(Korea Herald·경향·동아·서울경제·서울신문·국민·매경 랭킹)·사진 보기 창(동아·서울경제)·BBC 세로 영상 줄(aside)·Guardian 'More on this story'·ESPN 점수 줄·Wired 상품 카드 사진 줄. 캐러셀이 있는 21쪽을 고치기 전·후로 추려 견주니 **바뀐 것은 Google 블로그 1쪽뿐**(추천 줄이 끼어든 쪽 0).
+
+### 시험
+
+- 맥 `Tests/DropcapTests/CarouselTests.swift`(6) · 윈도우 `ReaderCutCarouselTests`(5, `scripts/test-extract.sh` — 머리 없는 Chromium) · 리눅스 `tests/carousel_tests.rs`(5, 빠른 길).
+- 실제 꼴: `Fixtures/reader-cut/carousel-cards.html`(Google 블로그를 `scramble_fixture.py` 로 — 이번에 `aria-roledescription`·`aria-hidden`·`data-swiper-slide-index` 를 남기고, 글이 든 속성 `quote`·`author-name`·`author-title` 은 글처럼 바꿔 남기게 고침). 표지: 앞 글 BEFORECAR · 첫 칸 CARCAPA · 인용 CARQUOTE + CARWHO · 마지막 칸 CARCAPZ · 뒤 소제목 AFTERCAR · 본문 밖 관련 기사 RELCAR. 리눅스는 같은 파일을 `tests/fixtures/reader-cut/` 에.
+- 지어낸 HTML: swiper(화면 밖 칸·복제 칸·돌려 놓은 차례·쪽 번호·넘김 단추), slick 복제 칸, aria 캐러셀의 li 칸(사진+글), 추천 줄(링크 카드)·본문 뒤·aside 캐러셀은 안 넣음, 칸 없는 'carousel' 상자는 그대로.
+- **고치기 전 실패**: 같은 시험을 고치기 전 추출기로 돌리면 세 판 모두 5개 중 3개 실패(Google 칸 설명·인용 없음, 화면 밖·복제 칸·차례, li 칸 사진·글) — 안전장치 2개는 전에도 통과(넣지 않는 쪽이라 당연). **고친 뒤 모두 통과.**
+- 전체: 맥 `swift test` 341/341 · 리눅스 `cargo test` 313 통과(1 무시 — 바깥 서버) + 리눅스 전 기능 형 검사 · 윈도우 `dotnet test` 522 통과(8 건너뜀, 추출 JS 시험 포함) + WinUI 점검(`check-on-mac.sh`) 오류 0.
+
 
 ## 4단계 결과 (paywall-early)
 
@@ -27,7 +62,7 @@
 
 ### 남은 것
 
-- **Google 블로그 캐러셀 속 인용**: 이번에도 손대지 않음(값어치 낮음 — 페이지 스크립트를 돌려야 잴 수 있음, 3단계 '남은 것' 그대로).
+- **Google 블로그 캐러셀 속 인용**: 이번에도 손대지 않음(값어치 낮음 — 페이지 스크립트를 돌려야 잴 수 있음, 3단계 '남은 것' 그대로). → 5단계에서 고침(65% → 99%).
 - 미리 받기는 알림 뜬 앞 3건만 하므로, 알림 없이 목록에만 있는 한경 프리미엄 기사는 열어 보기 전까지 출처 값(metered 열린 자물쇠)만 보인다.
 - 이미 DB 에 있는 예전 피드 기사에는 `paid` 가 없다(다음에 받는 기사부터).
 - (teaser-ld-port, 2026-10-16) 3단계 ld-body-match 를 윈도우·리눅스 맛보기 판정에도 옮김 — Verge 짧은 기사가 세 판 모두 '앞부분만'으로 뜨지 않음(윈도우 TeaserLdTests 6 · 리눅스 ld_body_tests 5).
@@ -79,7 +114,7 @@ theverge.com/… — 사이트 HTML 본문 4문단과 ld+json articleBody(902자
 
 ### 남은 것
 
-- **Google 블로그 캐러셀 속 인용**(1건): 손대지 않음. 캐러셀(`uni-media-carousel`)은 영상 카드 설명이고 인용은 사용자 정의 요소 안이라, 받은 HTML 만으로 재려면 페이지 스크립트를 돌려야 함(이번 점검은 스크립트를 돌리지 않음). 값어치 낮음.
+- **Google 블로그 캐러셀 속 인용**(1건): 손대지 않음(→ 5단계에서 고침). 캐러셀(`uni-media-carousel`)은 영상 카드 설명이고 인용은 사용자 정의 요소 안이라, 받은 HTML 만으로 재려면 페이지 스크립트를 돌려야 함(이번 점검은 스크립트를 돌리지 않음). 값어치 낮음.
 - 캐러셀 설명 상자(`__caption-within`)는 이제 class 규칙으로 설명(cap)이 됨 — 사진이 없으면 짝 잃은 설명처럼 작게 보임.
 - 윈도우·리눅스: 위 규칙 이름(feed-full-body·table-rows·table-cell-translate·caption-pairing·inline-recommend·ld-body-match)으로 이식(각 담당).
 

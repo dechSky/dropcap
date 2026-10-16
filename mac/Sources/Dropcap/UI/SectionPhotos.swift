@@ -12,19 +12,35 @@ final class SectionPhotos: ObservableObject {
     func load() {
         guard !loading else { return }
         loading = true
-        let recent = Database.shared.items(from: Date().addingTimeInterval(-3 * 86400), limit: 3000).map(\.item)
-        for s in Sections.all where images[s.id] == nil {
-            Task {
-                // 사진 점수(화면 캡처·글자 위주 그림·로고 거름)를 넘는 첫 사진. 기록에 없으면(처음 실행) 피드를 바로 받아 봄
-                var got = await SectionPhoto.pick(recent.filter { $0.inSection(s.id) })
-                if got == nil { got = await SectionPhoto.pick(await Self.feedItems(s.id)) }
-                guard let img = got?.image else { return }
-                withAnimation(.easeOut(duration: 0.35)) { self.images[s.id] = img }
+        let want = Sections.all.map(\.id).filter { images[$0] == nil }
+        Task {
+            // 기록 읽기(최근 3000건)와 분야 나누기(낱말 분류)는 화면 줄기 밖에서 — 기록이 많으면 매거진을 열 때 메인이 몇 초 멈췄다(STABILITY.md S8)
+            let bySection = await Task.detached(priority: .userInitiated) {
+                Self.candidates(Database.shared.items(from: Date().addingTimeInterval(-3 * 86400), limit: 3000).map(\.item), sections: want)
+            }.value
+            for id in want {
+                Task {
+                    // 사진 점수(화면 캡처·글자 위주 그림·로고 거름)를 넘는 첫 사진. 기록에 없으면(처음 실행) 피드를 바로 받아 봄
+                    var got = await SectionPhoto.pick(bySection[id] ?? [])
+                    if got == nil { got = await SectionPhoto.pick(await Self.feedItems(id)) }
+                    guard let img = got?.image else { return }
+                    withAnimation(.easeOut(duration: 0.35)) { self.images[id] = img }
+                }
             }
         }
     }
 
-    static func usable(_ u: String?) -> Bool { u != nil && !ImageKey.isJunk(u) }
+    // 분야마다 사진 있는 최근 기사(기록 순서 그대로) — 분야 칩이 그 분야인 것
+    nonisolated static func candidates(_ recent: [NewsItem], sections: [String]) -> [String: [NewsItem]] {
+        let want = Set(sections)
+        var out: [String: [NewsItem]] = [:]
+        for it in recent where usable(it.image) {
+            for c in it.sectionChips where want.contains(c) { out[c, default: []].append(it) }
+        }
+        return out
+    }
+
+    nonisolated static func usable(_ u: String?) -> Bool { u != nil && !ImageKey.isJunk(u) }
 
     // 그 분야 기본(켤) 출처부터 차례로 받은 글들(사진 있는 글이 나올 때까지 최대 세 곳)
     private static func feedItems(_ section: String) async -> [NewsItem] {

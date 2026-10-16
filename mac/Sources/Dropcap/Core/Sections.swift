@@ -145,24 +145,27 @@ enum Sections {
         return (sec, english.isEmpty ? nil : try? NSRegularExpression(pattern: pattern), korean)
     }
     // 분야마다 걸린 낱말 수(서로 다른 낱말)
+    // 한국어 낱말은 글자 그대로(.literal) 찾는다 — 기본 contains 는 유니코드 동치까지 따져 6배쯤 느려, 기록이 많으면
+    // 분야를 나누는 데만 화면이 몇 초씩 멈췄다(STABILITY.md S8). 글은 먼저 NFC 로 맞춰 결과는 같게
+    static func normalized(_ text: String) -> String { text.lowercased().precomposedStringWithCanonicalMapping }
     static func hits(_ text: String) -> [String: Int] {
-        let t = text.lowercased()
+        let t = normalized(text)
         let r = NSRange(t.startIndex..., in: t)
         var out: [String: Int] = [:]
         for (sec, re, korean) in compiled {
             var found = Set<String>()
             re?.enumerateMatches(in: t, range: r) { m, _, _ in if let m, let rr = Range(m.range, in: t) { found.insert(String(t[rr])) } }
-            for k in korean where t.contains(k) { found.insert(k) }
+            for k in korean where t.range(of: k, options: .literal) != nil { found.insert(k) }
             if !found.isEmpty { out[sec] = found.count }
         }
         return out
     }
 
     static func classify(_ text: String) -> String? {
-        let t = text.lowercased()
+        let t = normalized(text)
         let r = NSRange(t.startIndex..., in: t)
         for (sec, re, korean) in compiled {
-            if re?.firstMatch(in: t, range: r) != nil || korean.contains(where: { t.contains($0) }) { return sec }
+            if re?.firstMatch(in: t, range: r) != nil || korean.contains(where: { t.range(of: $0, options: .literal) != nil }) { return sec }
         }
         return nil
     }

@@ -5,26 +5,32 @@ import SwiftUI
 
 // 피드에서 온 사진 주소는 믿지 않으므로 AsyncImage 대신 이것을 쓴다:
 // 공개 주소만(FeedService 의 안전 검사), 8MB 까지, 줄여서(최대 1400px) 메모리·디스크에 담아 둔다.
+// 메모리에는 풀린 그림 크기로 64MB 까지만(오래된 것부터 버림) — 예전엔 장 수(160장)로만 묶어 큰 사진이면 수백 MB 를 붙들었다(STABILITY.md S1).
 actor ImageLoader {
     static let shared = ImageLoader()
-    private let memory = NSCache<NSString, NSImage>()
+    static let memoryLimitBytes = 64 << 20
+    private var memory = ImageMemoryCache(limitBytes: ImageLoader.memoryLimitBytes, limitCount: 160)
     private var inflight: [String: Task<NSImage?, Never>] = [:]
-    private let dir: URL = {
-        let d = Store.dir.appendingPathComponent("images", isDirectory: true)
-        try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
-        return d
-    }()
+    private let dir: URL
 
-    init() { memory.countLimit = 160 }
+    // dir 은 시험에서만 바꾼다
+    init(dir: URL = Store.dir.appendingPathComponent("images", isDirectory: true)) {
+        self.dir = dir
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    }
+
+    // 시험용: 메모리에 담아 둔 사진인가
+    func inMemory(_ url: String) -> Bool { memory.contains(url) }
+    var memoryBytes: Int { memory.bytes }
 
     func image(_ url: String) async -> NSImage? {
-        if let m = memory.object(forKey: url as NSString) { return m }
+        if let m = memory.get(url) { return m }
         if let t = inflight[url] { return await t.value }
         let t = Task { await load(url) }
         inflight[url] = t
         let img = await t.value
         inflight[url] = nil
-        if let img { memory.setObject(img, forKey: url as NSString) }
+        if let img { memory.put(url, img) }
         return img
     }
 
@@ -33,6 +39,7 @@ actor ImageLoader {
         (try? Data(contentsOf: file(url))).flatMap(NSImage.init(data:))
     }
 
+    nonisolated func diskFile(_ url: String) -> URL { file(url) } // 시험용
     nonisolated private func file(_ url: String) -> URL {
         let h = SHA256.hash(data: Data(url.utf8)).map { String(format: "%02x", $0) }.joined().prefix(24)
         return dir.appendingPathComponent("\(h).jpg")
@@ -87,6 +94,45 @@ actor ImageLoader {
                 < ((try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast)
         }
         sorted.prefix(files.count - 500).forEach { try? fm.removeItem(at: $0) }
+    }
+}
+
+// 풀린 그림 크기(바이트)로 묶은 최근 사용 순 기억. 넘치면 가장 오래 안 쓴 것부터 버린다.
+struct ImageMemoryCache {
+    let limitBytes: Int
+    let limitCount: Int
+    private var entries: [String: (image: NSImage, cost: Int, used: Int)] = [:]
+    private var tick = 0
+    private(set) var bytes = 0
+
+    init(limitBytes: Int, limitCount: Int) { self.limitBytes = limitBytes; self.limitCount = limitCount }
+
+    func contains(_ key: String) -> Bool { entries[key] != nil }
+
+    mutating func get(_ key: String) -> NSImage? {
+        guard let e = entries[key] else { return nil }
+        tick += 1
+        entries[key]?.used = tick
+        return e.image
+    }
+
+    mutating func put(_ key: String, _ image: NSImage) {
+        let cost = Self.cost(image)
+        if let old = entries.removeValue(forKey: key) { bytes -= old.cost }
+        guard cost <= limitBytes else { return } // 상한보다 큰 한 장은 담지 않는다
+        tick += 1
+        entries[key] = (image, cost, tick)
+        bytes += cost
+        while bytes > limitBytes || entries.count > limitCount, let oldest = entries.min(by: { $0.value.used < $1.value.used }) {
+            entries.removeValue(forKey: oldest.key)
+            bytes -= oldest.value.cost
+        }
+    }
+
+    // 풀었을 때 크기: 가장 큰 표현의 화소 수 × 4
+    static func cost(_ image: NSImage) -> Int {
+        let px = image.representations.map { $0.pixelsWide * $0.pixelsHigh }.max() ?? 0
+        return max(px > 0 ? px : Int(image.size.width * image.size.height), 1) * 4
     }
 }
 

@@ -75,7 +75,8 @@ final class AppModel: ObservableObject {
         defer { checking = false }
 
         let active = allSources.filter { state.enabled[$0.id] == true }
-        var found: [NewsItem] = []
+        var got: [(Source, [NewsItem])] = []
+        var errors = state.errors
         await withTaskGroup(of: (Source, Result<[NewsItem]?, Error>).self) { group in
             for src in active {
                 group.addTask {
@@ -85,13 +86,28 @@ final class AppModel: ObservableObject {
             for await (src, res) in group {
                 switch res {
                 case .success(let items):
-                    state.errors.removeValue(forKey: src.id)
-                    if let items { found += await fresh(items, from: src) }
+                    errors.removeValue(forKey: src.id)
+                    if let items { got.append((src, items)) }
                 case .failure(let e):
-                    state.errors[src.id] = e.localizedDescription
+                    errors[src.id] = e.localizedDescription
                 }
             }
         }
+        state.errors = errors
+        // 본 글 기억은 한 번에 고친다: @Published 상태의 사전을 글마다 고치면 그때마다 사전 전체(8000개)가 복사돼
+        // 확인 한 번에 메인 스레드가 수백 ms 멈췄다(STABILITY.md S6)
+        var seen = state.seen, seeded = state.seeded
+        let now = Date()
+        var news: [(Source, [NewsItem])] = []
+        for (src, items) in got {
+            let firstTime = !seeded.contains(src.id)
+            news.append((src, Self.markSeen(items, seen: &seen, firstTime: firstTime, now: now, maxAge: maxAge)))
+            if firstTime { seeded.append(src.id) }
+        }
+        state.seen = seen
+        state.seeded = seeded
+        var found: [NewsItem] = []
+        for (src, items) in news { found += await kept(items, from: src) }
 
         found.sort { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
         if !found.isEmpty {
@@ -397,20 +413,21 @@ final class AppModel: ObservableObject {
         return start < end ? (h >= start && h < end) : (h >= start || h < end)
     }
 
-    private func fresh(_ items: [NewsItem], from src: Source) async -> [NewsItem] {
-        let firstTime = !state.seeded.contains(src.id)
-        let now = Date()
+    // 피드의 글을 본 글 기억에 남기고 새 글만 돌려준다
+    nonisolated static func markSeen(_ items: [NewsItem], seen: inout [String: Double], firstTime: Bool, now: Date, maxAge: TimeInterval) -> [NewsItem] {
         var out: [NewsItem] = []
         for it in items {
-            let known = state.seen[it.key] != nil
-            state.seen[it.key] = now.timeIntervalSince1970 // 피드에 남아 있는 동안은 지워지지 않게 시각 갱신
+            let known = seen[it.key] != nil
+            seen[it.key] = now.timeIntervalSince1970 // 피드에 남아 있는 동안은 지워지지 않게 시각 갱신
             guard !known else { continue }
             if firstTime { continue } // 처음 켠 출처는 기존 글을 조용히 기억만 한다
             if let d = it.date, now.timeIntervalSince(d) > maxAge { continue }
             out.append(it)
         }
-        if firstTime { state.seeded.append(src.id) }
+        return out
+    }
 
+    private func kept(_ out: [NewsItem], from src: Source) async -> [NewsItem] {
         var kept: [NewsItem] = []
         for var it in out {
             if src.type == "sitemap" { await FeedService.shared.fillTitle(&it) }
@@ -531,7 +548,13 @@ final class AppModel: ObservableObject {
     }
 
     // MARK: 잠시 끄기·브리핑·단축키
-    var isSnoozed: Bool { (state.snoozeUntil ?? .distantPast) > Date() }
+    var isSnoozed: Bool { Self.snoozeActive(until: state.snoozeUntil, now: Date()) }
+    // 잠시 끄기는 길어야 '내일 아침 8시'(32시간 안). 이틀보다 먼 끝은 시계가 앞서 있던 때 켠 것으로 보고 풀었다고 본다(STABILITY.md S4)
+    nonisolated static let snoozeMax: TimeInterval = 48 * 3600
+    nonisolated static func snoozeActive(until: Date?, now: Date) -> Bool {
+        guard let until else { return false }
+        return until > now && until.timeIntervalSince(now) <= snoozeMax
+    }
 
     func snooze(_ until: Date?) {
         state.snoozeUntil = until
@@ -551,7 +574,7 @@ final class AppModel: ObservableObject {
     }
 
     private func minuteTick() {
-        if let s = state.snoozeUntil, s <= Date() { state.snoozeUntil = nil; Store.save(state) }
+        if state.snoozeUntil != nil, !isSnoozed { state.snoozeUntil = nil; Store.save(state) } // 끝났거나 시계가 바뀌어 너무 먼 것
         if Calendar.current.component(.minute, from: Date()) % 30 == 0 { Task { await Magazine.shared.publishDue() } } // 지난 호 발행
         deliverBundles()
         deliverWatchDigest()
@@ -610,14 +633,18 @@ final class AppModel: ObservableObject {
     func setRead(_ item: NewsItem, _ on: Bool) {
         if on { state.read[item.key] = Date().timeIntervalSince1970 } else { state.read.removeValue(forKey: item.key) }
         if state.read.count > 3000 {
-            for (k, _) in state.read.sorted(by: { $0.value < $1.value }).prefix(state.read.count - 2000) { state.read.removeValue(forKey: k) }
+            var read = state.read // 한 번에(글마다 고치면 사전 전체가 그때마다 복사됨 — S6)
+            for (k, _) in read.sorted(by: { $0.value < $1.value }).prefix(read.count - 2000) { read.removeValue(forKey: k) }
+            state.read = read
         }
         Store.save(state)
     }
 
     func markAllRead() {
         let now = Date().timeIntervalSince1970
-        for it in state.recent where state.read[it.key] == nil { state.read[it.key] = now }
+        var read = state.read
+        for it in state.recent where read[it.key] == nil { read[it.key] = now }
+        state.read = read
         state.unread = 0
         state.unreadKeys = []
         Store.save(state)
@@ -679,7 +706,9 @@ final class AppModel: ObservableObject {
             guard !allSources.contains(where: { $0.id == src.id || $0.url == src.url }) else { return "이미 구독 중인 채널입니다" }
             // 지금 있는 글은 이 자리에서 기억해 두고(알리지 않음), 이후에 올라오는 글부터 알린다
             let now = Date().timeIntervalSince1970
-            for it in items { state.seen[it.key] = now }
+            var seen = state.seen
+            for it in items { seen[it.key] = now }
+            state.seen = seen
             state.seeded.append(src.id)
             state.customSources.append(src)
             state.enabled[src.id] = true

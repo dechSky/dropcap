@@ -7,16 +7,21 @@ import SQLite3
 final class Database: @unchecked Sendable {
     static let shared = Database()
     static let schemaVersion: Int32 = 1
+    static let busyTimeoutMs: Int32 = 3000
 
     private var db: OpaquePointer?
     private let queue = DispatchQueue(label: "magazine.db")
     let file: URL
     private(set) var recreated = false   // 이번 실행에서 깨진 파일을 치우고 새로 만들었는가
     private(set) var salvagedScraps = 0  // 그때 깨진 파일에서 건진 스크랩 수
+    private(set) var statements = 0      // 시험용: 실행한 문장 수(화면 하나에 DB 를 몇 번 묻는지)
 
-    // file 은 시험에서만 바꾼다
-    init(file: URL = Store.dir.appendingPathComponent("magazine.sqlite")) {
+    private let busyMs: Int32
+
+    // file·busyTimeoutMs 는 시험에서만 바꾼다
+    init(file: URL = Store.dir.appendingPathComponent("magazine.sqlite"), busyTimeoutMs: Int32 = Database.busyTimeoutMs) {
         self.file = file
+        busyMs = busyTimeoutMs
         queue.sync { open() }
     }
 
@@ -24,6 +29,7 @@ final class Database: @unchecked Sendable {
         // sqlite3_open 은 깨진 파일도 열어 준다 — 첫 문장에서 '데이터베이스가 아님/깨짐'이 나오면 그때 옆으로 치운다.
         // (그대로 두면 모든 읽기·쓰기가 조용히 실패해 새 스크랩까지 사라졌다)
         let opened = sqlite3_open(file.path, &db) == SQLITE_OK
+        installBusyHandler()
         if !opened || (!createSchema() && [SQLITE_NOTADB, SQLITE_CORRUPT].contains(sqlite3_errcode(db))) {
             NSLog("[DB] 열기 실패, 새로 만듭니다: %@", String(cString: sqlite3_errmsg(db)))
             sqlite3_close(db)
@@ -36,12 +42,26 @@ final class Database: @unchecked Sendable {
                 try? fm.moveItem(at: from, to: broken)
             }
             sqlite3_open(file.path, &db)
+            installBusyHandler()
             createSchema()
             recreated = true
             // 스크랩은 사용자가 만든 것이라 다시 쌓이지 않는다 → 치운 파일에서 읽을 수 있는 만큼 옮겨 온다
             salvagedScraps = salvageScraps(from: URL(fileURLWithPath: file.deletingPathExtension().path + ".broken.sqlite"))
             if salvagedScraps > 0 { NSLog("[DB] 깨진 파일에서 스크랩 %d개를 옮겨 왔습니다", salvagedScraps) }
         }
+    }
+
+    // 다른 연결이 잠깐 잠갔을 때 바로 실패하지 않고 기다린다(STABILITY.md S7). 뒤 스레드는 busyMs 까지,
+    // 메인 스레드(화면)는 0.1초까지만 — queue.sync 는 부른 스레드에서 돌므로 메인에서 부른 쓰기가 화면을 멈추지 않게
+    private func installBusyHandler() {
+        sqlite3_busy_handler(db, { ctx, count in
+            guard let ctx else { return 0 }
+            let me = Unmanaged<Database>.fromOpaque(ctx).takeUnretainedValue()
+            let limit = Thread.isMainThread ? min(me.busyMs, 100) : me.busyMs
+            guard Int32(count) * 10 < limit else { return 0 }
+            usleep(10_000)
+            return 1
+        }, Unmanaged.passUnretained(self).toOpaque())
     }
 
     // 시험·손 복구용: 다른 DB 파일의 스크랩을 이 DB 로 옮긴다
@@ -104,10 +124,13 @@ final class Database: @unchecked Sendable {
     // MARK: 문장 실행 도우미
     enum Value { case text(String?), real(Double?), int(Int?) }
 
-    private func run(_ sql: String, _ args: [Value], row: ((OpaquePointer) -> Void)? = nil) {
+    // 성공하면 true(잠김·디스크 가득 등으로 실패하면 false — 부르는 쪽이 다시 시도할 수 있게)
+    @discardableResult
+    private func run(_ sql: String, _ args: [Value], row: ((OpaquePointer) -> Void)? = nil) -> Bool {
+        statements += 1
         var st: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &st, nil) == SQLITE_OK else {
-            NSLog("[DB] 준비 실패 %@", String(cString: sqlite3_errmsg(db))); return
+            NSLog("[DB] 준비 실패 %@", String(cString: sqlite3_errmsg(db))); return false
         }
         defer { sqlite3_finalize(st) }
         let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
@@ -122,8 +145,8 @@ final class Database: @unchecked Sendable {
         while true {
             let r = sqlite3_step(st)
             if r == SQLITE_ROW { row?(st!); continue }
-            if r != SQLITE_DONE { NSLog("[DB] 실행 실패(%d) %@", r, String(cString: sqlite3_errmsg(db))) } // 잠김·디스크 가득 등(A-33)
-            break
+            if r != SQLITE_DONE { NSLog("[DB] 실행 실패(%d) %@", r, String(cString: sqlite3_errmsg(db))); return false } // 잠김·디스크 가득 등(A-33)
+            return true
         }
     }
 
@@ -138,12 +161,13 @@ final class Database: @unchecked Sendable {
         var cluster: String?
     }
 
-    func upsert(_ item: NewsItem, cluster: String?, firstSeen: Date = Date()) {
-        guard let json = try? Self.itemEncoder.encode(item) else { return }
+    @discardableResult
+    func upsert(_ item: NewsItem, cluster: String?, firstSeen: Date = Date()) -> Bool {
+        guard let json = try? Self.itemEncoder.encode(item) else { return false }
         // 피드 본문이 빠진 사본(앱 상태·스크랩에서 온 것)으로 다시 넣어도 DB 에 둔 피드 본문은 지우지 않는다(ON CONFLICT 의 CASE)
         // 논문 피드(arXiv)는 날짜가 발표일 자정이라, 지면에는 받은 때를 기준으로 싣는다
         let when = item.itemKind == .paper ? firstSeen : item.date
-        queue.sync {
+        return queue.sync {
             run("""
             INSERT INTO items(key,json,date,first_seen,category,source,tier,cluster,image) VALUES(?,?,?,?,?,?,?,?,?)
             ON CONFLICT(key) DO UPDATE SET
@@ -267,6 +291,22 @@ final class Database: @unchecked Sendable {
             run("SELECT json, first_seen, cluster FROM items WHERE cluster=? ORDER BY COALESCE(date, first_seen) ASC", [.text(id)]) { st in
                 guard let j = Self.text(st, 0), let it = try? Self.decoder.decode(NewsItem.self, from: Data(j.utf8)) else { return }
                 out.append(StoredItem(item: it, firstSeen: Date(timeIntervalSince1970: sqlite3_column_double(st, 1)), cluster: Self.text(st, 2)))
+            }
+        }
+        return out
+    }
+
+    // 최근 스토리(보도 2건 이상)의 보도들을 한 번에(스토리 목록 — 스토리마다 따로 묻지 않게)
+    func storyMembers(since: Date) -> [String: [StoredItem]] {
+        var out: [String: [StoredItem]] = [:]
+        queue.sync {
+            run("""
+            SELECT json, first_seen, cluster FROM items
+            WHERE cluster IN (SELECT id FROM clusters WHERE last >= ? AND size >= 2)
+            ORDER BY COALESCE(date, first_seen) ASC
+            """, [.real(since.timeIntervalSince1970)]) { st in
+                guard let c = Self.text(st, 2), let j = Self.text(st, 0), let it = try? Self.decoder.decode(NewsItem.self, from: Data(j.utf8)) else { return }
+                out[c, default: []].append(StoredItem(item: it, firstSeen: Date(timeIntervalSince1970: sqlite3_column_double(st, 1)), cluster: c))
             }
         }
         return out

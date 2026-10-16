@@ -15,18 +15,26 @@ actor FeedService {
 
     private var validators: [String: (etag: String?, modified: String?)] = [:]
     private var pending: [String: (etag: String?, modified: String?)] = [:] // 해석이 성공해야 확정
-    private let session: URLSession = {
-        let c = URLSessionConfiguration.ephemeral
-        c.timeoutIntervalForRequest = 20
-        c.requestCachePolicy = .reloadIgnoringLocalCacheData
-        return URLSession(configuration: c)
-    }()
+    private let session: URLSession
     private let allowLocal: Bool // 시험에서만: 내 Mac 안의 시험 서버(127.0.0.1)를 받게
 
+    static func makeSession(resourceTimeout: TimeInterval) -> URLSession {
+        let c = URLSessionConfiguration.ephemeral
+        c.timeoutIntervalForRequest = 20 // 바이트 사이 대기
+        // 요청 하나의 전체 시간 상한(기본값은 7일). 아주 천천히 흘러나오는 서버 하나가 확인 전체를 묶어
+        // '확인 중'이 풀리지 않고 그 뒤 확인이 모두 건너뛰어지던 문제(STABILITY.md S2)
+        c.timeoutIntervalForResource = resourceTimeout
+        c.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: c)
+    }
+
     #if DEBUG
-    init(allowLocalForTests: Bool = false) { allowLocal = allowLocalForTests }
+    init(allowLocalForTests: Bool = false, resourceTimeout: TimeInterval = 60) {
+        allowLocal = allowLocalForTests
+        session = Self.makeSession(resourceTimeout: resourceTimeout)
+    }
     #else
-    init() { allowLocal = false } // 배포 빌드에는 시험 서버 허용 스위치가 없다(M9)
+    init() { allowLocal = false; session = Self.makeSession(resourceTimeout: 60) } // 배포 빌드에는 시험 서버 허용 스위치가 없다(M9)
     #endif
 
     func fetch(_ url: String, conditional: Bool = false, limit: FetchLimit = .feed) async throws -> Data? {
@@ -50,7 +58,7 @@ actor FeedService {
     }
 
     private func fetchOnce(_ url: String, conditional: Bool, limit: Int) async throws -> (data: Data, encoding: String?)? {
-        if let fixture = try E2EFeeds.serve(url) { return fixture } // 시나리오 시험(DROPCAP_TEST_E2E)에서만: 견본 피드, 바깥 요청 없음
+        if let fixture = try await E2EFeeds.serve(url) { return fixture } // 시나리오 시험(DROPCAP_TEST_E2E)에서만: 견본 피드, 바깥 요청 없음
         guard let u = URL(string: url) else { throw FeedError.blocked("주소 확인") }
         if !allowLocal, !(await URLSafety.resolvesPublic(u)) { throw FeedError.blocked("주소 확인") }
         var req = URLRequest(url: u)

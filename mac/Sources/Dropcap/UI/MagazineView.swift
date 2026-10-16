@@ -835,32 +835,35 @@ struct StoriesView: View {
     let onStory: (String) -> Void
     @ObservedObject private var mag = Magazine.shared
     @ObservedObject private var app = AppModel.shared
+    // 목록은 화면 줄기 밖에서 한 번에 만든다(예전엔 그릴 때마다 메인에서 스토리마다 DB 를 물어 멈췄다 — STABILITY.md S5)
+    @State private var groups = Magazine.shared.lastStoryCards
+    @State private var loaded = Magazine.shared.storyCardsLoaded
 
     var body: some View {
-        let groups = mag.storyGroups()
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
+            LazyVStack(alignment: .leading, spacing: 14) {
                 Text("스토리").font(.display(34, .bold)).padding(.top, 28)
                 Text("여러 곳이 함께 다룬 소식을 한 줄기로 묶었습니다. 팔로우하면 새 보도가 붙을 때 알려 드립니다.").foregroundStyle(.secondary)
-                if groups.live.isEmpty && groups.past.isEmpty {
+                if loaded, groups.live.isEmpty && groups.past.isEmpty {
                     Text("아직 여러 곳이 함께 다룬 소식이 없습니다. 출처를 더 구독하면 스토리가 늘어납니다.").foregroundStyle(.secondary).padding(.vertical, 40)
                 }
                 if !groups.live.isEmpty {
                     sectionTitle("지금 커지는 스토리", "최근 24시간")
                     ForEach(Array(groups.live.enumerated()), id: \.element.id) { i, c in
-                        StoryListCard(cluster: c, big: i == 0, onOpen: { onStory(c.id) }).modifier(Stagger(index: i))
+                        StoryListCard(cluster: c.cluster, items: c.items, topic: c.topic, big: i == 0, onOpen: { onStory(c.id) }).modifier(Stagger(index: i))
                     }
                 }
                 if !groups.past.isEmpty {
                     sectionTitle("지난 스토리", "최근 2주")
                     ForEach(Array(groups.past.enumerated()), id: \.element.id) { i, c in
-                        StoryListCard(cluster: c, big: false, onOpen: { onStory(c.id) }).modifier(Stagger(index: i + groups.live.count))
+                        StoryListCard(cluster: c.cluster, items: c.items, topic: c.topic, big: false, onOpen: { onStory(c.id) }).modifier(Stagger(index: i + groups.live.count))
                     }
                 }
             }
             .padding(.horizontal, 36).padding(.bottom, 40)
             .frame(maxWidth: 820, alignment: .leading)
         }
+        .task(id: "\(mag.revision)-\(mag.layoutRevision)") { groups = await mag.storyCards(); loaded = true }
     }
 
     private func sectionTitle(_ t: String, _ sub: String) -> some View {
@@ -875,13 +878,14 @@ struct StoriesView: View {
 // 스토리 카드: 대표 사진 · 분야 · 다룬 출처들 · 시작/최근 · 새 보도 · 팔로우 표시
 private struct StoryListCard: View {
     let cluster: Database.Cluster
+    let items: [NewsItem] // 보이는 보도들(목록을 만들 때 함께 꺼냄)
+    let topic: (section: String, category: NewsCategory?)? // 분야 다수결(목록을 만들 때 화면 줄기 밖에서 — STABILITY.md S8)
     let big: Bool
     let onOpen: () -> Void
     @ObservedObject private var app = AppModel.shared
     @State private var hover = false
 
     var body: some View {
-        let items = Magazine.shared.storyItems(cluster.id)
         let photo = items.compactMap(\.image).first { !ImageKey.isJunk($0) }
         let lead = items.first { $0.tier == "lab" } ?? items.first
         let sources = Array(NSOrderedSet(array: items.map(\.sourceName)).array as? [String] ?? []).prefix(6)
@@ -896,7 +900,7 @@ private struct StoryListCard: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 6) {
                         // 분야는 묶인 보도들의 다수결(대표 기사 하나의 AI 하위 분류를 그대로 쓰면 IT 소식이 'AI·모델·제품'이 됐다)
-                        if let t = Magazine.storyTopic(items, place: \.section) {
+                        if let t = topic {
                             let ns = Sections.byID(t.section)
                             Label(t.category.map { "AI·" + $0.label } ?? Sections.name(t.section), systemImage: t.category?.symbol ?? ns?.symbol ?? "circle")
                                 .font(.app(11.5, .semibold)).foregroundStyle(t.category?.color ?? ns?.tint ?? .gray)

@@ -126,7 +126,7 @@ final class Magazine: ObservableObject {
             for s in todo {
                 enrichTried.insert(s.item.key)
                 if let img = await FeedService.shared.ogImage(s.item.link) {
-                    db.setImage(s.item.key, img)
+                    await editor.setImage(s.item.key, img)
                     changed = true
                 }
             }
@@ -144,12 +144,12 @@ final class Magazine: ObservableObject {
         defer { scoring = false }
         let recent = await editor.recentItems(since: Date().addingTimeInterval(-36 * 3600), limit: 400)
             .map(\.item).filter { $0.itemKind == .article && $0.image != nil && !ImageKey.isJunk($0.image) }
-        let known = db.imageScores(recent.map { $0.image! })
+        let known = await editor.imageScores(recent.map { $0.image! })
         var changed = false
         for it in recent.filter({ known[$0.image!] == nil }).prefix(16) {
             guard let img = await ImageLoader.shared.image(it.image!), let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) else { continue }
             let s = await PhotoQuality.scoreAsync(cg)
-            db.saveImageScore(it.image!, s)
+            await editor.saveImageScore(it.image!, s)
             if !PhotoQuality.good(s.total) { changed = true; NSLog("[사진 점수] 대표 사진에서 뺌 %.2f(글자 %.2f·색 %.2f·단색 %.2f) %@", s.total, s.textRatio, s.colorVariety, s.flatness, it.sourceName) }
         }
         if changed { imageRevision += 1 }
@@ -288,13 +288,8 @@ final class Magazine: ObservableObject {
     func storyItems(_ cluster: String) -> [NewsItem] { AppModel.shared.sourceFilter.visible(db.items(inCluster: cluster).map(\.item)) }
     // 스토리 목록: 최근 24시간 안에 보도가 붙은 것(지금 커지는 스토리)과 나머지. 큰 것·최근 것이 앞
     func storyGroups() -> (live: [Database.Cluster], past: [Database.Cluster]) {
-        let all = stories().sorted { a, b in
-            let sa = Double(a.size) + max(0, 24 - Date().timeIntervalSince(a.last) / 3600) / 6
-            let sb = Double(b.size) + max(0, 24 - Date().timeIntervalSince(b.last) / 3600) / 6
-            return sa != sb ? sa > sb : a.last > b.last
-        }
-        let cut = Date().addingTimeInterval(-24 * 3600)
-        return (all.filter { $0.last >= cut }, all.filter { $0.last < cut })
+        let g = Self.storyGroups(Self.stories(db: db, filter: AppModel.shared.sourceFilter, now: Date()), now: Date())
+        return (g.live.map(\.cluster), g.past.map(\.cluster))
     }
     // 스토리 한눈에 요약(기기 안 모델) — 보도 수가 같으면 다시 만들지 않음
     private var digestCache: [String: (size: Int, lines: [String])] = [:]
@@ -326,13 +321,47 @@ final class Magazine: ObservableObject {
     func refresh() { layoutRevision += 1 }
 
     // 스토리: 최근 2주 동안 두 곳 이상이 다룬 것
-    func stories() -> [Database.Cluster] {
-        // 지금 보이는 출처로만 두 곳 이상이 다룬 스토리(출처를 끄면 그 스토리의 보도 수도 줄어 목록에서 빠질 수 있음)
-        db.recentClusters(since: Date().addingTimeInterval(-14 * 24 * 3600)).filter { $0.size >= 2 }.compactMap { c in
-            let n = Set(storyItems(c.id).map(\.sourceId)).count
-            guard n >= 2 else { return nil }
-            var v = c; v.size = storyItems(c.id).count; return v
+    func stories() -> [Database.Cluster] { Self.stories(db: db, filter: AppModel.shared.sourceFilter, now: Date()).map(\.cluster) }
+
+    // 스토리 카드 하나: 스토리와 보이는 보도들(카드가 DB 를 다시 묻지 않게)
+    struct StoryCard: Identifiable, Sendable {
+        var cluster: Database.Cluster
+        var items: [NewsItem]
+        var topic: (section: String, category: NewsCategory?)? = nil // 보도들의 분야 다수결(만들 때 미리 — 카드가 그릴 때마다 낱말 분류를 하지 않게)
+        var id: String { cluster.id }
+    }
+
+    // 지금 보이는 출처로만 두 곳 이상이 다룬 스토리(출처를 끄면 그 스토리의 보도 수도 줄어 목록에서 빠질 수 있음)
+    // 스토리 목록 전체를 문장 두 번(스토리 · 보도)으로 — 예전엔 스토리마다 두 번씩 물어 기록이 쌓일수록 화면이 멈췄다(STABILITY.md S5)
+    nonisolated static func stories(db: Database, filter: SourceFilter, now: Date) -> [StoryCard] {
+        let since = now.addingTimeInterval(-14 * 24 * 3600)
+        let members = db.storyMembers(since: since)
+        return db.recentClusters(since: since).filter { $0.size >= 2 }.compactMap { c in
+            let items = filter.visible((members[c.id] ?? []).map(\.item))
+            guard Set(items.map(\.sourceId)).count >= 2 else { return nil }
+            var v = c; v.size = items.count
+            return StoryCard(cluster: v, items: items, topic: storyTopic(items, place: \.section))
         }
+    }
+
+    // 스토리 화면: 지금 커지는 것(최근 24시간)과 나머지. 큰 것·최근 것이 앞. 만들기는 화면 줄기 밖에서
+    nonisolated static func storyGroups(_ cards: [StoryCard], now: Date) -> (live: [StoryCard], past: [StoryCard]) {
+        func score(_ c: Database.Cluster) -> Double { Double(c.size) + max(0, 24 - now.timeIntervalSince(c.last) / 3600) / 6 }
+        let all = cards.sorted { a, b in
+            let sa = score(a.cluster), sb = score(b.cluster)
+            return sa != sb ? sa > sb : a.cluster.last > b.cluster.last
+        }
+        let cut = now.addingTimeInterval(-24 * 3600)
+        return (all.filter { $0.cluster.last >= cut }, all.filter { $0.cluster.last < cut })
+    }
+    private(set) var lastStoryCards: (live: [StoryCard], past: [StoryCard]) = ([], []) // 다시 열 때 지난 결과부터 보이게
+    private(set) var storyCardsLoaded = false
+    func storyCards() async -> (live: [StoryCard], past: [StoryCard]) {
+        let filter = AppModel.shared.sourceFilter, db = db, now = Date()
+        let groups = await Task.detached(priority: .userInitiated) { Self.storyGroups(Self.stories(db: db, filter: filter, now: now), now: now) }.value
+        lastStoryCards = groups
+        storyCardsLoaded = true
+        return groups
     }
 
     func search(_ q: String) async -> [NewsItem] { let f = context.filter; return await editor.search(q, filter: f) }

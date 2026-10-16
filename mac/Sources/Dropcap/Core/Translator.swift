@@ -370,14 +370,39 @@ actor Translator {
         return out
     }
 
+    // 번역 요청 하나의 전체 시간 상한(초). 시험에서만 줄인다
+    nonisolated(unsafe) static var requestDeadline: TimeInterval = 20
+    // 시간 상한에 걸린 뒤 잠시는 구글을 부르지 않는다(문단마다 다시 보내며 상한을 수십 번 기다리지 않게 — S3-나)
+    static let googleBackoff: TimeInterval = 60
+    private static let backoffLock = NSLock()
+    nonisolated(unsafe) private static var googleQuietUntil: TimeInterval = 0
+    static func resetGoogleBackoff() { backoffLock.lock(); googleQuietUntil = 0; backoffLock.unlock() }
+    private static var googleResting: Bool {
+        backoffLock.lock(); defer { backoffLock.unlock() }
+        return ProcessInfo.processInfo.systemUptime < googleQuietUntil
+    }
+    private static func restGoogle() {
+        backoffLock.lock(); googleQuietUntil = ProcessInfo.processInfo.systemUptime + googleBackoff; backoffLock.unlock()
+    }
+
     private static func googleOnce(_ text: String, target: String = "ko") async -> String? {
         var c = URLComponents(string: "https://translate.googleapis.com/translate_a/single")!
         c.queryItems = [.init(name: "client", value: "gtx"), .init(name: "sl", value: "auto"), .init(name: "tl", value: target),
                         .init(name: "dt", value: "t"), .init(name: "q", value: String(text.prefix(requestLimit)))]
-        guard let url = c.url else { return nil }
+        guard let url = c.url, !googleResting else { return nil }
         var req = URLRequest(url: url, timeoutInterval: 15)
         req.setValue(FeedService.userAgent, forHTTPHeaderField: "User-Agent")
-        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+        // 전체 시간 상한: 넘으면 요청을 취소하고 원문 그대로(확인이 번역을 기다리다 멈추지 않게 — STABILITY.md S3)
+        enum Outcome: Sendable { case got(Data, URLResponse), failed, timedOut }
+        let fetched = await withTaskGroup(of: Outcome.self) { g in
+            g.addTask { (try? await URLSession.shared.data(for: req)).map { .got($0.0, $0.1) } ?? .failed }
+            g.addTask { try? await Task.sleep(for: .seconds(requestDeadline)); return .timedOut }
+            let first = await g.next() ?? .failed
+            g.cancelAll()
+            return first
+        }
+        if case .timedOut = fetched { restGoogle() }
+        guard case .got(let data, let resp) = fetched,
               (resp as? HTTPURLResponse)?.statusCode == 200,
               let json = try? JSONSerialization.jsonObject(with: data) as? [Any],
               let segs = json.first as? [Any] else { return nil }

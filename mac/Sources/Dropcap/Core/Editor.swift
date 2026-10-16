@@ -21,9 +21,18 @@ actor Editor {
     init(db: Database = .shared) { self.db = db }
 
     // MARK: 받아 넣기
+    // DB 에 넣지 못한 기사(디스크 가득·오래 잠김). 앱 상태에는 '본 글'로 남아 피드에서 다시 오지 않으므로 여기 두었다가
+    // 다음 받아 넣기 때 먼저 다시 넣는다(STABILITY.md S7). 끝없이 쌓이지 않게 retryLimit 건까지(오래된 것부터 버림)
+    private(set) var retry: [NewsItem] = []
+    static let retryLimit = 3000
+
     // 새 기사들을 DB 에 넣고 스토리에 배정한다. 팔로우한 스토리에 붙은 새 보도를 돌려준다.
-    func ingest(_ items: [NewsItem], followed: Set<String>) -> [(Database.Cluster, NewsItem)] {
+    func ingest(_ fresh: [NewsItem], followed: Set<String>) -> [(Database.Cluster, NewsItem)] {
+        let items = retry + fresh
+        retry = []
         guard !items.isEmpty else { return [] }
+        var failed: [NewsItem] = []
+        defer { retry = Array(failed.suffix(Self.retryLimit)) }
         let since = Date().addingTimeInterval(-7 * 24 * 3600)
         var clusters = db.recentClusters(since: since)   // 최근에 커진 스토리 먼저
         let reps = db.representatives(since: since)       // 스토리마다 대표 기사(가장 최근 보도) — SQL 한 번
@@ -32,27 +41,30 @@ actor Editor {
         var index = Dictionary(clusters.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { a, _ in a })
         var grown: [(Database.Cluster, NewsItem)] = []
         for it in items {
+            // 한 번 못 넣었으면 나머지도 못 넣는다(잠김·가득) — 하나마다 잠금을 기다리지 않고 바로 다음으로 미룬다
+            if !failed.isEmpty { failed.append(it); continue }
             // 이미 있는 기사는 스토리를 다시 정하지 않는다(대표가 자기 자신이면 '같은 출처'로 보여 새 스토리가 생기던 문제)
-            if db.exists(it.key) { db.upsert(it, cluster: nil); continue }
+            if db.exists(it.key) { if !db.upsert(it, cluster: nil) { failed.append(it) }; continue }
             // 기사만 스토리로 묶는다(논문·릴리스·커뮤니티 글은 양이 많고 성격이 달라 제외)
-            if it.itemKind != .article && it.itemKind != .video { db.upsert(it, cluster: nil); continue }
+            if it.itemKind != .article && it.itemKind != .video { if !db.upsert(it, cluster: nil) { failed.append(it) }; continue }
             let k = StoryKey(it)
             let when = it.date ?? Date()
             if let id = StoryGrouper.storyFor(k, representatives: repKeys), let i = index[id] {
+                // 기사를 먼저 넣고, 넣었을 때만 스토리를 키운다(못 넣은 기사를 다시 넣을 때 두 번 세지 않게)
+                guard db.upsert(it, cluster: id) else { failed.append(it); continue }
                 clusters[i].size += 1
                 clusters[i].last = max(clusters[i].last, when)
                 clusters[i].first = min(clusters[i].first, when)
                 if it.tier == "lab" { clusters[i].title = it.displayTitle } // 공식 발표 제목을 스토리 이름으로
                 db.saveCluster(clusters[i])
-                db.upsert(it, cluster: id)
                 if followed.contains(id) { grown.append((clusters[i], it)) }
             } else {
                 let c = Database.Cluster(id: UUID().uuidString, title: it.displayTitle, tokens: k.tokens, first: when, last: when, size: 1)
+                guard db.upsert(it, cluster: c.id) else { failed.append(it); continue }
                 index[c.id] = clusters.count
                 clusters.append(c)
                 repKeys.append((c.id, k))
                 db.saveCluster(c)
-                db.upsert(it, cluster: c.id)
             }
         }
         return grown
@@ -226,6 +238,11 @@ actor Editor {
                                  sections: issue.sections.map { s in (s, s.keys.compactMap { map[$0]?.item }.filter { filter.shows($0.sourceId) }) }.filter { !$0.1.isEmpty },
                                  clusters: clusters, regions: regions)
     }
+
+    // 사진 주소·점수 쓰기도 화면 줄기 밖에서(DB 가 잠겼을 때 메인이 기다리지 않게 — S7)
+    func setImage(_ key: String, _ url: String) { db.setImage(key, url) }
+    func imageScores(_ urls: [String]) -> [String: Double] { db.imageScores(urls) }
+    func saveImageScore(_ url: String, _ s: PhotoQuality.Score) { db.saveImageScore(url, s) }
 
     func search(_ q: String, filter: SourceFilter = SourceFilter()) -> [NewsItem] { filter.visible(db.search(q)) }
     func recentItems(since: Date, limit: Int) -> [Database.StoredItem] { db.items(from: since, limit: limit) }

@@ -5,7 +5,7 @@ import Foundation
 enum E2EFeeds {
     static let active = false
     static func allows(_ url: URL?) -> Bool { false }
-    static func serve(_ url: String) throws -> (data: Data, encoding: String?)? { nil }
+    static func serve(_ url: String) async throws -> (data: Data, encoding: String?)? { nil }
     static func noteExternal(_ u: String) {}
 }
 #endif

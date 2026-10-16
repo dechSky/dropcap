@@ -307,6 +307,7 @@ pub fn extract_html(html: &str, base: &str) -> Option<Article> {
     // (본문 HTML, 제목, 기자, 매체) → 기사. Err 는 '글 거의 없음'(다음 기준으로 넘어가지 않음)
     let finish = |content: &str, title: Option<String>, byline: Option<String>, site: Option<String>| -> Result<Option<Article>, ()> {
         let (content, partial) = rx::gather(content, &fresh);
+        let content = rx::carousel(&content, &fresh);
         let body = rx::pruned_body(&content);
         let blocks = rx::dedupe(with_plain_lines(blocks_from_html(&body, base), &body));
         if rx::only_lists(&blocks) {

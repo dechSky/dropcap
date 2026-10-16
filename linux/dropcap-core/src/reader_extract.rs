@@ -295,6 +295,215 @@ pub fn gather(content: &str, fresh: &Document) -> (String, bool) {
     (content, partial)
 }
 
+// 캐러셀·슬라이드(맥 추출 스크립트 carousel-slides — mac/READER-CUT.md '5단계 결과'): Readability 가 칸을 버리고, 화면 밖 칸은 숨겨져 있다.
+// 원문(fresh)에서 앞 글과 뒤 글이 모두 우리 본문에 있는 것(본문 사이)만 칸마다 글·사진을 순서대로 뒤 글 앞에 넣는다 — 본문 밖 추천 캐러셀은 넣지 않음.
+// 복제 칸(무한 돌기)·같은 칸은 한 번만, 칸 글 대부분이 링크면(추천 기사 줄) 넣지 않음. 인용 카드가 속성에만 든 글(quote=·author-name=)은 인용으로
+static CAR_TOK: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)^(swiper|swiper-container|glide|slick-slider|splide|flickity|owl-carousel|slideshow)$|carousel").unwrap());
+static SLIDE_TOK: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)^(swiper-slide|glide__slide|slick-slide|splide__slide|owl-item|carousel-item|carousel-cell)$|(__|-)slide$").unwrap());
+static CLONE_TOK: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)^(swiper-slide-duplicate|slick-cloned|cloned)$|--clone$").unwrap());
+static CAR_TAG: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)-(carousel|slideshow)$").unwrap());
+static SLIDE_TAG: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)-slide$").unwrap());
+static CAR_BAD: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)related|recommend|promo|popular|most-?read|trending|ranking|newsletter").unwrap());
+static RECO_HEAD: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)^(recommended|related|read more|more on this|more from|keep reading|you may also like|also read|관련\s?기사|추천\s?기사|함께\s?(볼|읽을)|많이\s?본)").unwrap()
+});
+const CAR_TXT: &str = "p, li, h1, h2, h3, h4, h5, h6, blockquote";
+
+fn esc(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+fn is_car(n: &NodeRef) -> bool {
+    attr(n, "aria-roledescription").eq_ignore_ascii_case("carousel") || CAR_TAG.is_match(&tag(n)) || attr(n, "class").split_whitespace().any(|c| CAR_TOK.is_match(c))
+}
+fn is_slide(n: &NodeRef) -> bool {
+    attr(n, "aria-roledescription").eq_ignore_ascii_case("slide") || SLIDE_TAG.is_match(&tag(n)) || attr(n, "class").split_whitespace().any(|c| SLIDE_TOK.is_match(c))
+}
+fn is_clone(n: &NodeRef) -> bool {
+    attr(n, "class").split_whitespace().any(|c| CLONE_TOK.is_match(c))
+}
+// 요소를 문서 순서(앞 순회)로 — 순서 번호로 앞뒤를 견준다
+fn in_order<'a>(root: &NodeRef<'a>) -> Vec<NodeRef<'a>> {
+    let mut out = vec![];
+    let mut stack: Vec<NodeRef> = root.element_children().into_iter().rev().collect();
+    while let Some(n) = stack.pop() {
+        stack.extend(n.element_children().into_iter().rev());
+        out.push(n);
+    }
+    out
+}
+// 바깥 것만(안에 든 같은 꼴은 바깥 것에 이미 들어 있다)
+fn outer_only<'a>(list: Vec<NodeRef<'a>>) -> Vec<NodeRef<'a>> {
+    let ids: HashSet<_> = list.iter().map(|n| n.id).collect();
+    list.into_iter().filter(|n| !n.ancestors_it(None).any(|a| ids.contains(&a.id))).collect()
+}
+
+pub fn carousel(content: &str, fresh: &Document) -> String {
+    let Some(fbody) = body_of(fresh) else { return content.to_string() };
+    let all = in_order(&fbody);
+    let order: std::collections::HashMap<_, usize> = all.iter().enumerate().map(|(i, n)| (n.id, i)).collect();
+    let roots: Vec<NodeRef> = outer_only(all.iter().filter(|n| is_car(n)).cloned().collect())
+        .into_iter()
+        .filter(|r| {
+            !std::iter::once(r.clone()).chain(r.ancestors_it(None)).any(|a| matches!(tag(&a).as_str(), "nav" | "header" | "footer" | "aside"))
+                && !CAR_BAD.is_match(&format!("{} {}", attr(r, "class"), attr(r, "data-component")))
+        })
+        .collect();
+    if roots.is_empty() {
+        return content.to_string();
+    }
+    let cur = Document::from(content);
+    let Some(cbody) = body_of(&cur) else { return content.to_string() };
+    let call = in_order(&cbody);
+    let corder: std::collections::HashMap<_, usize> = call.iter().enumerate().map(|(i, n)| (n.id, i)).collect();
+    let cbefore = |a: &NodeRef, b: &NodeRef| corder.get(&a.id).zip(corder.get(&b.id)).is_some_and(|(x, y)| x < y);
+    let mut found: std::collections::HashMap<String, Vec<NodeRef>> = std::collections::HashMap::new();
+    for e in cur.select(CAR_TXT).nodes() {
+        found.entry(norm(&e.text())).or_default().push(e.clone());
+    }
+    // 같은 글이 차례(목차 li)에도 있으면 같은 태그를 앞세운다
+    let pick = |m: &NodeRef| -> Vec<NodeRef> {
+        let l = found.get(&norm(&m.text())).cloned().unwrap_or_default();
+        let same: Vec<NodeRef> = l.iter().filter(|e| tag(e) == tag(m)).cloned().collect();
+        if same.is_empty() { l } else { same }
+    };
+    let marks: Vec<NodeRef> = fresh
+        .select(CAR_TXT)
+        .nodes()
+        .iter()
+        .filter(|e| {
+            let n = len_of(e);
+            (n >= 12 || (tag(e).starts_with('h') && n >= 4)) && !roots.iter().any(|r| contains(r, e))
+        })
+        .cloned()
+        .collect();
+    let mut added = false;
+    for r in &roots {
+        if let Some(hd) = Selection::from(r.clone()).select("h1, h2, h3, h4, h5, h6").nodes().first() {
+            if RECO_HEAD.is_match(&norm(&hd.text())) {
+                continue;
+            }
+        }
+        let ro = order[&r.id];
+        let mut prev = None;
+        let mut next = None;
+        for m in &marks {
+            let mo = order[&m.id];
+            if mo < ro {
+                prev = Some(m.clone());
+            } else if mo > ro {
+                next = Some(m.clone());
+                break;
+            }
+        }
+        let (Some(prev), Some(next)) = (prev, next) else { continue };
+        let pms = pick(&prev);
+        let Some(nm) = pick(&next).into_iter().find(|n| pms.iter().any(|q| cbefore(q, n))) else { continue };
+        let Some(pm) = pms.iter().filter(|q| cbefore(q, &nm)).last().cloned() else { continue };
+        let every = outer_only(in_order(r).into_iter().filter(|s| is_slide(s)).collect());
+        let mut slides: Vec<NodeRef> = every.iter().filter(|s| !is_clone(s)).cloned().collect();
+        if slides.is_empty() {
+            continue;
+        }
+        let idx = |s: &NodeRef| attr(s, "data-swiper-slide-index").parse::<usize>().ok();
+        if slides.iter().all(|s| idx(s).is_some()) {
+            slides.sort_by_key(|s| idx(s)); // 안정 정렬 — 같은 번호는 문서 순서대로
+        }
+        let (mut wrap, mut keys, mut units, mut srcs) = (String::new(), Vec::<String>::new(), HashSet::<String>::new(), HashSet::<String>::new());
+        let (mut text, mut link) = (0usize, 0usize);
+        for s in &slides {
+            let d = Document::from(s.html().to_string().as_str());
+            let Some(c) = body_of(&d).and_then(|b| b.first_element_child()) else { continue };
+            Selection::from(c.clone())
+                .select(r#"button, [role="tablist"], [class*="pagination" i], [class*="controls" i], [class*="arrow" i], [class*="dots" i]"#)
+                .remove();
+            for n in in_order(&c) {
+                let q = norm(&n.attr("quote").or_else(|| n.attr("data-quote")).map(|v| v.to_string()).unwrap_or_default());
+                if q.chars().count() < 20 {
+                    continue;
+                }
+                let first = |a: &[&str]| a.iter().map(|k| attr(&n, k)).find(|v| !v.is_empty()).unwrap_or_default();
+                let who: Vec<String> = [first(&["author-name", "data-author-name", "author"]), first(&["author-title", "data-author-title"])]
+                    .iter()
+                    .map(|v| norm(v))
+                    .filter(|v| !v.is_empty())
+                    .collect();
+                let mut h = format!("<blockquote>{}</blockquote>", esc(&q));
+                if !who.is_empty() {
+                    h += &format!("<p>— {}</p>", esc(&who.join(", ")));
+                }
+                n.replace_with_html(h);
+            }
+            // 사진 없는 칸의 설명 상자는 문단으로 — 짝 잃은 설명처럼 작게 보이지 않게
+            if Selection::from(c.clone()).select("img, picture").length() == 0 {
+                for f in Selection::from(c.clone()).select("figcaption").nodes() {
+                    f.replace_with_html(format!("<p>{}</p>", f.inner_html()));
+                }
+            }
+            let t = norm(&c.text());
+            let src: Vec<String> = Selection::from(c.clone())
+                .select("img")
+                .nodes()
+                .iter()
+                .map(|i| i.attr("src").or_else(|| i.attr("data-src")).map(|v| v.to_string()).unwrap_or_default())
+                .filter(|v| !v.is_empty())
+                .collect();
+            let key = format!("{t}|{}", src.join(" "));
+            if key == "|" || keys.contains(&key) {
+                continue;
+            }
+            keys.push(key);
+            if !t.is_empty() {
+                units.insert(t.clone());
+            }
+            for e in Selection::from(c.clone()).select("p, li, h1, h2, h3, h4, h5, h6, blockquote, figcaption").nodes() {
+                let u = norm(&e.text());
+                if !u.is_empty() {
+                    units.insert(u);
+                }
+            }
+            srcs.extend(src);
+            text += t.chars().count();
+            link += Selection::from(c.clone()).select("a").nodes().iter().map(len_of).sum::<usize>();
+            // 칸의 class(headline·features 등)로 손질이 글을 지우지 않게 꼴 속성은 뗀다(사진 주소 data-src·srcset 은 남김)
+            for n in in_order(&c) {
+                n.remove_attrs(&["class", "id", "style", "data-component", "data-block", "hidden", "aria-hidden"]);
+            }
+            wrap += &format!("<div>{}</div>", c.inner_html());
+        }
+        if wrap.is_empty() || (text > 0 && link as f64 >= text as f64 * 0.6) {
+            continue;
+        }
+        for s in every.iter().filter(|s| is_clone(s)) {
+            for e in std::iter::once(s.clone()).chain(Selection::from(s.clone()).select("p, li, figcaption").nodes().iter().cloned()) {
+                let u = norm(&e.text());
+                if !u.is_empty() {
+                    units.insert(u);
+                }
+            }
+        }
+        // Readability 가 보이는 칸만 남겼으면(앞 글과 뒤 글 사이) 그것을 빼고 모든 칸을 차례대로 넣는다 — 같은 칸이 두 번·뒤섞여 나오지 않게
+        let between = |e: &NodeRef| cbefore(&pm, e) && cbefore(e, &nm);
+        for e in cur.select("p, li, h1, h2, h3, h4, h5, h6, blockquote, figcaption, div").nodes() {
+            if between(e) && units.contains(&norm(&e.text())) {
+                e.remove_from_parent();
+            }
+        }
+        for e in cur.select("img").nodes() {
+            let u = e.attr("src").or_else(|| e.attr("data-src")).map(|v| v.to_string()).unwrap_or_default();
+            if !u.is_empty() && srcs.contains(&u) && between(e) {
+                e.remove_from_parent();
+            }
+        }
+        nm.before_html(format!("<div>{wrap}</div>"));
+        added = true;
+    }
+    if added {
+        format!("<div>{}</div>", cbody.inner_html())
+    } else {
+        content.to_string()
+    }
+}
+
 // 손질을 마친 본문 HTML(뿌리 body 아래 전부 — 광고·관련 꼴까지 뺀 것)
 pub fn pruned_body(content: &str) -> String {
     let d = Document::from(content);

@@ -254,6 +254,9 @@ final class E2ERun {
         case "recover": await E2EPhases.recover(self)
         case "clicks": await E2EClickPhase.run(self)
         case "header": await E2EHeaderPhase.run(self) // 창 머리 겹침 스냅샷(scripts/e2e/header.sh)
+        case "soak": await E2ESoak.run(self) // 오래 켜 두기(scripts/e2e/soak.sh · STABILITY.md)
+        case "faults": await E2EFaults.run(self) // 실패 처리(scripts/e2e/faults.sh · STABILITY.md)
+        case "probe": await E2EProbe.run(self) // 시작 시간·첫 화면(scripts/e2e/startup.sh · STABILITY.md)
         default: await E2EPhases.main(self)
         }
         note("=== \(phase) 끝: \(steps.filter { $0.pass == true }.count) 통과 · \(steps.filter { $0.pass == false }.count) 실패 · \(steps.filter { $0.pass == nil }.count) 확인 못 함")

@@ -151,9 +151,9 @@ private func item(_ s: E2EStory, _ i: Int) -> NewsItem {
 
 @Suite struct E2EFeedFixtureTests {
     // 시험 모드가 아니면 아무것도 바꾸지 않는다(일반 실행 영향 없음)
-    @Test func inertOutsideTestMode() throws {
+    @Test func inertOutsideTestMode() async throws {
         #expect(!E2EFeeds.active)
-        #expect(try E2EFeeds.serve("https://openai.com/news/rss.xml") == nil)
+        #expect(try await E2EFeeds.serve("https://openai.com/news/rss.xml") == nil)
         #expect(!E2EFeeds.allows(URL(string: "https://news.e2e.example/x")))
     }
 

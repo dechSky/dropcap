@@ -3,7 +3,8 @@
 
 공개 저장소에 기사 글·기자 이름·주소가 들어가지 않게:
 - script·style·svg·noscript·iframe·주석·meta·link 는 버린다(--keep-ld 면 ld+json 의 isAccessibleForFree 만 남김).
-- 속성은 class·id·data-component·data-block·itemprop·role·rel 만 남기고, src 는 img.example.com 의 번호 주소로, href 는 /l<번호> 로.
+- 속성은 class·id·data-component·data-block·itemprop·role·rel·aria-roledescription·aria-hidden·data-swiper-slide-index 만 남기고
+  (글이 든 quote·author-name·author-title 은 글처럼 바꿔 남김), src 는 img.example.com 의 번호 주소로, href 는 /l<번호> 로.
 - 글자는 같은 길이·같은 문장부호로 바꾼다(영문 → 정해진 글자 돌림, 한글 → 정해진 음절 돌림, 그 밖의 글자 → '가', 숫자 → 정해진 숫자 돌림
   — 언론사 대표전화·번지가 남지 않게).
 - class·id 의 기사 번호(post-123·6자리 넘는 숫자)는 같은 길이의 다른 숫자로, tag-*·category-* 는 tag-t1 꼴로 바꾼다(원본 기사를
@@ -21,7 +22,9 @@ from html.parser import HTMLParser
 
 DROP = {"script", "style", "svg", "noscript", "iframe", "template", "object", "embed", "canvas", "video", "audio"}
 VOID = {"br", "img", "hr", "input", "source", "wbr", "col", "area", "base", "link", "meta", "param", "track"}
-KEEP = {"class", "id", "data-component", "data-block", "itemprop", "role", "rel", "type"}
+KEEP = {"class", "id", "data-component", "data-block", "itemprop", "role", "rel", "type", "aria-roledescription", "aria-hidden", "data-swiper-slide-index"}
+# 글이 속성에만 든 사용자 정의 요소(Google 블로그 인용 카드 quote=·author-name=) — 글처럼 바꿔 남긴다
+TEXT_ATTRS = {"quote", "data-quote", "author-name", "author-title", "data-author-name", "data-author-title"}
 LATIN = "loremipsumdolorsitametconsecteturadipiscingelitseddoeiusmodtemporincididuntutlabore"
 HANGUL = "가나다라마바사아자차카타파하거너더러머버서어저처커터퍼허고노도로모보소오조초코토포호"
 DIGITS = "7305196824"
@@ -89,6 +92,8 @@ class Scrambler(HTMLParser):
                 self.n += 1; keep.append(f'src="https://img.example.com/i{self.n}.jpg"')
             elif k == "href":
                 self.n += 1; keep.append(f'href="/l{self.n}"')
+            elif k in TEXT_ATTRS and v:
+                keep.append(f'{k}="{html.escape(html.unescape(self.scramble(v)))}"')
             elif k in KEEP and v is not None and len(v) < 200:
                 if k == "type" and tag != "script":
                     continue

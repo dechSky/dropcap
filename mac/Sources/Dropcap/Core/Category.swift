@@ -60,10 +60,10 @@ enum NewsCategory: String, Codable, CaseIterable, Identifiable {
     }
 
     static func classify(_ text: String) -> NewsCategory {
-        let t = text.lowercased()
+        let t = Sections.normalized(text) // 한국어 낱말은 글자 그대로 찾기(.literal — Sections.hits 와 같은 까닭)
         let range = NSRange(t.startIndex..., in: t)
         for (cat, re, korean) in compiled {
-            if re?.firstMatch(in: t, range: range) != nil || korean.contains(where: { t.contains($0) }) { return cat }
+            if re?.firstMatch(in: t, range: range) != nil || korean.contains(where: { t.range(of: $0, options: .literal) != nil }) { return cat }
         }
         return .other
     }

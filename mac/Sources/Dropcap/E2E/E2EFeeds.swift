@@ -38,8 +38,15 @@ enum E2EFeeds {
         return h == host || h.hasSuffix("." + host)
     }
 
+    // 고장 흉내(오래 켜 두기·실패 처리 시험, E2EFaults): 출처 id 마다, "*" 는 모든 기본 출처
+    enum Fault: Sendable { case http(Int), garbage, offline, empty, slow(Double), huge, futureDates }
+    nonisolated(unsafe) private static var faults: [String: Fault] = [:]
+    static func setFault(_ id: String, _ f: Fault?) { lock.lock(); faults[id] = f; lock.unlock() }
+    static func clearFaults() { lock.lock(); faults = [:]; lock.unlock() }
+    private static func fault(_ id: String) -> Fault? { lock.lock(); defer { lock.unlock() }; return faults[id] ?? faults["*"] }
+
     // FeedService.fetchOnce 맨 앞에서 부른다. nil = 시험 모드 아님(평소처럼 받기)
-    static func serve(_ url: String) throws -> (data: Data, encoding: String?)? {
+    static func serve(_ url: String) async throws -> (data: Data, encoding: String?)? {
         guard active else { return nil }
         installOffline()
         guard let u = URL(string: url), let h = u.host?.lowercased() else { throw FeedError.blocked("시험 모드: 주소 아님") }
@@ -47,11 +54,22 @@ enum E2EFeeds {
         if h == "news.\(host)" { return (Data(article(u).utf8), "utf-8") }
         if h == "feeds.\(host)" {
             let name = u.deletingPathExtension().lastPathComponent
-            lock.lock(); let c = custom[name]; lock.unlock()
-            guard let c else { throw FeedError.http(404) }
+            guard let c = customFeed(name) else { throw FeedError.http(404) }
             return (Data(rss(title: c.title, posts: c.posts).utf8), "utf-8")
         }
         if let src = Resources.config.sources.first(where: { $0.url == url }) {
+            switch fault(src.id) {
+            case .http(let code)?: throw FeedError.http(code)
+            case .offline?: throw URLError(.notConnectedToInternet)
+            case .garbage?: return (Data((0..<4096).map { _ in UInt8.random(in: 0...255) }), nil)
+            case .empty?: return (Data(), "utf-8")
+            case .slow(let s)?: try await Task.sleep(for: .seconds(s))
+            case .huge?: return (Data(hugeFeed(src).utf8), "utf-8")
+            case .futureDates?:
+                let list = feedPosts(src).map { var p = $0; p.date = p.date.addingTimeInterval(3 * 24 * 3600); return p }
+                return (Data((src.isDomestic ? rss(title: src.name, posts: list) : atom(title: src.name, posts: list)).utf8), "utf-8")
+            case nil: break
+            }
             return (Data(feed(for: src).utf8), "utf-8")
         }
         throw FeedError.blocked("시험 모드: 바깥 주소 막음")
@@ -64,6 +82,7 @@ enum E2EFeeds {
         lock.lock(); defer { lock.unlock() }
         ensureFiller(p.sourceId, now: p.date)
         posts[p.sourceId, default: []].insert(p, at: 0)
+        if posts[p.sourceId]!.count > 60 { posts[p.sourceId]!.removeLast(posts[p.sourceId]!.count - 60) } // 피드는 30건만 내보냄 — 오래 켜 두기 시험에서 견본이 끝없이 쌓이지 않게
     }
 
     static func addCustomFeed(_ name: String, title: String, now: Date) {
@@ -109,6 +128,24 @@ enum E2EFeeds {
             Post(sourceId: id, id: "old-\(i)", title: pool[(seed + i * 5) % pool.count], summary: kr ? "이미 피드에 있던 글입니다." : "An item that was already in the feed.",
                  date: now.addingTimeInterval(-Double(2 + i * 3) * 3600), image: "https://img.\(host)/\(id)-old-\(i).png")
         }
+    }
+
+    private static func customFeed(_ name: String) -> (title: String, posts: [Post])? { lock.lock(); defer { lock.unlock() }; return custom[name] }
+
+    private static func feedPosts(_ src: Source) -> [Post] {
+        lock.lock(); defer { lock.unlock() }
+        ensureFiller(src.id, now: Date())
+        return Array((posts[src.id] ?? []).prefix(30))
+    }
+
+    // 아주 큰 피드: 견본 글 앞에 오래된 글 3000건(받기 상한 10MB 안)
+    private static func hugeFeed(_ src: Source) -> String {
+        let old = (0..<3000).map { i in
+            Post(sourceId: src.id, id: "bulk-\(i)", title: "Archive entry \(i) " + String(repeating: "word ", count: 20), summary: String(repeating: "summary text ", count: 40),
+                 date: Date().addingTimeInterval(-Double(10 + i) * 24 * 3600), image: nil)
+        }
+        let list = feedPosts(src) + old
+        return src.isDomestic ? rss(title: src.name, posts: list) : atom(title: src.name, posts: list)
     }
 
     private static func feed(for src: Source) -> String {
@@ -192,12 +229,15 @@ enum E2EFeeds {
     }
 
     // 견본 사진: 이름마다 색이 다른 그라데이션 PNG(1200×675)
+    // 색은 36가지로 나눠 그 색마다 한 장만 기억한다(오래 켜 두기 시험에서 견본 사진 기억이 끝없이 커지지 않게)
     private static func image(_ name: String) -> Data {
+        let bucket = abs(name.unicodeScalars.reduce(3) { ($0 &* 33) &+ Int($1.value) }) % 36
+        let cacheKey = "hue-\(bucket)"
         lock.lock()
-        if let d = images[name] { lock.unlock(); return d }
+        if let d = images[cacheKey] { lock.unlock(); return d }
         lock.unlock()
         let w = 1200, h = 675
-        let hue = Double(abs(name.unicodeScalars.reduce(3) { ($0 &* 33) &+ Int($1.value) }) % 360) / 360
+        let hue = Double(bucket * 10) / 360
         let space = CGColorSpaceCreateDeviceRGB()
         guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: space,
                                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return Data() }
@@ -215,7 +255,7 @@ enum E2EFeeds {
         guard let cg = ctx.makeImage(), let dst = CGImageDestinationCreateWithData(out, UTType.png.identifier as CFString, 1, nil) else { return Data() }
         CGImageDestinationAddImage(dst, cg, nil)
         CGImageDestinationFinalize(dst)
-        lock.lock(); images[name] = out as Data; lock.unlock()
+        lock.lock(); images[cacheKey] = out as Data; lock.unlock()
         return out as Data
     }
 

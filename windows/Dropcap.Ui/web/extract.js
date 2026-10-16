@@ -80,6 +80,85 @@
       partial = miss.length >= 2 && gone > all * 0.25;
     }
   }
+  // 캐러셀·슬라이드(Google 블로그 영상·인용 카드 · swiper·slick·glide·splide·owl): Readability 가 칸을 버리고, 화면 밖 칸은 숨겨져 있다(carousel-slides).
+  // 원문에서 앞 글과 뒤 글이 모두 우리 본문에 있는 것(본문 사이)만 칸마다 글·사진을 순서대로 뒤 글 앞에 넣는다 — 본문 밖 추천 캐러셀은 넣지 않음.
+  // 복제 칸(무한 돌기)·같은 칸은 한 번만, 칸 글 대부분이 링크면(추천 기사 줄) 넣지 않음. 인용 카드가 속성에만 든 글(quote=·author-name=)은 인용으로
+  {
+    const ckl = (el) => (el.className && el.className.baseVal === undefined ? el.className : '');
+    const toks = (el) => ckl(el).split(/\s+/).filter((x) => x);
+    const isCar = (el) => /^carousel$/i.test(el.getAttribute('aria-roledescription') || '') || /-(carousel|slideshow)$/i.test(el.tagName)
+      || toks(el).some((c) => /^(swiper|swiper-container|glide|slick-slider|splide|flickity|owl-carousel|slideshow)$/i.test(c) || /carousel/i.test(c));
+    const isSlide = (el) => /^slide$/i.test(el.getAttribute('aria-roledescription') || '') || /-slide$/i.test(el.tagName)
+      || toks(el).some((c) => /^(swiper-slide|glide__slide|slick-slide|splide__slide|owl-item|carousel-item|carousel-cell)$/i.test(c) || /(__|-)slide$/i.test(c));
+    const isClone = (el) => toks(el).some((c) => /^(swiper-slide-duplicate|slick-cloned|cloned)$/i.test(c) || /--clone$/i.test(c));
+    const outerOf = (list) => list.filter((x) => !list.some((y) => y !== x && y.contains(x)));
+    const cln = (el) => norm(el.textContent).length;
+    const all = [...fresh.querySelectorAll('*')];
+    const roots = outerOf(all.filter(isCar)).filter((r) => !r.closest('nav, header, footer, aside') && !/related|recommend|promo|popular|most-?read|trending|ranking|newsletter/i.test(ckl(r) + ' ' + (r.getAttribute('data-component') || '')));
+    if (roots.length) {
+      const cur = parse(content);
+      const TXT = 'p, li, h1, h2, h3, h4, h5, h6, blockquote';
+      const found = new Map();
+      cur.querySelectorAll(TXT).forEach((e) => { const t = norm(e.textContent); if (!found.has(t)) found.set(t, []); found.get(t).push(e); });
+      // 같은 글이 차례(목차 li)에도 있으면 같은 태그를 앞세운다
+      const pick = (m) => { const l = (m && found.get(norm(m.textContent))) || []; const same = l.filter((e) => e.tagName === m.tagName); return same.length ? same : l; };
+      const marks = [...fresh.querySelectorAll(TXT)].filter((e) => { const n = cln(e); return (n >= 12 || (/^H/.test(e.tagName) && n >= 4)) && !roots.some((r) => r.contains(e)); });
+      const before = (a, b) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+      const RECO_HEAD = /^(recommended|related|read more|more on this|more from|keep reading|you may also like|also read|관련\s?기사|추천\s?기사|함께\s?(볼|읽을)|많이\s?본)/i;
+      let added = false;
+      roots.forEach((r) => {
+        const hd = r.querySelector('h1, h2, h3, h4, h5, h6');
+        if (hd && RECO_HEAD.test(norm(hd.textContent))) return;
+        let prev = null, next = null;
+        for (const m of marks) { if (before(m, r)) prev = m; else if (before(r, m)) { next = m; break; } }
+        const pms = pick(prev), nm = pick(next).find((n) => pms.some((q) => before(q, n)));
+        if (!nm) return;
+        const pm = pms.filter((q) => before(q, nm)).pop();
+        const every = outerOf(all.filter((s) => s !== r && r.contains(s) && isSlide(s)));
+        let slides = every.filter((s) => !isClone(s));
+        if (!slides.length) return;
+        const idx = (s) => s.getAttribute('data-swiper-slide-index') || '';
+        if (slides.every((s) => /^\d+$/.test(idx(s)))) slides = slides.map((s, i) => [s, i]).sort((a, b) => (+idx(a[0]) - +idx(b[0])) || a[1] - b[1]).map((x) => x[0]);
+        const wrap = fresh.createElement('div'), keys = [], units = new Set(), srcs = new Set();
+        let text = 0, link = 0;
+        slides.forEach((s) => {
+          const c = s.cloneNode(true);
+          c.querySelectorAll('button, [role="tablist"], [class*="pagination" i], [class*="controls" i], [class*="arrow" i], [class*="dots" i]').forEach((n) => n.remove());
+          c.querySelectorAll('*').forEach((n) => {
+            const q = norm(n.getAttribute('quote') || n.getAttribute('data-quote') || '');
+            if (q.length < 20) return;
+            const bq = fresh.createElement('blockquote'); bq.textContent = q;
+            const who = [n.getAttribute('author-name') || n.getAttribute('data-author-name') || n.getAttribute('author') || '', n.getAttribute('author-title') || n.getAttribute('data-author-title') || ''].map(norm).filter((x) => x).join(', ');
+            n.replaceWith(bq);
+            if (who) { const p = fresh.createElement('p'); p.textContent = '— ' + who; bq.after(p); }
+          });
+          // 사진 없는 칸의 설명 상자(앞에서 figcaption 으로 바꾼 것)는 문단으로 — 짝 잃은 설명처럼 작게 보이지 않게
+          if (!c.querySelector('img, picture')) c.querySelectorAll('figcaption').forEach((f) => { const p = fresh.createElement('p'); while (f.firstChild) p.appendChild(f.firstChild); f.replaceWith(p); });
+          const t = norm(c.textContent), src = [...c.querySelectorAll('img')].map((i) => i.getAttribute('src') || i.getAttribute('data-src') || '').filter((x) => x), key = t + '|' + src.join(' ');
+          if (key === '|' || keys.includes(key)) return;
+          keys.push(key);
+          if (t) units.add(t);
+          c.querySelectorAll('p, li, h1, h2, h3, h4, h5, h6, blockquote, figcaption').forEach((e) => { const u = norm(e.textContent); if (u) units.add(u); });
+          src.forEach((x) => srcs.add(x));
+          text += t.length; link += [...c.querySelectorAll('a')].reduce((z, a) => z + cln(a), 0);
+          // 칸의 class(headline·features 등)로 prune 이 글을 지우지 않게 꼴 속성은 뗀다(사진 주소 data-src·srcset 은 남김)
+          c.querySelectorAll('*').forEach((n) => ['class', 'id', 'style', 'data-component', 'data-block', 'hidden', 'aria-hidden'].forEach((a) => n.removeAttribute(a)));
+          const d = fresh.createElement('div'); // 칸이 li 여도(owl·slick) 걷기가 한 줄로 뭉치지 않게 div 로
+          while (c.firstChild) d.appendChild(c.firstChild);
+          wrap.appendChild(d);
+        });
+        if (!wrap.firstChild || (text && link >= text * 0.6)) return;
+        every.filter(isClone).forEach((s) => { const u = norm(s.textContent); if (u) units.add(u); s.querySelectorAll('p, li, figcaption').forEach((e) => { const v = norm(e.textContent); if (v) units.add(v); }); });
+        // Readability 가 보이는 칸만 남겼으면(앞 글과 뒤 글 사이) 그것을 빼고 모든 칸을 차례대로 넣는다 — 같은 칸이 두 번·뒤섞여 나오지 않게
+        const between = (e) => before(pm, e) && before(e, nm);
+        cur.querySelectorAll('p, li, h1, h2, h3, h4, h5, h6, blockquote, figcaption, div').forEach((e) => { if (e.isConnected && between(e) && units.has(norm(e.textContent))) e.remove(); });
+        cur.querySelectorAll('img').forEach((e) => { const u = e.getAttribute('src') || e.getAttribute('data-src') || ''; if (u && srcs.has(u) && between(e)) e.remove(); });
+        nm.before(wrap);
+        added = true;
+      });
+      if (added) content = '<div>' + cur.innerHTML + '</div>';
+    }
+  }
   const box = prune(parse(content));
   // 유료 표시: ld+json isAccessibleForFree=false 또는 한경 articlePayment="Y"
   // ldBody: 사이트가 ld+json articleBody 로 적은 본문 글자 수(맛보기 판정 — Paywall.MatchesSiteBody, 맥 ld-body-match)

@@ -18,11 +18,14 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         // 위젯 확장 실행 파일: build.sh 가 Contents/PlugIns/DropcapWidgets.appex 로 묶는다
+        // 시작점은 시스템 확장 입구(_NSExtensionMain) — Xcode 의 앱 확장 타깃과 같게. 이것 없이 @main 으로 바로 들어가면
+        // ExtensionFoundation 이 확장 설정(ExtensionMain)을 받지 못해 시작하자마자 끝났다(10-15 충돌 보고 · mac/E2E.md).
         .executableTarget(
             name: "DropcapWidgets",
             dependencies: ["DropcapShared"],
             path: "Sources/DropcapWidgets",
-            swiftSettings: [.swiftLanguageMode(.v5)]
+            swiftSettings: [.swiftLanguageMode(.v5)],
+            linkerSettings: [.unsafeFlags(["-Xlinker", "-e", "-Xlinker", "_NSExtensionMain"])]
         ),
         .testTarget(
             name: "DropcapTests",

@@ -38,7 +38,7 @@ final class AppModel: ObservableObject {
         if !state.magazineBackfilled { Task { await backfillMagazine() } }
         restartLoop()
         // 1분마다: 아침 브리핑 시각인지, 잠시 끄기가 끝났는지
-        let t = Timer(timeInterval: 60, repeats: true) { _ in MainActor.assumeIsolated { AppModel.shared.minuteTick() } }
+        let t = Timer(timeInterval: 60, repeats: true) { _ in Self.minuteTimerFired() }
         RunLoop.main.add(t, forMode: .common)
         minuteTimer = t
         HotKey.register(key: .n) { AppModel.shared.openLatestUnread() } // ⌥⌘N
@@ -542,6 +542,12 @@ final class AppModel: ObservableObject {
         let cal = Calendar.current
         let tomorrow = cal.date(byAdding: .day, value: 1, to: Date())!
         return cal.date(bySettingHour: hour, minute: 0, second: 0, of: tomorrow)!
+    }
+
+    // 1분 타이머가 부르는 곳. 예전엔 MainActor.assumeIsolated 로 '메인 액터'라고 단언했는데, 그 단언이 한 번 실패해
+    // 앱이 끝났다(10-14 충돌 보고). 어느 스레드에서 불려도 단언 없이 메인 액터로 넘겨 일한다.
+    nonisolated static func minuteTimerFired(_ tick: @escaping @MainActor @Sendable () -> Void = { AppModel.shared.minuteTick() }) {
+        Task { @MainActor in tick() }
     }
 
     private func minuteTick() {

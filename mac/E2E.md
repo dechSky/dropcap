@@ -110,7 +110,7 @@ bugak run --heavy -- mac/scripts/e2e/run.sh [결과 폴더]      # 기본: mac/.
   - 다시 찾아봄(2026-10-15, wt/mac-small): 조용한 모드로 시나리오를 세 번 더 돌렸으나(`repeat-1~3`, 각 main·restart·recover) 모두 종료 코드 0·실패 0 — 재현되지 않음.
   - 충돌 보고(`~/Library/Logs/DiagnosticReports/Dropcap-*`)는 10-14 에 네 건 있으나 run6(11:02~13:02 사이) 시각과 맞는 것은 없다(보고 없이 끝났다는 기록과 같음). 네 건은 따로 정리:
     - 14:38 · 14:51 — 클릭 시험(`E2EClickSweep`)의 손쉬운 사용 이름 읽기(문자열 아닌 값을 문자열로 바꿈)와 NaN 좌표를 Int 로 바꾸기. 지금 코드는 둘 다 고쳐져 있음(`text()` 의 형 확인 · `ix()`).
-    - 13:46 — `AppModel.start` 의 1분 타이머 안 `MainActor.assumeIsolated` 단언 실패(메인 스레드, 켠 지 61초 = 첫 타이머). 한 번뿐이고 재현되지 않음. 단언 대신 `Task { @MainActor in … }` 로 부르면 같은 일이 생겨도 끝나지 않는다 — Core 담당에 넘김.
+    - 13:46 — `AppModel.start` 의 1분 타이머 안 `MainActor.assumeIsolated` 단언 실패(메인 스레드, 켠 지 61초 = 첫 타이머). 한 번뿐이고 재현되지 않음. **고침(wt/mac-crash)**: 타이머 처리(`AppModel.minuteTimerFired`)가 단언 없이 `Task { @MainActor in … }` 로 넘긴다. 시험 `CrashFixTests` — 메인 밖에서 부르면 옛 꼴은 시험 프로세스가 SIGTRAP(신호 5)으로 죽고, 고친 뒤엔 메인에서 일하고 통과.
     - 16:32 — AppKit 창 변형 애니메이션(`_NSWindowTransformAnimation`) 해제 중 잘못된 해제. 앱 코드가 스택에 없음(클릭 시험 중 창을 여닫는 때로 보임). 재현되지 않음.
   - 보고 없이 끝나는 경우는 신호(SIGKILL 등)나 `exit` 뿐이다. run.sh 는 run7 부터 종료 코드를 남기므로, 다시 나오면 종료 코드로 갈래를 좁힐 수 있다.
 - 21단계의 글꼴 토글은 SwiftUI 스위치(PlatformSwitch)라 AppKit 제목·손쉬운 사용 이름이 비어 있어 시험이 찾지 못했다. 그래서 토글이 하는 일(설정값 저장 + `Appearance.changed()`)을 직접 하고 결과를 봤다 — 토글 자체를 누르는 것은 눈으로 확인할 것.
@@ -119,6 +119,9 @@ bugak run --heavy -- mac/scripts/e2e/run.sh [결과 폴더]      # 기본: mac/.
 - **분야 지면을 막 켠 직후 누르면 잠깐 빈 화면 — 고침(2026-10-15).** 지면(`IssueView`)은 엮은 결과가 오기 전까지 아무것도 그리지 않았다. 이제 엮는 동안 지면 이름·'지면을 엮는 중…'·카드 뼈대(`IssueBuilding`)를 보이고, 이번 실행에서 한 번 엮은 지면은 다시 열 때 지난 결과부터 보인 뒤 새로 엮은 것으로 바꾼다(`IssueCache`, 지면마다 따로 · 오늘 지면도 같음). 지난 결과만 보이는 동안은 '새 소식' 알림을 띄우지 않는다. 시험: `MagazineLoadingTests`(캐시를 비우면 실패 확인). 시나리오 `fixed-1` 33 통과·0 실패.
 - **매거진 창 머리에 스크롤한 본문이 비쳐 겹쳐 보임 — 고침(2026-10-15, 사용자 보고).** 창이 투명 제목줄(fullSizeContentView)이라 지면이 제목줄 밑으로 지나갔다. 이제 지면 칸의 머리 높이(위 safe area, 28pt)에 바탕색을 깔고(`TitlebarBackdrop` — 맨 위에서는 바탕과 같은 색이라 그대로 투명해 보임), 지면이 머리 밑으로 들어간 동안만 아래 구분선을 띄운다(`reportsScrolledPastTop`, 오늘·이번 주·분야·지난 호 지면). 분야 고르기 창은 머리 글이 스크롤 영역 밖에 있어 겹치지 않음(스냅샷 확인 — 그대로 둠).
   - 확인: `scripts/e2e/header.sh`(조용한 모드 — 창을 앞으로 띄우지 않음) 가 분야 고르기·매거진(오늘·경제·스토리) × 밝게·어둡게 × 맨 위·스크롤 스냅샷을 남긴다. 단 화면 밖 그리기(cacheDisplay)는 제목줄 띠를 그리지 않아(검게 비거나 불투명) 겹침 자체는 그림으로 못 본다 — 바탕 높이가 28pt 로 잡히고 스크롤 때 구분선 상태가 바뀌는 것을 기록으로 확인. 실제 화면 모양은 눈으로 볼 것.
+
+- **위젯 확장이 시작하자마자 죽음 — 고침(2026-10-15, wt/mac-crash).** 설치된 앱의 `DropcapWidgets.appex` 가 알림 센터가 띄울 때마다 SIGTRAP 으로 끝났다(충돌 보고 여러 건, `ExtensionFoundation` `_EXRunningExtension._shared` 안). lldb 로 보니 `ExtensionMain.shared` 의 설정이 비어 있어 강제로 멈춘 것 — SwiftPM 실행 타깃이 `@main WidgetBundle` 로 바로 들어가 시스템 확장 입구를 거치지 않았기 때문. Xcode 의 앱 확장 타깃처럼 입구를 `_NSExtensionMain` 으로 링크하니(`Package.swift` 의 DropcapWidgets `linkerSettings`) 직접 띄웠을 때 정상 확장의 응답('An XPC Service cannot be run directly.')으로 바뀜.
+  - 확인: `scripts/check-widget-start.sh [appex]` — 설치된 옛 앱은 실패(종료 133), 새 빌드는 통과. 실제 위젯 갤러리·알림 센터에 그려지는지는 새 빌드를 설치한 뒤 눈으로 볼 것(WIDGETS.md '남은 확인').
 
 ## 자동으로 확인하지 못한 것
 

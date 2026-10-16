@@ -3,10 +3,10 @@
 //  auto·google = Google(기기 내 엔진이 없어 auto 도 Google) · off = 번역 안 함 · apple(맥에서 '기기 내만'으로 고른 기록) = 기기 밖으로 보내지 않음 → 번역 안 함.
 // 'Google 로 보내지 않음'이면 기사 본문·배경 제목 번역·같은 소식 묶기용 영어 번역 모두 보내지 않는다. 실패하면 원문을 그대로 돌려준다.
 use crate::net;
-use futures::future::join_all;
+use futures::future::{join_all, BoxFuture};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Engine {
@@ -23,9 +23,15 @@ impl Engine {
     }
 }
 
+// 외국어로 보이는가: 한글이 20% 미만. 글자가 하나도 없거나(숫자·기호뿐) 주소 하나뿐인 글은 번역할 것이 없다(TRANSLATE.md 케이스 8)
 pub fn looks_foreign(text: &str) -> bool {
+    static URL_ONLY: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r"(?i)^(https?://|www\.)\S+$").unwrap());
     let s: Vec<char> = text.chars().filter(|c| !c.is_whitespace()).collect();
-    if s.is_empty() {
+    if s.is_empty() || !s.iter().any(|c| c.is_alphabetic()) {
+        return false;
+    }
+    let trimmed = text.trim();
+    if s.len() == trimmed.chars().count() && URL_ONLY.is_match(trimmed) {
         return false;
     }
     let hangul = s.iter().filter(|c| ('\u{AC00}'..='\u{D7A3}').contains(*c)).count();
@@ -66,12 +72,15 @@ pub fn engine_note(mode: &str) -> &'static str {
 pub const TRANSLATE_MAX_BODY: usize = 2 << 20;
 
 type ModeSource = Box<dyn Fn() -> String + Send + Sync>;
+// Google 부르기(글, 목표 언어) — 시험에서 네트워크 없이 바꿔 끼운다
+pub type GoogleCall = Arc<dyn Fn(String, String) -> BoxFuture<'static, Option<String>> + Send + Sync>;
 
 pub struct Translator {
     cache: Mutex<HashMap<String, String>>,
     last: Mutex<Engine>,
     mode_source: Mutex<ModeSource>,
     last_mode: Mutex<Option<String>>,
+    google_call: Option<GoogleCall>,
 }
 
 pub static SHARED: Lazy<Translator> = Lazy::new(|| Translator::with_mode(|| "auto".into()));
@@ -99,7 +108,25 @@ impl Translator {
 
     // mode: 번역할 때마다 지금 번역 방식을 읽는 곳(앱은 AppModel 설정, 시험은 바꿔 끼움)
     pub fn with_mode(mode: impl Fn() -> String + Send + Sync + 'static) -> Translator {
-        Translator { cache: Mutex::new(HashMap::new()), last: Mutex::new(Engine::None), mode_source: Mutex::new(Box::new(mode)), last_mode: Mutex::new(None) }
+        Translator {
+            cache: Mutex::new(HashMap::new()),
+            last: Mutex::new(Engine::None),
+            mode_source: Mutex::new(Box::new(mode)),
+            last_mode: Mutex::new(None),
+            google_call: None,
+        }
+    }
+
+    // 시험용: Google 대신 call 을 부른다
+    pub fn with_google(mode: impl Fn() -> String + Send + Sync + 'static, call: GoogleCall) -> Translator {
+        Translator { google_call: Some(call), ..Translator::with_mode(mode) }
+    }
+
+    async fn call(&self, text: &str, target: &str) -> Option<String> {
+        match &self.google_call {
+            Some(f) => f(text.to_string(), target.to_string()).await,
+            None => google(text, target).await,
+        }
     }
 
     pub fn set_mode_source(&self, mode: impl Fn() -> String + Send + Sync + 'static) {
@@ -131,7 +158,7 @@ impl Translator {
         if !self.sending() {
             return vec![None; texts.len()];
         }
-        join_all(texts.iter().map(|t| google(t, "en"))).await
+        join_all(texts.iter().map(|t| self.call(t, "en"))).await
     }
 
     pub async fn translate(&self, text: &str) -> String {
@@ -161,7 +188,8 @@ impl Translator {
     }
 
     // 문단 여러 개를 빈 줄로 이어 한 번에 보내고(요청 수를 줄여 빠르게), 묶음들은 동시에 보낸다.
-    // 돌아온 문단 수가 안 맞으면 그 묶음만 문단별로 다시 보낸다. 순서를 지킨다. (결과, 새로 번역했나)
+    // 돌아온 문단 수가 안 맞거나, 수는 맞아도 앞뒤 문단과 엇갈려 보이면(TRANSLATE.md 케이스 10) 그 묶음만 문단별로 다시 보낸다.
+    // 결과는 다듬는다(polish: 제목 끝 마침표·이름 되돌림). 순서를 지킨다. (결과, 새로 번역했나)
     async fn translate_many_raw(&self, texts: &[String]) -> (Vec<String>, bool) {
         let mut result = texts.to_vec();
         let todo: Vec<usize> = {
@@ -178,16 +206,16 @@ impl Translator {
         }
         let batches = batches(texts, &todo, BATCH_CHARS);
         let jobs = batches.into_iter().map(|batch| async move {
-            let joined = batch.iter().map(|&i| texts[i].replace('\n', " ")).collect::<Vec<_>>().join("\n\n");
-            if let Some(out) = google(&joined, "ko").await {
+            let sources: Vec<String> = batch.iter().map(|&i| texts[i].replace('\n', " ")).collect();
+            if let Some(out) = self.call(&sources.join("\n\n"), "ko").await {
                 let parts: Vec<String> = out.split("\n\n").map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect();
-                if parts.len() == batch.len() {
+                if parts.len() == batch.len() && !looks_shifted(&sources, &parts) {
                     return batch.into_iter().zip(parts).collect::<Vec<_>>();
                 }
             }
             let mut one = Vec::new();
             for i in batch {
-                if let Some(t) = google(&texts[i], "ko").await {
+                if let Some(t) = self.call(&texts[i], "ko").await {
                     one.push((i, t));
                 }
             }
@@ -195,7 +223,8 @@ impl Translator {
         });
         let done = join_all(jobs).await;
         for pairs in done {
-            for (i, t) in pairs {
+            for (i, raw) in pairs {
+                let t = polish(&texts[i], &raw);
                 self.remember(&texts[i], &t);
                 result[i] = t;
             }
@@ -324,4 +353,134 @@ async fn google_once(text: &str, target: &str) -> Option<String> {
         return None;
     }
     parse_google(&r.data)
+}
+
+// ── 다듬기(번역 결과 후처리, 맥 Translator.polish — TRANSLATE.md 2단계) ──
+
+// 원문 끝에 마침표가 없으면(제목·소제목·목록) 번역 끝 마침표 하나를 뗀다(케이스 3, `...` 는 둠),
+// 원문에 영문으로 있는 이름을 엔진이 한글로 음역·직역했으면 영문으로 되돌린다(케이스 2)
+pub fn polish(source: &str, translated: &str) -> String {
+    let mut t = translated.to_string();
+    if let Some(last) = source.trim().chars().last() {
+        if !".。!?！？…:;\"”’)".contains(last) {
+            let tt = t.trim();
+            if tt.ends_with('.') && !tt.ends_with("..") {
+                t = tt[..tt.len() - 1].to_string();
+            }
+        }
+    }
+    restore_names(source, &t)
+}
+
+// 엔진이 잘 음역·직역하는 이름(AI 뉴스에 자주 나오는 것, 맥 nameRules 와 같은 표). 긴 꼴부터 바꾼다. 원문에 그 영문 이름이 낱말로 있을 때만.
+// person_clash: 사람 이름 앞부분이 되기도 하는 이름 — 원문에서 그 이름 바로 뒤에 다른 대문자 낱말(제품 이름 아님)이 오면 건드리지 않는다
+pub struct NameRule {
+    pub latin: &'static str,
+    pub variants: &'static [&'static str],
+    pub person_clash: bool,
+}
+
+pub const NAME_RULES: &[NameRule] = &[
+    NameRule { latin: "Claude Code", variants: &["클로드 코드"], person_clash: false },
+    NameRule { latin: "Claude Corps", variants: &["클로드 군단", "클로드 코어스", "클로드 코프스", "클로드 코퍼스"], person_clash: false },
+    NameRule { latin: "Claude", variants: &["클로드", "클도"], person_clash: true },
+    NameRule { latin: "Anthropic", variants: &["앤트로픽", "앤스로픽", "안트로픽", "인류학적"], person_clash: false },
+    NameRule { latin: "OpenAI", variants: &["오픈AI", "오픈에이아이", "오픈 AI"], person_clash: false },
+    NameRule { latin: "ChatGPT", variants: &["챗GPT", "챗지피티"], person_clash: false },
+    NameRule { latin: "Gemini", variants: &["제미니", "제미나이", "쌍둥이자리"], person_clash: false },
+    NameRule { latin: "DeepMind", variants: &["딥마인드"], person_clash: false },
+    NameRule { latin: "Hugging Face", variants: &["포옹하는 얼굴", "허깅 페이스", "허깅페이스"], person_clash: false },
+    NameRule { latin: "Copilot", variants: &["부조종사", "코파일럿"], person_clash: false },
+    NameRule { latin: "Perplexity", variants: &["당혹감", "퍼플렉시티"], person_clash: false },
+];
+
+pub const PRODUCT_WORDS: &[&str] =
+    &["Code", "Corps", "Opus", "Sonnet", "Haiku", "Fable", "Mythos", "Design", "Science", "Security", "Cowork", "Enterprise", "Pro", "Max", "Team", "Ultra", "Flash", "Nano"];
+
+// source 에서 name 이 낱말로(앞뒤가 영문자가 아님) 나오는 자리들의 끝 위치
+fn word_ends(source: &str, name: &str) -> Vec<usize> {
+    let mut out = vec![];
+    let mut from = 0;
+    while let Some(k) = source[from..].find(name) {
+        let start = from + k;
+        let end = start + name.len();
+        let before = source[..start].chars().last().is_some_and(|c| c.is_ascii_alphabetic());
+        let after = source[end..].chars().next().is_some_and(|c| c.is_ascii_alphabetic());
+        if !before && !after {
+            out.push(end);
+        }
+        from = start + 1;
+        while !source.is_char_boundary(from) {
+            from += 1;
+        }
+    }
+    out
+}
+
+// 원문에서 name 바로 뒤에 제품 낱말이 아닌 대문자 낱말이 오는가(예: 사람 이름 'Claude Monet')
+pub fn followed_by_other_name(source: &str, name: &str) -> bool {
+    word_ends(source, name).into_iter().any(|end| {
+        let rest = &source[end..];
+        let Some(word) = rest.strip_prefix(' ') else { return false };
+        // 맥 정규식 `name ([A-Z][a-z]+)` 과 같은 꼴
+        let mut cs = word.chars();
+        let Some(first) = cs.next().filter(|c| c.is_ascii_uppercase()) else { return false };
+        let lower: String = cs.take_while(|c| c.is_ascii_lowercase()).collect();
+        !lower.is_empty() && !PRODUCT_WORDS.contains(&format!("{first}{lower}").as_str())
+    })
+}
+
+pub fn restore_names(source: &str, translated: &str) -> String {
+    let mut t = translated.to_string();
+    for r in NAME_RULES {
+        if !r.variants.iter().any(|v| t.contains(v)) || word_ends(source, r.latin).is_empty() {
+            continue;
+        }
+        if r.person_clash && followed_by_other_name(source, r.latin) {
+            continue;
+        }
+        let mut vs: Vec<&str> = r.variants.to_vec();
+        vs.sort_by_key(|v| std::cmp::Reverse(v.chars().count()));
+        for v in vs {
+            t = t.replace(v, r.latin);
+        }
+    }
+    t
+}
+
+// 묶음 대조(케이스 10): 문단 수는 맞아도 결과가 밀렸는지. 원문 문단에만 있는(앞뒤 원문에는 없는) 영문 낱말·숫자 —
+// 번역에도 그대로 남는 것 — 가 제 짝 번역보다 이웃 짝 번역에 더 많이 보이는 문단이 하나라도 있으면 밀린 것으로 본다.
+// 맥 점검 표본의 실제 묶음 85개에서 오탐 1, 한 칸 밀림 84/85·가운데부터 밀림 73/83 을 잡았다. 틀리게 의심하면 그 묶음을 문단별로 다시 받을 뿐이다.
+pub fn anchors(s: &str) -> std::collections::HashSet<String> {
+    static RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r"[A-Za-z][A-Za-z0-9]{2,}|\d{2,}").unwrap());
+    RE.find_iter(s).map(|m| m.as_str().to_lowercase()).collect()
+}
+
+pub fn looks_shifted(sources: &[String], outputs: &[String]) -> bool {
+    if sources.len() != outputs.len() || sources.len() < 2 {
+        return false;
+    }
+    let src: Vec<_> = sources.iter().map(|s| anchors(s)).collect();
+    let out: Vec<_> = outputs.iter().map(|s| anchors(s)).collect();
+    let n = sources.len();
+    for k in 0..n {
+        let mut own = src[k].clone();
+        if k > 0 {
+            own.retain(|w| !src[k - 1].contains(w));
+        }
+        if k + 1 < n {
+            own.retain(|w| !src[k + 1].contains(w));
+        }
+        if own.is_empty() {
+            continue;
+        }
+        let hits = |j: usize| own.iter().filter(|w| out[j].contains(*w)).count();
+        let mine = hits(k);
+        let next = if k + 1 < n { hits(k + 1) } else { 0 };
+        let prev = if k > 0 { hits(k - 1) } else { 0 };
+        if next.max(prev) > mine {
+            return true;
+        }
+    }
+    false
 }

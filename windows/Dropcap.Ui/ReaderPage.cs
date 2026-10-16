@@ -157,10 +157,16 @@ public sealed class ReaderPage : IPage
     {
         if (alternatives == 0) return null;
         if (phase == "failed") return "본문을 열지 못했습니다";
-        if (paywalled) return "구독자만 읽을 수 있는 기사입니다";
+        if (paywalled) return "다른 곳 보도로 전체를 읽을 수 있어요"; // 맛보기 안내는 본문 위 띠(teaser)가 따로 맡는다(맥 TeaserBanner)
         if (kind is { } k && k.Blocks()) return k == PaywallKind.Hard ? "유료 기사입니다" : "이곳 기사는 자주 막힙니다";
         return null;
     }
+
+    // 본문 끝 한 줄(맥 CutEndNote 문구 그대로). 맛보기도 일부만도 아니면 없음
+    public static object? CutNote(bool teaser, bool partial) =>
+        teaser ? new { text = "— 여기까지가 공개된 부분입니다", open = "원문에서 이어 읽기" }
+        : partial ? new { text = "본문 일부만 가져왔을 수 있어요", open = "원문 열기" }
+        : null;
 
     // 같은 스토리에서 무료로 읽을 수 있는 보도(숨긴 출처 빼고)
     public static List<NewsItem> Alternatives(NewsItem item, AppModel? m, PaywallBook? pw)
@@ -217,6 +223,9 @@ public sealed class ReaderPage : IPage
             paywalled,
             alternatives = alts.Select(x => new { key = x.Key, source = x.SourceName, title = x.DisplayTitle, color = ItemView.From(x, m).Color }).ToList(),
             freeReason = FreeReason(alts.Count, phase, paywalled, kind),
+            // 맛보기 띠(본문 위, 무료 보도가 없어도 늘 — 맥 TeaserBanner)와 본문 끝 한 줄(맛보기가 끝난 자리·일부만 — 맥 CutEndNote)
+            teaser = paywalled && phase is ("translating" or "done"),
+            cutNote = CutNote(paywalled, a?.Partial == true),
             cover,
             date = DateLabel(item.Date),
             minutes = new { shown = ReadingMinutes(shown), original = ReadingMinutes(original) },
@@ -285,12 +294,27 @@ public sealed class ReaderPage : IPage
 
     public async Task<object?> Handle(string cmd, JsonObject a) => cmd switch
     {
+        "reload" => await Reload(a.Str("key")),
         "imageText" => await ImageTextOf(a.Str("key"), a.Str("src")),
         "imageTranslate" => await TranslateLines(a),
         "imageCopy" => await CopyImage(a.Str("key"), a.Str("src")),
         "imageSave" => await SaveImage(a.Str("key"), a.Str("src")),
         _ => Do(cmd, a),
     };
+
+    // '다시 받기'(맥 ReaderModel.reload): 저장한 본문을 지우고 원문에서 처음부터. 진행 상황은 관찰로 창에 감
+    private async Task<object?> Reload(string key)
+    {
+        var e = Find(key);
+        lock (gate) e.Article = null;
+        Send(e);   // 불러오는 중 화면으로
+        PreparedArticle a;
+        try { a = await articles.ReloadAsync(e.Item); }
+        catch (Exception) { a = new PreparedArticle { Stage = Stage.Failed, Title = e.Item.DisplayTitle, OriginalTitle = e.Item.Title }; }
+        lock (gate) { if (!open.ContainsKey(key)) return null; e.Article = a; }
+        Send(e);
+        return null;
+    }
 
     // MARK: 기사 속 사진 도구(R-20)
 

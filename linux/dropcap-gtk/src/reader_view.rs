@@ -44,8 +44,10 @@ struct Model {
     engine: String,
     cover: Option<String>, // 표지 사진(피드 → 매거진 기록 → 기사 머리 대표 사진)
     paywalled: bool,                // 맛보기만 나옴(유료벽 뒤, G-14)
+    partial: bool,                  // 본문 일부만 가져왔을 수 있음(READER-CUT.md A)
     paywall: Option<PaywallKind>,   // 출처가 유료로 알려졌거나 자주 막히는 곳
     alternatives: Vec<NewsItem>,    // 같은 스토리의 무료 보도(G-15)
+    open_originals: std::collections::HashSet<usize>, // 원문을 펼친 문단(번역 보기에서 문단마다, 블록 번호)
 }
 
 impl Model {
@@ -63,8 +65,10 @@ impl Model {
             engine: String::new(),
             cover: None,
             paywalled: false,
+            partial: false,
             paywall: None,
             alternatives: vec![],
+            open_originals: Default::default(),
         }
     }
 }
@@ -96,6 +100,7 @@ pub struct ReaderWindow {
     mode_original: gtk::ToggleButton,
     speak_btn: gtk::Button,
     save_btn: gtk::Button,
+    reload_btn: gtk::Button,
     scrap_btn: adw::SplitButton,
     // 기사 안 찾기
     find_bar: gtk::SearchBar,
@@ -205,7 +210,9 @@ impl ReaderWindow {
         let scrap_btn = adw::SplitButton::builder().icon_name("edit-cut-symbolic").tooltip_text("기사 스크랩 (누르면 마지막 폴더에, 화살표로 폴더 고르기)").build();
         let speak_btn = icon_label_button("audio-speakers-symbolic", "소리 내어 읽기");
         speak_btn.set_visible(reader_speech::available());
+        let reload_btn = icon_label_button("view-refresh-symbolic", "다시 받기 — 저장한 본문을 지우고 원문에서 다시 받기");
         header.pack_end(&share_btn);
+        header.pack_end(&reload_btn);
         header.pack_end(&browser_btn);
         header.pack_end(&save_btn);
         header.pack_end(&scrap_btn);
@@ -259,6 +266,7 @@ impl ReaderWindow {
             mode_original,
             speak_btn,
             save_btn,
+            reload_btn,
             scrap_btn,
             find_bar,
             find_entry,
@@ -335,6 +343,12 @@ impl ReaderWindow {
                     me.find_entry.set_text("");
                 }
                 me.update_find(false);
+            }
+        });
+        let w = Rc::downgrade(&me);
+        me.reload_btn.connect_clicked(move |_| {
+            if let Some(me) = w.upgrade() {
+                me.reload();
             }
         });
         let w = Rc::downgrade(&me);
@@ -576,10 +590,30 @@ impl ReaderWindow {
         });
     }
 
+    // '다시 받기': 저장한 것을 지우고 처음부터(맛보기·일부만이 풀렸는지, 앱이 고쳐졌는지 — 맥 ReaderModel.reload)
+    fn reload(self: &Rc<Self>) {
+        if matches!(self.model.borrow().phase, Phase::Loading | Phase::Translating) {
+            return;
+        }
+        if let Some(id) = self.observe.take() {
+            ui().core.articles.stop_observing(&self.item().link, id);
+        }
+        ui().core.articles.forget_cached(&self.item().link);
+        {
+            let mut m = self.model.borrow_mut();
+            m.phase = Phase::Loading;
+            m.blocks.clear();
+            m.open_originals.clear();
+        }
+        self.update_tools();
+        self.render();
+        self.load();
+    }
+
     fn apply(self: &Rc<Self>, a: &PreparedArticle) {
         let changed = {
             let mut m = self.model.borrow_mut();
-            let before = (m.phase, m.blocks.len(), m.translated, m.key_points.clone(), m.summarizing, m.title.clone());
+            let before = (m.phase, m.blocks.len(), m.translated, m.key_points.clone(), m.summarizing, m.title.clone(), m.paywalled, m.partial);
             // 예전에 저장한 기사에도 적용: 제목 끝의 사이트 이름은 출처가 이미 보이므로 뗀다
             m.title = strip_site_name(&a.title, &self.item().source_name, &self.item().title);
             m.original_title = strip_site_name(&a.original_title, &self.item().source_name, &self.item().title);
@@ -589,6 +623,7 @@ impl ReaderWindow {
             m.summarizing = a.summarizing;
             m.summary = a.fallback.clone();
             m.paywalled = a.paywalled == Some(true);
+            m.partial = a.partial == Some(true);
             let blocks_changed = !a.blocks.is_empty() && a.blocks != m.blocks;
             if !a.blocks.is_empty() {
                 m.blocks = a.blocks.clone();
@@ -599,9 +634,10 @@ impl ReaderWindow {
                 Stage::Done => Phase::Done,
                 Stage::Failed => Phase::Failed,
             };
-            blocks_changed || before != (m.phase, m.blocks.len(), m.translated, m.key_points.clone(), m.summarizing, m.title.clone())
+            blocks_changed || before != (m.phase, m.blocks.len(), m.translated, m.key_points.clone(), m.summarizing, m.title.clone(), m.paywalled, m.partial)
         };
         self.mode_box.set_visible(self.model.borrow().translated);
+        self.update_tools();
         self.update_speak();
         if changed {
             self.render();
@@ -696,6 +732,16 @@ impl ReaderWindow {
             self.column.append(&self.cover(&u));
         }
         self.column.append(&self.header());
+        let (phase, paywalled, partial) = {
+            let m = self.model.borrow();
+            (m.phase, m.paywalled, m.partial)
+        };
+        // 맛보기면 본문 바로 위에, 무료 보도가 없어도 늘(무료 보도 상자와 따로 — READER-CUT.md C②)
+        if paywalled && matches!(phase, Phase::Translating | Phase::Done) {
+            let b = self.teaser_banner();
+            b.set_margin_top(18);
+            self.column.append(&b);
+        }
         if let Some(b) = self.free_box() {
             b.set_margin_top(18);
             self.column.append(&b);
@@ -735,6 +781,11 @@ impl ReaderWindow {
                 body.set_margin_top(24);
                 self.column.append(&body);
                 widgets::fade_in(&body, 300);
+                if paywalled || partial {
+                    let n = self.cut_end_note(paywalled);
+                    n.set_margin_top(6);
+                    self.column.append(&n);
+                }
             }
             Phase::Failed => {
                 let f = self.failed();
@@ -912,6 +963,7 @@ impl ReaderWindow {
             (m.blocks.clone(), m.show_original)
         };
         let hidden = self.hidden_blocks(&blocks);
+        let open = self.model.borrow().open_originals.clone();
         for (i, b) in blocks.iter().enumerate() {
             if hidden.contains(&i) {
                 continue;
@@ -921,9 +973,110 @@ impl ReaderWindow {
             let (content, label) = self.block_view(b, &t, prev_li);
             let enabled = matches!(b.kind, BlockKind::P | BlockKind::Li | BlockKind::Quote | BlockKind::H) && !t.is_empty();
             let original = if show_original { None } else { b.original.clone() };
-            body.append(&self.scrap_row(content, label, t, original, enabled));
+            // 문단별 원문 펼치기(번역 보기에서 번역된 문단만 — 맥 f5c8d57)
+            let can_open = !show_original && b.original.is_some() && b.kind != BlockKind::Img;
+            let toggle = can_open.then_some((i, open.contains(&i)));
+            body.append(&self.scrap_row(content, label, t, original, enabled, toggle));
+            if let (true, Some(o)) = (can_open && open.contains(&i), b.original.as_deref()) {
+                body.append(&self.original_under(o));
+            }
         }
         body
+    }
+
+    // 펼친 문단의 원문: 번역문 바로 아래에 작게, 왼쪽에 기사 빛깔 줄
+    fn original_under(&self, o: &str) -> gtk::Widget {
+        let fs = self.font_size();
+        let l = text(o, fs - 2.0, 400, 1.35, false, false);
+        l.add_css_class("dc-secondary");
+        l.set_hexpand(true);
+        let (r, g, b) = rgb(&self.accent());
+        let wrap = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        style(&wrap, &format!("border-left: 2px solid rgba({r},{g},{b},0.4); padding-left: 12px;"));
+        wrap.append(&l);
+        wrap.set_margin_start(38);
+        wrap.set_margin_top(-(fs as i32 - 4).max(0));
+        wrap.set_margin_bottom(fs as i32);
+        wrap.upcast()
+    }
+
+    fn toggle_original(self: &Rc<Self>, i: usize) {
+        {
+            let mut m = self.model.borrow_mut();
+            if !m.open_originals.remove(&i) {
+                m.open_originals.insert(i);
+            }
+        }
+        self.render();
+    }
+
+    // 맛보기(유료벽 앞부분)만 받은 기사 — 본문 바로 위 띠(맥 TeaserBanner 문구 그대로)
+    fn teaser_banner(&self) -> gtk::Widget {
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        row.set_margin_start(38);
+        row.add_css_class("dc-teaser");
+        let lock = widgets::icon("changes-prevent-symbolic", 14);
+        style(&lock, "color: #e67e00;");
+        row.append(&lock);
+        let v = gtk::Box::new(gtk::Orientation::Vertical, 3);
+        v.set_hexpand(true);
+        let t = text(paywall::TEASER_TITLE, 13.5, 600, 0.0, false, false);
+        t.set_selectable(false);
+        v.append(&t);
+        let d = text(paywall::TEASER_DETAIL, 12.5, 400, 0.0, false, false);
+        d.set_selectable(false);
+        d.add_css_class("dc-secondary");
+        v.append(&d);
+        row.append(&v);
+        let open = gtk::Button::with_label(paywall::OPEN_ORIGINAL);
+        open.set_valign(gtk::Align::Center);
+        let link = self.item().link.clone();
+        open.connect_clicked(move |_| {
+            open_external(&link);
+        });
+        row.append(&open);
+        style(&row, "padding: 11px 14px; border-radius: 12px; background-color: rgba(255,149,0,0.09); border: 1px solid rgba(255,149,0,0.28);");
+        row.upcast()
+    }
+
+    // 본문 끝 한 줄: 맛보기가 끝난 자리, 또는 일부만 가져왔을 수 있음(맥 CutEndNote 문구 그대로)
+    fn cut_end_note(self: &Rc<Self>, teaser: bool) -> gtk::Widget {
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        row.set_margin_start(38);
+        let lead = text(if teaser { paywall::TEASER_END } else { paywall::PARTIAL_END }, 12.5, 400, 0.0, false, false);
+        lead.set_selectable(false);
+        lead.add_css_class("dc-secondary");
+        row.append(&lead);
+        let dot = || {
+            let d = text("·", 12.5, 400, 0.0, false, false);
+            d.set_selectable(false);
+            d.add_css_class("dc-secondary");
+            d
+        };
+        let link_btn = |label: &str| {
+            let b = gtk::Button::with_label(label);
+            b.add_css_class("flat");
+            b.add_css_class("dc-link");
+            style(&b, "padding: 0 2px; min-height: 0; font-size: 12.5px; color: @accent_color;");
+            b
+        };
+        row.append(&dot());
+        let open = link_btn(if teaser { paywall::TEASER_CONTINUE } else { paywall::OPEN_ORIGINAL });
+        let link = self.item().link.clone();
+        open.connect_clicked(move |_| {
+            open_external(&link);
+        });
+        row.append(&open);
+        row.append(&dot());
+        let again = link_btn(paywall::RELOAD);
+        let w = Rc::downgrade(self);
+        again.connect_clicked(move |_| {
+            if let Some(me) = w.upgrade() {
+                me.reload();
+            }
+        });
+        row.append(&again);
+        row.upcast()
     }
 
     fn block_view(&self, b: &Block, t: &str, prev_li: bool) -> (gtk::Widget, Option<gtk::Label>) {
@@ -1088,7 +1241,16 @@ impl ReaderWindow {
         Some(v.upcast())
     }
 
-    fn scrap_row(self: &Rc<Self>, content: gtk::Widget, label: Option<gtk::Label>, t: String, original: Option<String>, enabled: bool) -> gtk::Widget {
+    // toggle: 번역된 문단이면 (블록 번호, 원문 펼쳐짐) — 왼쪽 여백에 '원문' 단추·오른쪽 클릭 메뉴
+    fn scrap_row(
+        self: &Rc<Self>,
+        content: gtk::Widget,
+        label: Option<gtk::Label>,
+        t: String,
+        original: Option<String>,
+        enabled: bool,
+        toggle: Option<(usize, bool)>,
+    ) -> gtk::Widget {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         let gutter = gtk::Box::new(gtk::Orientation::Vertical, 0);
         gutter.set_size_request(38, -1);
@@ -1101,6 +1263,28 @@ impl ReaderWindow {
         button.set_opacity(0.0);
         button.set_sensitive(enabled);
         gutter.append(&button);
+        // 문단별 원문 펼치기 단추(번역 문단에 마우스를 올리면, 펼친 동안은 늘)
+        let orig_btn = toggle.map(|(i, open)| {
+            let b = gtk::Button::with_label("원문");
+            b.add_css_class("flat");
+            b.add_css_class("pill");
+            style(&b, "font-size: 9.5px; font-weight: 600; padding: 0 4px; min-height: 20px; min-width: 26px;");
+            b.set_halign(gtk::Align::Start);
+            b.set_margin_top(2);
+            b.set_tooltip_text(Some(if open { "이 문단 원문 접기" } else { "이 문단 원문 펼치기" }));
+            b.set_opacity(if open { 1.0 } else { 0.0 });
+            if open {
+                b.add_css_class("accent");
+            }
+            let w = Rc::downgrade(self);
+            b.connect_clicked(move |_| {
+                if let Some(me) = w.upgrade() {
+                    me.toggle_original(i);
+                }
+            });
+            gutter.append(&b);
+            (b, open)
+        });
         row.append(&gutter);
         content.set_hexpand(true);
         row.append(&content);
@@ -1110,8 +1294,12 @@ impl ReaderWindow {
         // 마우스를 올린 문단을 옅게 칠해 무엇이 스크랩될지 보이게
         let hover = gtk::EventControllerMotion::new();
         let (b1, c1) = (button.clone(), content.clone());
+        let o1 = orig_btn.clone();
         hover.connect_enter(move |_, _, _| {
             b1.set_opacity(1.0);
+            if let Some((o, _)) = &o1 {
+                o.set_opacity(1.0);
+            }
             c1.add_css_class("dc-reader-hover");
         });
         // 살짝 벗어났다 돌아와도 단추가 깜빡이지 않게 잠깐(0.25초) 기다렸다 숨김
@@ -1119,18 +1307,22 @@ impl ReaderWindow {
         let t1 = token.clone();
         hover.connect_motion(move |_, _, _| t1.set(t1.get() + 1));
         let (b2, c2, t2) = (button.clone(), content.clone(), token.clone());
+        let o2 = orig_btn.clone();
         hover.connect_leave(move |_| {
             if b2.first_child().is_some() && b2.has_css_class("dc-open") {
                 return;
             }
             t2.set(t2.get() + 1);
             let my = t2.get();
-            let (b3, c3, t3) = (b2.clone(), c2.clone(), t2.clone());
+            let (b3, c3, t3, o3) = (b2.clone(), c2.clone(), t2.clone(), o2.clone());
             glib::timeout_add_local_once(std::time::Duration::from_millis(250), move || {
                 if t3.get() != my || b3.has_css_class("dc-open") {
                     return;
                 }
                 b3.set_opacity(0.0);
+                if let Some((o, false)) = &o3 {
+                    o.set_opacity(0.0);
+                }
                 c3.remove_css_class("dc-reader-hover");
             });
         });
@@ -1154,7 +1346,7 @@ impl ReaderWindow {
         let r2 = row.clone();
         click.connect_pressed(move |g, _, x, y| {
             if let Some(me) = w.upgrade() {
-                me.paragraph_menu(&r2, idx, x, y);
+                me.paragraph_menu(&r2, idx, x, y, toggle);
                 g.set_state(gtk::EventSequenceState::Claimed);
             }
         });
@@ -1290,7 +1482,7 @@ impl ReaderWindow {
         pop.popup();
     }
 
-    fn paragraph_menu(self: &Rc<Self>, row: &gtk::Box, idx: usize, x: f64, y: f64) {
+    fn paragraph_menu(self: &Rc<Self>, row: &gtk::Box, idx: usize, x: f64, y: f64, toggle: Option<(usize, bool)>) {
         let group = gio::SimpleActionGroup::new();
         let menu = gio::Menu::new();
         let scrapped = self.scrap_of(idx).is_some();
@@ -1333,6 +1525,17 @@ impl ReaderWindow {
             sub.append_item(&it);
         }
         menu.append_submenu(Some("다른 폴더에 스크랩"), &sub);
+        if let Some((i, open)) = toggle {
+            let a = gio::SimpleAction::new("original", None);
+            let w = Rc::downgrade(self);
+            a.connect_activate(move |_, _| {
+                if let Some(me) = w.upgrade() {
+                    me.toggle_original(i);
+                }
+            });
+            group.add_action(&a);
+            menu.append(Some(if open { "이 문단 원문 접기" } else { "이 문단 원문 펼치기" }), Some("para.original"));
+        }
         let copy = gio::SimpleAction::new("copy", None);
         let t = self.rows.borrow().get(idx).map(|r| r.text.clone()).unwrap_or_default();
         copy.connect_activate(move |_, _| copy_text(&t));
@@ -1543,6 +1746,8 @@ impl ReaderWindow {
         let saved = ui.core.is_saved(&self.item());
         self.save_btn.set_icon_name(if saved { "user-bookmarks-symbolic" } else { "bookmark-new-symbolic" });
         self.save_btn.set_tooltip_text(Some(if saved { "저장 취소" } else { "나중에 읽기로 저장" }));
+        // 다시 받기는 받거나 번역하는 동안엔 막음
+        self.reload_btn.set_sensitive(!matches!(self.model.borrow().phase, Phase::Loading | Phase::Translating));
         let scrapped = ui.scrapbook.borrow().is_scrapped(&self.item(), None);
         if scrapped {
             self.scrap_btn.add_css_class("accent");

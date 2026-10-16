@@ -134,7 +134,7 @@ actor FeedService {
             NewsItem(id: $0.id, title: $0.title, titleKo: nil, link: $0.link, date: $0.date, summary: $0.summary,
                      sourceId: source.id, sourceName: source.name, tier: source.tier,
                      image: { e in e.image.flatMap { URL(string: $0, relativeTo: URL(string: e.link)) }.map(\.absoluteString) }($0),
-                     kind: source.kind)
+                     kind: source.kind, feedBody: $0.body)
         }
     }
 

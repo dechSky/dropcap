@@ -92,7 +92,7 @@ fn free_alternatives_skip_paywalled_hidden_self_and_channels() {
 fn free_reason_order() {
     assert_eq!(paywall::free_reason(false, true, true, Some(PaywallKind::Hard)), None); // 대안이 없으면 상자 없음
     assert_eq!(paywall::free_reason(true, true, false, None), Some("본문을 열지 못했습니다"));
-    assert_eq!(paywall::free_reason(true, false, true, None), Some("구독자만 읽을 수 있는 기사입니다"));
+    assert_eq!(paywall::free_reason(true, false, true, None), Some("다른 곳 보도로 전체를 읽을 수 있어요")); // 맛보기 안내는 본문 위 띠가 따로(READER-CUT.md C②)
     assert_eq!(paywall::free_reason(true, false, false, Some(PaywallKind::Hard)), Some("유료 기사입니다"));
     assert_eq!(paywall::free_reason(true, false, false, Some(PaywallKind::Learned)), Some("이곳 기사는 자주 막힙니다"));
     assert_eq!(paywall::free_reason(true, false, false, Some(PaywallKind::Metered)), None); // metered 는 먼저 권하지 않음
@@ -438,10 +438,10 @@ fn scores_persist() {
 // MARK: 6. 짧은 글 추출(맥 8e9fde9: 100자 기준 · 본문 영역 대체 · 글 있는 페이지는 느린 길 건너뜀)
 #[test]
 fn short_posts_are_accepted_at_100_chars() {
-    let art = |t: &str| Article { title: None, byline: None, site_name: None, blocks: vec![p(t)] };
+    let art = |t: &str| Article { title: None, byline: None, site_name: None, blocks: vec![p(t)], paid: None, partial: None };
     assert!(art(&"짧은 소개글입니다. ".repeat(10)).acceptable()); // 한 문단 100자 넘음
     assert!(!art("너무 짧음").acceptable());
-    assert!(!Article { title: None, byline: None, site_name: None, blocks: vec![] }.acceptable());
+    assert!(!Article { title: None, byline: None, site_name: None, blocks: vec![], paid: None, partial: None }.acceptable());
 }
 
 #[test]

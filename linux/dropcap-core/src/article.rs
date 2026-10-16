@@ -46,10 +46,10 @@ pub struct Block {
 }
 
 impl Block {
-    fn text(kind: BlockKind, t: String) -> Block {
+    pub(crate) fn text(kind: BlockKind, t: String) -> Block {
         Block { kind, text: Some(t), src: None, original: None }
     }
-    fn img(src: String) -> Block {
+    pub(crate) fn img(src: String) -> Block {
         Block { kind: BlockKind::Img, text: None, src: Some(src), original: None }
     }
 }
@@ -63,6 +63,10 @@ pub struct Article {
     #[serde(rename = "siteName", default)]
     pub site_name: Option<String>,
     pub blocks: Vec<Block>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paid: Option<bool>, // 사이트가 유료 기사라고 적음(ld+json isAccessibleForFree=false · 한경 articlePayment="Y")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partial: Option<bool>, // 본문 일부만 가져왔을 수 있음(앞 문단이 본문 영역에 더 있음)
 }
 
 impl Article {
@@ -75,6 +79,8 @@ impl Article {
 }
 
 pub const MIN_CHARS: usize = 100;
+
+pub use crate::reader_extract::paid_flag;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stage {
@@ -121,7 +127,25 @@ pub struct PreparedArticle {
     #[serde(default)]
     pub fallback: String, // 본문을 못 추렸을 때 보여 줄 요약 번역
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub paywalled: Option<bool>, // 맛보기만 나오고 구독을 권함(유료벽 뒤, G-14)
+    pub paywalled: Option<bool>, // 맛보기만 나오고 구독을 권함(유료벽 뒤, G-14 · READER-CUT.md C)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partial: Option<bool>, // 본문 일부만 가져왔을 수 있음(READER-CUT.md A)
+    #[serde(rename = "savedAt", default, skip_serializing_if = "Option::is_none")]
+    pub saved_at: Option<chrono::DateTime<chrono::Utc>>, // 디스크에 남긴 때(맛보기·일부만은 6시간 뒤 다시 받기)
+}
+
+// 맛보기·일부만 기사는 6시간 뒤 다시 받는다(사이트가 풀거나 앱이 고쳐지면 다시 열 때 온전히). 그 밖은 그대로 오래 둔다(맥 ArticleService.isStale)
+pub const CUT_CACHE_HOURS: i64 = 6;
+
+pub fn is_stale(a: &PreparedArticle, now: chrono::DateTime<chrono::Utc>) -> bool {
+    if a.paywalled != Some(true) && a.partial != Some(true) {
+        return false;
+    }
+    match a.saved_at {
+        // 미래 시각(시계 틀어짐·고친 파일)도 만료로
+        Some(t) => now - t > chrono::Duration::hours(CUT_CACHE_HOURS) || t - now > chrono::Duration::minutes(5),
+        None => true, // 저장 시각 없는 예전 기록
+    }
 }
 
 impl PreparedArticle {
@@ -137,6 +161,8 @@ impl PreparedArticle {
             summarizing: false,
             fallback: String::new(),
             paywalled: None,
+            partial: None,
+            saved_at: None,
         }
     }
 }
@@ -174,11 +200,13 @@ pub fn decode_html(data: &[u8], charset: Option<&str>) -> String {
 }
 
 static NEW_WINDOW: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\((opens in a new (window|tab)|새 창에서 열기)\)").unwrap());
+static CAPTION_BUTTON: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\b(hide|toggle) caption\b").unwrap());
 static WS: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s+").unwrap());
 
-// 화면 낭독기 전용 글자·"(새 창에서 열기)" 제거, 공백 정리(맥 추출 스크립트의 clean)
+// 화면 낭독기 전용 글자·"(새 창에서 열기)"·사진 단추 글('hide caption') 제거, 공백 정리(맥 추출 스크립트의 clean)
 pub fn clean_text(s: &str) -> String {
-    WS.replace_all(&NEW_WINDOW.replace_all(s, ""), " ").trim().to_string()
+    let s = NEW_WINDOW.replace_all(s, "");
+    WS.replace_all(&CAPTION_BUTTON.replace_all(&s, ""), " ").trim().to_string()
 }
 
 pub const SR_ONLY: &str = r#".sr-only, .visually-hidden, .screen-reader-text, [class*="sr-only"], [class*="visually-hidden"]"#;
@@ -186,6 +214,7 @@ pub const SR_ONLY: &str = r#".sr-only, .visually-hidden, .screen-reader-text, [c
 // Readability 의 결과 HTML 을 블록(제목·문단·목록·인용·코드·그림·캡션)으로(맥 스크립트의 walk 와 같은 규칙)
 pub fn blocks_from_html(content: &str, base: &str) -> Vec<Block> {
     let doc = dom_query::Document::from(content);
+    crate::reader_extract::flatten_deep(&doc.root());
     let base_url = url::Url::parse(base).ok();
     // http(s) 로 끝나는 절대 주소만
     let abs = |u: Option<String>| -> Option<String> {
@@ -199,7 +228,7 @@ pub fn blocks_from_html(content: &str, base: &str) -> Vec<Block> {
     let mut out = vec![];
     let body = doc.select("body");
     if let Some(root) = body.nodes().first() {
-        walk(root, &abs, &mut out);
+        crate::reader_extract::walk(root, &abs, &mut out);
     }
     out
 }
@@ -252,93 +281,62 @@ pub fn best_src(img: &dom_query::NodeRef, abs: &dyn Fn(Option<String>) -> Option
     None
 }
 
-fn walk(el: &dom_query::NodeRef, abs: &dyn Fn(Option<String>) -> Option<String>, out: &mut Vec<Block>) {
-    for n in el.element_children() {
-        let tag = n.node_name().map(|t| t.to_lowercase()).unwrap_or_default();
-        let t = clean_text(&n.text());
-        let sel = dom_query::Selection::from(n.clone());
-        let first_img_src = || sel.select("img").nodes().first().and_then(|i| best_src(i, abs));
-        match tag.as_str() {
-            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
-                if !t.is_empty() {
-                    out.push(Block::text(BlockKind::H, t))
-                }
-            }
-            "p" => {
-                if !t.is_empty() {
-                    out.push(Block::text(BlockKind::P, t))
-                }
-                if let Some(s) = first_img_src() {
-                    out.push(Block::img(s))
-                }
-            }
-            "li" => {
-                if !t.is_empty() {
-                    out.push(Block::text(BlockKind::Li, t))
-                }
-            }
-            "blockquote" => {
-                if !t.is_empty() {
-                    out.push(Block::text(BlockKind::Quote, t))
-                }
-            }
-            "pre" => {
-                if !t.is_empty() {
-                    out.push(Block::text(BlockKind::Pre, n.text().to_string()))
-                }
-            }
-            "img" => {
-                if let Some(s) = best_src(&n, abs) {
-                    out.push(Block::img(s))
-                }
-            }
-            "picture" => {
-                if let Some(s) = first_img_src() {
-                    out.push(Block::img(s))
-                }
-            }
-            "figure" => {
-                if let Some(s) = first_img_src() {
-                    out.push(Block::img(s))
-                }
-                if let Some(cap) = sel.select("figcaption").nodes().first() {
-                    let c = clean_text(&cap.text());
-                    if !c.is_empty() {
-                        out.push(Block::text(BlockKind::Cap, c))
-                    }
-                }
-            }
-            _ => walk(&n, abs, out),
+// 웹 엔진 없는 빠른 길 추리기의 시간 제한(초)
+const EXTRACT_SECS: u64 = 10;
+
+// 빠른 길의 Rust 판: 스크립트 없이 HTML 만으로(맥 추출 스크립트와 같은 순서 — reader_extract).
+// 추리기 전에 본문 밖 상자를 빼고, 기본 기준(500자)으로 못 찾으면 짧은 글(GeekNews 소개글 등)을 위해 100자 기준으로 한 번 더,
+// 그래도 못 찾으면 본문으로 보이는 영역(id·class 에 content·article·topic·post·entry 가 든 것) 가운데 글이 가장 많은 곳.
+// 고른 글은 원문에서 찾아 articleBody 우선·형제 덩어리 모으기를 하고, 같은 글은 한 번만. 기사 글 없이 목록뿐이면 None.
+pub fn extract_html(html: &str, base: &str) -> Option<Article> {
+    use crate::reader_extract as rx;
+    if rx::rough_depth(html) > rx::MAX_PARSE_DEPTH {
+        return None;
+    }
+    let pre = {
+        let doc = dom_query::Document::from(html);
+        rx::flatten_deep(&doc.root());
+        rx::pre_clean(&doc);
+        doc.html().to_string()
+    };
+    let fresh = dom_query::Document::from(pre.as_str());
+    let paid = rx::paid_flag(html);
+    // (본문 HTML, 제목, 기자, 매체) → 기사. Err 는 '글 거의 없음'(다음 기준으로 넘어가지 않음)
+    let finish = |content: &str, title: Option<String>, byline: Option<String>, site: Option<String>| -> Result<Option<Article>, ()> {
+        let (content, partial) = rx::gather(content, &fresh);
+        let body = rx::pruned_body(&content);
+        let blocks = rx::dedupe(with_plain_lines(blocks_from_html(&body, base), &body));
+        if rx::only_lists(&blocks) {
+            return Err(());
+        }
+        let art = Article { title, byline, site_name: site, blocks, paid, partial: partial.then_some(true) };
+        Ok(art.acceptable().then_some(art))
+    };
+    let readable = |threshold: Option<usize>| -> Result<Option<Article>, ()> {
+        let doc = dom_query::Document::from(pre.as_str());
+        let cfg = threshold.map(|t| dom_smoothie::Config { char_threshold: t, ..Default::default() });
+        let Some(a) = dom_smoothie::Readability::with_document(doc, Some(base), cfg).ok().and_then(|mut r| r.parse().ok()) else { return Ok(None) };
+        if a.content.trim().is_empty() {
+            return Ok(None);
+        }
+        finish(&a.content, Some(a.title.clone()).filter(|t| !t.is_empty()), a.byline.clone(), a.site_name.clone())
+    };
+    for step in [None, Some(MIN_CHARS)] {
+        match readable(step) {
+            Ok(Some(a)) => return Some(a),
+            Ok(None) => {}
+            Err(()) => return None,
         }
     }
-}
-
-// 빠른 길의 Rust 판: 스크립트 없이 HTML 만으로.
-// 기본 기준(500자)으로 못 찾으면 짧은 글(GeekNews 소개글 등)을 위해 100자 기준으로 한 번 더, 그래도 못 찾으면
-// 본문으로 보이는 영역(id·class 에 content·article·topic·post·entry 가 든 것) 가운데 글이 가장 많은 곳(맥 스크립트와 같은 순서)
-pub fn extract_html(html: &str, base: &str) -> Option<Article> {
-    let readable = |threshold: Option<usize>| -> Option<Article> {
-        let doc = dom_query::Document::from(html);
-        doc.select(SR_ONLY).remove();
-        let cfg = threshold.map(|t| dom_smoothie::Config { char_threshold: t, ..Default::default() });
-        let mut r = dom_smoothie::Readability::with_document(doc, Some(base), cfg).ok()?;
-        let a = r.parse().ok()?;
-        let art = Article {
-            title: Some(a.title.clone()).filter(|t| !t.is_empty()),
-            byline: a.byline.clone(),
-            site_name: a.site_name.clone(),
-            blocks: with_plain_lines(blocks_from_html(&a.content, base), &a.content),
-        };
-        art.acceptable().then_some(art)
-    };
-    readable(None).or_else(|| readable(Some(MIN_CHARS))).or_else(|| content_region(html, base))
+    let (content, title) = content_region(&pre)?;
+    finish(&content, title, None, None).ok().flatten()
 }
 
 const REGION: &str = r#"article, main, [id*="content" i], [class*="content" i], [id*="topic" i], [class*="article" i], [class*="post" i], [class*="entry" i], [itemprop="articleBody"]"#;
 const REGION_JUNK: &str = r#"script, style, nav, form, button, .related-topics, [class*="related" i], [class*="share" i]"#;
 
-// 본문으로 보이는 영역 가운데 글이 가장 많은 곳(80자 이상 · 40000자 미만, 머리·꼬리·옆 메뉴 안은 뺌)
-pub fn content_region(html: &str, base: &str) -> Option<Article> {
+// 본문으로 보이는 영역 가운데 글이 가장 많은 곳(80자 이상 · 40000자 미만, 머리·꼬리·옆 메뉴 안은 뺌). (본문 HTML, 문서 제목)
+pub fn content_region(html: &str) -> Option<(String, Option<String>)> {
     let doc = dom_query::Document::from(html);
     doc.select(SR_ONLY).remove();
     let mut best: Option<(String, usize)> = None;
@@ -366,15 +364,9 @@ pub fn content_region(html: &str, base: &str) -> Option<Article> {
     }
     let region = dom_query::Document::from(inner.as_str());
     region.select(REGION_JUNK).remove();
-    let content = region.select("body").html().to_string();
+    let content = region.select("body").nodes().first().map(|b| format!("<div>{}</div>", b.inner_html()))?;
     let title = doc.select("title").text().trim().to_string();
-    let art = Article {
-        title: Some(title).filter(|t| !t.is_empty()),
-        byline: None,
-        site_name: None,
-        blocks: with_plain_lines(blocks_from_html(&content, base), &content),
-    };
-    art.acceptable().then_some(art)
+    Some((content, Some(title).filter(|t| !t.is_empty())))
 }
 
 // 문단 태그 없이 맨 글자로 든 본문(GeekNews 등): 줄 단위로 문단을 만든다
@@ -434,7 +426,10 @@ pub struct ArticleService {
     next_id: Mutex<u64>,
     pinned: Mutex<Arc<dyn Fn() -> Vec<String> + Send + Sync>>, // 저장한 기사 링크(디스크 정리에서 제외)
     recorder: Mutex<Arc<Recorder>>, // 사용자가 연 기사의 추리기 결과(유료 기사 배우기, G-14)
+    paywall_kind: Mutex<Arc<KindOf>>, // 출처의 유료 표시(하드 유료 + 짧은 본문이면 맛보기, READER-CUT.md C)
 }
+
+type KindOf = dyn Fn(&NewsItem) -> Option<crate::paywall::PaywallKind> + Send + Sync;
 
 type Recorder = dyn Fn(&NewsItem, bool, bool) + Send + Sync; // (기사, 실패, 막힘)
 
@@ -454,6 +449,7 @@ impl ArticleService {
             next_id: Mutex::new(0),
             pinned: Mutex::new(Arc::new(Vec::new)),
             recorder: Mutex::new(Arc::new(|_, _, _| {})),
+            paywall_kind: Mutex::new(Arc::new(|_| None)),
         })
     }
 
@@ -465,6 +461,9 @@ impl ArticleService {
     }
     pub fn set_recorder(&self, f: Arc<Recorder>) {
         *self.recorder.lock().unwrap() = f;
+    }
+    pub fn set_paywall_kind(&self, f: Arc<KindOf>) {
+        *self.paywall_kind.lock().unwrap() = f;
     }
     fn record(&self, item: &NewsItem, failed: bool, blocked: bool) {
         let f = self.recorder.lock().unwrap().clone();
@@ -489,14 +488,19 @@ impl ArticleService {
     }
 
     pub fn cached(&self, link: &str) -> Option<PreparedArticle> {
+        let now = chrono::Utc::now();
         if let Some(m) = self.memory.lock().unwrap().0.get(link) {
-            if m.stage == Stage::Done {
+            if m.stage == Stage::Done && !is_stale(m, now) {
                 return Some(m.clone()); // 실패한 기사는 다음에 다시 시도
             }
         }
         let p = self.path(link);
         let a: PreparedArticle = serde_json::from_slice(&std::fs::read(&p).ok()?).ok()?;
         if a.stage != Stage::Done {
+            return None;
+        }
+        if is_stale(&a, now) {
+            self.forget_cached(link); // 맛보기·일부만이 6시간 지남: 처음부터 다시
             return None;
         }
         self.remember(link, &a);
@@ -518,6 +522,18 @@ impl ArticleService {
             }
         }
         m.0.insert(link.to_string(), a.clone());
+    }
+
+    // 기억·디스크의 것을 지운다(읽기 창 '다시 받기', 오래된 맛보기)
+    pub fn forget_cached(&self, link: &str) {
+        self.forget(link);
+        let _ = std::fs::remove_file(self.path(link));
+    }
+
+    // 읽기 창 '다시 받기': 저장한 본문을 지우고 원문에서 처음부터 다시 추린다(맥 ArticleService.reload)
+    pub fn reload(self: &Arc<Self>, item: NewsItem) -> BoxFuture<'static, PreparedArticle> {
+        self.forget_cached(&item.link);
+        self.prepare(item, true)
     }
 
     fn forget(&self, link: &str) {
@@ -597,14 +613,20 @@ impl ArticleService {
         if let Ok(Some(body)) = got {
             let html = decode_html(&body.data, body.encoding.as_deref());
             rich_page = visible_text_length(&html) > 600;
+            let paid = crate::reader_extract::paid_flag(&html);
             let art = match ex.fast(html.clone(), link.to_string()).await {
                 Some(a) if a.acceptable() => Some(a),
                 _ => {
                     let l = link.to_string();
-                    tokio::task::spawn_blocking(move || extract_html(&html, &l)).await.ok().flatten()
+                    // 시간 제한: 넘으면 이 기사만 실패(작업은 끝까지 돌지만 결과는 버림)
+                    let job = tokio::task::spawn_blocking(move || extract_html(&html, &l));
+                    tokio::time::timeout(std::time::Duration::from_secs(EXTRACT_SECS), job).await.ok().and_then(|r| r.ok()).flatten()
                 }
             };
-            if let Some(a) = art {
+            if let Some(mut a) = art {
+                if a.paid.is_none() {
+                    a.paid = paid; // 스크립트를 끈 빠른 길에서는 페이지의 <script> 를 못 읽을 수 있다
+                }
                 log::info!("[기사] 빠른 길 {:.2}초", t0.elapsed().as_secs_f64());
                 return Some(a);
             }
@@ -649,10 +671,15 @@ impl ArticleService {
         };
         let art_title = art.title.clone().filter(|t| !t.is_empty()).unwrap_or_else(|| item.title.clone());
         a.original_title = art_title.clone();
-        a.blocks = art.blocks.clone();
-        if crate::paywall::looks_blocked(&art.blocks) {
+        let kind = (self.paywall_kind.lock().unwrap().clone())(&item);
+        if crate::paywall::is_teaser(&art.blocks, art.paid, kind) {
             a.paywalled = Some(true);
         }
+        a.partial = art.partial.filter(|p| *p);
+        // 맛보기 판정(끝의 구독 권유 문구)을 본 뒤에 군더더기를 뺀다 — 번역 전에 빼서 번역 시간도 줄임
+        let mut art = art;
+        art.blocks = body_cleanup::drop_junk(&art.blocks);
+        a.blocks = art.blocks.clone();
         if interactive {
             self.record(&item, false, a.paywalled == Some(true));
         }
@@ -700,6 +727,7 @@ impl ArticleService {
             a.summarizing = false;
             self.emit(&item.link, &a);
         }
+        a.saved_at = Some(chrono::Utc::now());
         self.save(&item.link, &a);
         a
     }
@@ -820,13 +848,101 @@ pub mod body_cleanup {
         None
     }
 
+    // 군더더기 줄(sources-audit _KR1·_KR2·_INTL1·_INTL2 '섞여 들어온 것' — 맥 BodyCleanup.junkLine): 짧은 줄만, 글자째 맞을 때만
+    static JUNK_LINE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(
+            r#"(?xi)^\s*(?:
+      [\w.+-]+@[\w-]+(?:\.[\w-]+)+ | \S{1,20}\s+[\w.+-]+@[\w-]+(?:\.[\w-]+)+                # 메일만 · 매체명+메일
+    | (?:좋아요|슬퍼요|화나요|추천해요|최고예요|후속\s?기사\s?원해요)\s*\d                      # 반응 단추
+    | (?:입력|수정|발행일?|승인|업데이트|등록|기사\s?입력)\s*:?\s*\d{4}[.\-/]                  # 입력·수정일 줄
+    | (?:Copyright\s*(?:©|\(c\)|\d{4})|ⓒ|©) | .*(?:All\ rights\ reserved|무단\s?전재|재배포\s?금지)  # 저작권 줄
+    | Follow\ topics\ and\ authors | Email\ \(required\) | View\ Bio$ | Most\ read | Recommended\ Stories$
+    | \d[\d,]*\s+Comments?$ | 댓글\s*\d*$ | 많이\ 본\ (?:뉴스|기사) | 에디터\ 픽
+    | Listen\ to\ (?:this\ )?article | 기사\s?듣기 | Your\ browser\ does\ not\ support\ the\ (?:audio|video)
+    | To\ view\ this\ video\ please\ enable\ JavaScript | Video\ Player\ is\ loading | \[\[duration\]\]
+    | When\ you\ purchase\ through\ links | Sign\ up\ for\ (?:our|the) | Get\ the\ latest\ updates\ from | Already\ have\ an\ account
+    | Skip\ to\ (?:main\ )?content | This\ content\ is\ generated\ by | Embed\ <iframe | .*\[email\ protected\]
+    | 제보는\ 카카오톡 | URL이\ 복사되었습니다 | 공유(?:하기)?$ | 글자\s?크기 | 이\ 기사를\ 추천합니다 | 채널\s?구독
+    | 기사\s?스크랩$ | 프린트$ | 인쇄(?:하기)?$ | AI\s?기사\s?요약$ | 기사\s?저장$ | 북마크$
+    )"#,
+        )
+        .unwrap()
+    });
+    // 여기서부터 끝까지는 본문이 아님(관련 글·저작권)
+    static TAIL_MARK: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"(?i)^\s*(?:Related content|More on this story|Explore more on these topics|관련\s?기사|많이 본 (?:뉴스|기사)|에디터 픽|Most read|(?:Copyright\s*(?:©|\(c\)|\d{4})|ⓒ|©)|.*(?:All rights reserved|무단\s?전재|재배포\s?금지))").unwrap()
+    });
+    static COPYRIGHT: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)^\s*(?:Copyright|ⓒ|©)|All rights reserved|무단\s?전재|재배포\s?금지").unwrap());
+    // 기자 소개(머리 세 블록·끝 4분의 1에서만): "… is a senior writer at …", "is a news writer who covers …", "…를 취재합니다"
+    static BIO_LINE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"(?i)^(?:(?:[A-Z][\w.'’-]+\s){1,4})?is an?\s(?:[\w-]+\s){0,3}(?:reporter|writer|editor|correspondent|journalist|columnist|producer|contributor)\b|^You can contact or verify outreach|(?:기자입니다|취재합니다|취재하고 있습니다)\.?\s*$").unwrap()
+    });
+    static NAME_ONLY: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\s*[A-Z][\w.'’-]+(?:\s[A-Z][\w.'’-]+){1,3}\s*$").unwrap());
+
+    // 본문에서 뺄 군더더기 블록(맥 BodyCleanup.junk). 안전장치: 줄 규칙은 160자 이하 줄만, 끝 자르기는 지울 글이 본문의 20%(저작권 줄이면 50%)
+    // 이하일 때만, 줄 규칙이 본문 한가운데서 글의 20% 넘게 지우게 되면 가운데 것은 두고 머리·꼬리 것만 뺀다
+    pub fn junk(blocks: &[Block]) -> HashSet<usize> {
+        let text: Vec<&str> = blocks.iter().map(|b| b.original.as_deref().or(b.text.as_deref()).unwrap_or("")).collect();
+        let len = |s: &str| s.chars().count();
+        let total = text.iter().map(|t| len(t)).sum::<usize>().max(1);
+        let n = blocks.len();
+        let tail_from = (n as f64 * 0.75) as usize;
+        let edge = |i: usize| i < 3 || i >= tail_from;
+        let mut out = HashSet::new();
+        for (i, t) in text.iter().enumerate() {
+            if blocks[i].kind == BlockKind::Img || t.is_empty() {
+                continue;
+            }
+            if len(t) <= 160 && JUNK_LINE.is_match(t) {
+                out.insert(i);
+                continue;
+            }
+            if edge(i) && len(t) <= 400 && BIO_LINE.is_match(t) {
+                out.insert(i);
+                if i > 0 && len(text[i - 1]) <= 40 && NAME_ONLY.is_match(text[i - 1]) {
+                    out.insert(i - 1); // 바로 앞 이름 줄
+                }
+                continue;
+            }
+            if i > 0 && len(t) >= 20 && *t == text[i - 1] {
+                out.insert(i); // 같은 글이 잇달아 두 번(부제·사진 설명)
+            }
+        }
+        let middle: Vec<usize> = out.iter().copied().filter(|&i| !edge(i)).collect();
+        if middle.iter().map(|&i| len(text[i])).sum::<usize>() > total / 5 {
+            for i in middle {
+                out.remove(&i);
+            }
+        }
+        // 끝 자르기: 뒤쪽 절반에서 처음 나오는 표지부터
+        if let Some(m) = (n / 2..n).find(|&i| len(text[i]) <= 160 && TAIL_MARK.is_match(text[i])) {
+            let cut: usize = text[m..].iter().map(|t| len(t)).sum();
+            if cut <= total / 5 || (COPYRIGHT.is_match(text[m]) && cut <= total / 2) {
+                out.extend(m..n);
+            }
+        }
+        // 이름만 있는 끝 줄(기자 이름 li)이 앞에서 뺀 이름과 같으면
+        if let Some(last) = n.checked_sub(1) {
+            if len(text[last]) <= 40 && out.iter().any(|&j| j != last && text[j] == text[last]) {
+                out.insert(last);
+            }
+        }
+        out
+    }
+
+    // 번역 전에 군더더기를 아예 뺀다(번역 시간·비용, 번역문에 기사처럼 섞이는 것)
+    pub fn drop_junk(blocks: &[Block]) -> Vec<Block> {
+        let j = junk(blocks);
+        blocks.iter().enumerate().filter(|(i, _)| !j.contains(i)).map(|(_, b)| b.clone()).collect()
+    }
+
     pub fn is_orphan_caption(text: &str, next_is_image: bool) -> bool {
         !next_is_image && text.chars().count() <= 40 && ORPHAN.is_match(text)
     }
 
     // 본문에서 뺄 문단 번호와 바이라인(여러 명이면 " · " 로 이어 붙임)
     pub fn analyze(blocks: &[Block]) -> (HashSet<usize>, Option<String>) {
-        let mut skip = HashSet::new();
+        let mut skip = junk(blocks); // 예전에 저장한 기사에도 군더더기 규칙
         let mut names: Vec<String> = vec![];
         for (i, b) in blocks.iter().enumerate() {
             if b.kind != BlockKind::P {
@@ -913,5 +1029,12 @@ pub mod image_key {
         }
         let (ka, kb) = (key(a), key(b));
         ka.chars().count() >= 6 && ka == kb
+    }
+}
+
+// 작은 그림(기자 얼굴·아이콘)은 본래 크기보다 키우지 않는다 — 480 미만이면 그 폭까지만(맥 ImageFit)
+pub mod image_fit {
+    pub fn max_width(width: i32, _height: i32) -> Option<i32> {
+        (width > 0 && width < 480).then_some(width)
     }
 }

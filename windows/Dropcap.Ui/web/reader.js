@@ -8,6 +8,7 @@
   let showOriginal = false;
   let speaking = false;
   let speakPoll = null;
+  const openOrig = new Set(); // 원문을 펼친 문단(번역 보기에서 문단마다 — 맥 openOriginals)
   const loaded = new Set(); // 이미 불러온 사진(다시 그려도 깜빡이지 않게)
   const broken = new Set();
 
@@ -30,6 +31,7 @@
     drawBar();
     drawCover();
     drawHead();
+    drawTeaser();
     drawFree();
     const c = $('#content');
     if (d.phase === 'loading') {
@@ -42,7 +44,8 @@
     const firstBody = !c.querySelector('.body');
     c.innerHTML = points()
       + (d.phase === 'translating' ? `<div class="working pulse">${ic('translate')}<span>한국어로 바꾸는 중 — 위에서부터 차례로 바뀝니다</span></div>` : '')
-      + `<div class="body"${firstBody ? '' : ' style="animation:none"'}>${blocks()}</div>`;
+      + `<div class="body"${firstBody ? '' : ' style="animation:none"'}>${blocks()}</div>`
+      + cutNote();
     hookImages(c);
     if (find.open) applyFind(false); // 번역이 바뀌어 다시 그려도 찾은 자리는 그대로
   }
@@ -60,6 +63,7 @@
     sp.innerHTML = ic(speaking ? 'speaker.stop' : 'speaker');
     sp.title = speaking ? '읽기 멈춤' : '소리 내어 읽기';
     sp.classList.toggle('on', speaking);
+    $('#reload').disabled = d.phase === 'loading' || d.phase === 'translating';
     $('#scrap').classList.toggle('done', m.scrapped);
     const sv = $('#save');
     sv.innerHTML = ic(m.saved ? 'bookmark.fill' : 'bookmark');
@@ -114,6 +118,24 @@
     if (find.open) applyFind(false);
   }
 
+  // 맛보기 띠(맥 TeaserBanner): 맛보기(유료벽 앞부분)만 받은 기사 — 본문 바로 위에, 무료 보도가 없어도 늘. 무료 보도 상자와 따로
+  function drawTeaser() {
+    const box = $('#teaser');
+    if (!doc.teaser) { box.className = ''; box.innerHTML = ''; return; }
+    if (box.className === 'teaser') return;
+    box.className = 'teaser';
+    box.innerHTML = `${ic('lock.fill')}<div class="tx"><b>구독자만 전체를 볼 수 있는 기사예요</b><span>아래는 사이트가 공개한 앞부분입니다.</span></div>
+      <button class="btn small" data-act="openOriginal">원문 열기</button>`;
+  }
+
+  // 본문 끝 한 줄(맥 CutEndNote): 맛보기가 끝난 자리, 또는 일부만 가져왔을 수 있음
+  function cutNote() {
+    const n = doc.cutNote;
+    if (!n) return '';
+    return `<div class="cutnote"><span>${esc(n.text)}</span><span>·</span><button class="link" data-act="openOriginal">${esc(n.open)}</button>
+      <span>·</span><button class="link" data-act="reload">다시 받기</button></div>`;
+  }
+
   // 같은 소식을 무료로 읽기(G-15, 맥 FreeAlternativesBox): 막힌 기사면 같은 스토리의 열리는 보도를 먼저 권한다. 원문 링크는 그대로.
   function drawFree() {
     const d = doc;
@@ -162,11 +184,16 @@
       const scrapped = can && !!scrapOf(text);
       const cls = ['blk', b.type, can ? 'can' : '', scrapped ? 'scrapped' : '', b.type === 'li' && n > 0 && list[n - 1].type === 'li' ? 'cont' : ''].join(' ');
       const cut = can ? `<button class="cut" title="${scrapped ? '스크랩한 문단 — 눌러서 폴더·메모 바꾸기' : '이 문단 스크랩'}">${ic('scissors')}</button>` : '';
+      // 문단별 원문 펼치기(맥 ReaderView): 번역 보기에서 번역된 문단만 — 왼쪽 '원문' 단추, 펼치면 번역문 아래에 원문을 작게
+      const canOrig = !showOriginal && !!b.original;
+      const opened = canOrig && openOrig.has(b.i);
+      const ob = canOrig ? `<button class="ob${opened ? ' on' : ''}" title="${opened ? '이 문단 원문 접기' : '이 문단 원문 펼치기'}">원문</button>` : '';
+      const po = opened ? `<div class="porig">${esc(b.original)}</div>` : '';
       let inner;
       if (b.type === 'pre') inner = `<pre class="tx">${esc(text)}</pre>`;
       else if (b.type === 'li') inner = `<span class="dot"></span><span class="tx">${esc(text)}</span>`;
       else inner = `<span class="tx">${esc(text)}</span>`;
-      return `<div class="${cls}" data-i="${b.i}"><div class="in">${cut}${inner}</div></div>`;
+      return `<div class="${cls}${opened ? ' orig-open' : ''}" data-i="${b.i}"><div class="in">${cut}${ob}${inner}</div>${po}</div>`;
     }).join('');
   }
 
@@ -299,6 +326,8 @@
   $('#content').addEventListener('click', (e) => {
     const act = e.target.closest('[data-act]');
     if (act) { send(act.dataset.act); return; }
+    const ob = e.target.closest('.ob');
+    if (ob) { toggleOrig(+ob.closest('.blk').dataset.i); return; }
     const cut = e.target.closest('.cut');
     if (!cut) return;
     const blk = cut.closest('.blk');
@@ -310,6 +339,16 @@
       applyMarks(m);
       openSheet(blk, r.quote);
     }));
+  });
+
+  function toggleOrig(i) {
+    if (openOrig.has(i)) openOrig.delete(i); else openOrig.add(i);
+    draw();
+  }
+
+  $('#teaser').addEventListener('click', (e) => {
+    const act = e.target.closest('[data-act]');
+    if (act) send(act.dataset.act);
   });
 
   $('#free').addEventListener('click', (e) => {
@@ -357,6 +396,7 @@
         { header: '다른 폴더에 스크랩' },
         ...doc.marks.collections.map((c) => ({ label: c, icon: 'folder', run: () => scrapTo(c) })),
         'sep',
+        ...(!showOriginal && b.original ? [{ label: openOrig.has(b.i) ? '이 문단 원문 접기' : '이 문단 원문 펼치기', icon: 'translate', run: () => toggleOrig(b.i) }] : []),
         { label: '이 문단 복사', icon: 'copy', run: () => send('copy', { text }) },
       );
     }
@@ -397,6 +437,7 @@
   ]));
   $('#save').addEventListener('click', () => send('save').then(applyMarks));
   $('#browser').addEventListener('click', () => send('browser'));
+  $('#reload').addEventListener('click', () => { openOrig.clear(); send('reload'); });
   $('#share').addEventListener('click', () => send('share'));
 
   const typing = (t) => t && (t.isContentEditable || !!t.closest('input, textarea, select'));

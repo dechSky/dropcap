@@ -52,6 +52,12 @@ pub fn article_image(url: &str) -> gtk::Widget {
             // 원래 비율 유지: 너비에 맞추되 원본보다 키우지 않음
             pic.set_paintable(Some(&t));
             pic.set_size_request(-1, (t.height() as f64 * (660.0 / t.width().max(1) as f64).min(1.0)) as i32);
+            // 작은 그림(기자 얼굴·아이콘)은 본래 폭까지만(맥 ImageFit — 작은 원형 기자 사진을 본문 폭으로 키우던 것)
+            if let Some(w) = dropcap_core::article::image_fit::max_width(t.width(), t.height()) {
+                pic.set_content_fit(gtk::ContentFit::ScaleDown);
+                pic.set_size_request(w, t.height());
+                frame.set_halign(gtk::Align::Start);
+            }
             attach_tools(&frame, &t, &url_s, "");
             s2.set_visible_child_name("img");
         }

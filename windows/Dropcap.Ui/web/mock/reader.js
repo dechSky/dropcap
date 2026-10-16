@@ -2,6 +2,7 @@
 // ?phase=loading|translating|failed 로 단계별 화면, ?cover=0 으로 표지 없이.
 // ?free=1 로 '같은 소식을 무료로 읽기' 상자(유료 기사), ?blocked=1 로 본문을 막아 둔 사이트의 실패 문구.
 // 사진 번역은 ?ocr=0(글자 없음)·?ocr=ko(이미 한국어).
+// ?teaser=1 로 맛보기 띠·끝줄(유료벽 앞부분), ?partial=1 로 '본문 일부만' 끝줄.
 if (!(window.chrome && window.chrome.webview)) {
   const q = new URLSearchParams(location.search);
   const phase = q.get('phase') || 'done';
@@ -26,6 +27,8 @@ if (!(window.chrome && window.chrome.webview)) {
   ].map((b, i) => ({ ...b, i }));
   const translating = phase === 'translating';
   const free = q.get('free') === '1';
+  const teaser = q.get('teaser') === '1';
+  const partial = q.get('partial') === '1';
   const doc = {
     key: q.get('key') || 'x',
     item: { key: 'x', title: 'OpenAI, 추론 기능 강화한 GPT-6 공개', source: 'The Verge', initial: 'V', color: '#E1306C', tier: 'press', tierLabel: '언론', category: 'model', link: 'https://www.theverge.com/ai/openai-gpt-6' },
@@ -41,12 +44,14 @@ if (!(window.chrome && window.chrome.webview)) {
     feedSummary: 'OpenAI가 수학·코딩 성능을 크게 끌어올린 새 추론 모델 GPT-6를 공개했다. 가격은 이전 모델과 같다.',
     blockedHost: q.get('blocked') === '1',
     paywall: free ? 'hard' : null,
-    paywalled: false,
+    paywalled: teaser,
+    teaser: teaser && phase !== 'loading' && phase !== 'failed',
+    cutNote: teaser ? { text: '— 여기까지가 공개된 부분입니다', open: '원문에서 이어 읽기' } : partial ? { text: '본문 일부만 가져왔을 수 있어요', open: '원문 열기' } : null,
     alternatives: free ? [
       { key: 'a1', source: 'OpenAI', title: 'GPT-6 소개: 더 깊이 생각하는 모델', color: '#10A37F' },
       { key: 'a2', source: 'AI타임스', title: '오픈AI, 추론 강화한 GPT-6 출시… 가격은 동결', color: '#0F62FE' },
     ] : [],
-    freeReason: free ? (phase === 'failed' ? '본문을 열지 못했습니다' : '유료 기사입니다') : null,
+    freeReason: free ? (phase === 'failed' ? '본문을 열지 못했습니다' : teaser ? '다른 곳 보도로 전체를 읽을 수 있어요' : '유료 기사입니다') : null,
     cover: q.get('cover') === '0' ? null : svg(1600, 900, '#E1306C', '#5856D6'),
     date: '10월 13일 오후 3:05',
     minutes: { shown: 2, original: 1 },

@@ -4,7 +4,7 @@
 
 ## 확인 방법과 결과(이 맥에서)
 
-- `dotnet test windows/Dropcap.slnx` — 핵심·화면 공용 시험 465 통과·8 건너뜀(사이드바·번역 방식 뒤). 따라잡기 3차 뒤 448. S-13 뒤 369. 따라잡기 2차 뒤 360. 추가 지시 4 뒤 332. 예전 기록: 267 통과(바깥 서버 시험 8개는 `DROPCAP_LIVE_TESTS=1` 일 때만, 1단계 때 돌려 통과 · YouTube 피드만 서버 쪽 404).
+- `dotnet test windows/Dropcap.slnx` — 핵심·화면 공용 시험 498 통과·8 건너뜀(읽기 창·번역 맥 따라잡기 뒤, 추출 스크립트 시험 포함 — `windows/scripts/test-extract.sh` 의 DROPCAP_PLAYWRIGHT 가 없으면 그 12개는 건너뜀). 사이드바·번역 방식 뒤 465. 따라잡기 3차 뒤 448. S-13 뒤 369. 따라잡기 2차 뒤 360. 추가 지시 4 뒤 332. 예전 기록: 267 통과(바깥 서버 시험 8개는 `DROPCAP_LIVE_TESTS=1` 일 때만, 1단계 때 돌려 통과 · YouTube 피드만 서버 쪽 404).
 - `windows/scripts/check-on-mac.sh` — WinUI 앱 C# 전체 컴파일 통과(윈도우 전용 도구 단계 mt.exe·MakePri.exe 만 끔).
 - 물방울 장면 PNG(`DROPCAP_TOAST_FRAMES`)로 모양 확인: 맺힘 → 떨어짐 → 물 차오름 → 글자 떠오름, 맥 배치와 같음.
 - 웹 화면(트레이 창·설정·읽기 창·매거진)은 mock 데이터로 브라우저에서 라이트·다크 확인.
@@ -162,3 +162,19 @@
 - 번역 응답 크기 상한은 이미 2MB(`SafeHttp.GetAsync maxBody`, 보안 점검 고침 때).
 - 시험 `TranslateOffTests`·`SettingsTranslateEngineTests`, 내 기록 JSON 견본에 `translateEngine` 추가(맥 JSONEncoder 키 순서). 고치기 전(설정만 저장되고 번역기는 따르지 않던 상태)에 3개 실패 → 고친 뒤 통과.
 - 기기 이동·되돌리기: 예전 판은 이 키를 무시(늘 Google), 맥과 내 기록을 주고받으면 값이 그대로 옮겨짐.
+
+## 읽기 창·번역 맥 따라잡기(windows-reader-port, 2026-10-15)
+
+근거: `mac/READER-CUT.md`(2단계 결과·정책 표), `mac/TRANSLATE.md`(2단계 Translator 목록), 맥 커밋 9c8acc7·f5c8d57·92d7373·2ca294c.
+
+- 본문 추출: `web/extract.js` 를 맥 `ArticleExtractor.script` 그대로(여러 덩어리 본문 모으기 — 같은 꼴 형제·안쪽 본문 상자 class, 글 15% 넘게 늘거나 글은 비슷한데 사진이 더 있으면 모은 쪽 · `itemprop="articleBody"` 우선(고른 글이 그 밖이면) · 요소 사이 맨 글자와 `<br><br>` 문단 · 사진뿐 속보는 빈 본문(→ 실패 화면) · 같은 글(30자 이상)·같은 사진 한 번만 · 본문 영역에 빠진 긴 문단이 남으면 `partial`).
+- 유료 맛보기: `Paywall.IsTeaser`(문구 + `paid` 이고 1,500자 미만 + hard 출처 2,500자 미만 + 끝 4블록 강한 문구). `paid` 는 추출 스크립트가 ld+json `isAccessibleForFree`·한경 `articlePayment` 를 읽고, 못 읽었으면 빠른 길에서 받은 HTML 로 `ArticleExtraction.PaidFlag`(앞 1MB). 출처 종류는 `ArticleService.KindOf`(앱: `PaywallBook`).
+- 표시(맥 문구 그대로): 본문 위 맛보기 띠 '구독자만 전체를 볼 수 있는 기사예요 / 아래는 사이트가 공개한 앞부분입니다 [원문 열기]'(무료 보도 상자와 따로, 번역 중·끝에서), 본문 끝 '— 여기까지가 공개된 부분입니다 · 원문에서 이어 읽기 · 다시 받기' / 일부만이면 '본문 일부만 가져왔을 수 있어요 · 원문 열기 · 다시 받기'. 무료 보도 상자 제목은 '다른 곳 보도로 전체를 읽을 수 있어요'.
+- 캐시: 맛보기·일부만은 저장(`savedAt`) 6시간 뒤 다시 받음(저장 시각 없는 예전 기록도). 도구 막대 ⟳ '다시 받기'(`reload` 명령 → `ArticleService.ReloadAsync`).
+- 군더더기: 추출 전 기자 소개 상자·댓글 수·공유 막대·단추·기자 얼굴 사진·각주 `sup` 번호를 빼고(페이지 글 30% 넘는 상자는 안 건드림), `<br>` → 빈칸, 'hide/toggle caption' 글 빼기. 추출 뒤 `BodyCleanup.Junk`(맥 junk 와 같은 정규식·안전장치) — 맛보기 판정 뒤, 번역 전에 뺌. 예전에 저장한 기사는 `Analyze` 가 같은 규칙으로 숨김.
+- 작은 그림: 윈도우 읽기 창 사진은 원래 `max-width: 100%`(폭을 늘리지 않음)라 본래 크기보다 키우지 않음 — 고칠 것 없음, 시험으로 고정.
+- 문단별 원문 펼치기: 번역 보기에서 번역된 문단에 마우스를 올리면 가위 아래 '원문' 단추, 오른쪽 클릭 '이 문단 원문 펼치기/접기', 번역문 아래 작게. 다시 받기를 누르면 펼친 것을 접음.
+- 번역(Translator): 글자 없는·주소 하나뿐인 글은 외국어 아님(안 보냄), 결과 다듬기 `Polish`(원문 끝에 부호가 없으면 번역 끝 마침표 떼기 + 이름 되돌림 표 11개 — 원문에 영문 이름이 낱말로 있을 때만, Claude 뒤 제품 낱말이 아닌 대문자 낱말이면 사람 이름으로 보고 둠), 묶음 대조 `LooksShifted`(수는 맞아도 엇갈리면 그 묶음만 문단별로 다시). 방식이 바뀌면 캐시 비움은 W4 때 이미 됨. 기기 내 흘려 주기(케이스 5)는 윈도우에 기기 내 번역이 없어 해당 없음.
+- 시험: `ReaderCutTests.cs` — 추출(ReaderCutExtractTests 12: 맥 Fixtures/reader-cut 의 실제 꼴 4종 + 지어낸 HTML, 머리 없는 Chromium 에서 앱 격리 칸과 같은 CSP 로 `extract.js` 를 돌림 — `js/extract-runner.mjs`, `scripts/test-extract.sh`), 규칙·서비스·보기(ReaderCutRuleTests 11). `TranslatePhase2Tests.cs` 7.
+- **고치기 전 실패**(같은 시험을 고치기 전 코드 + 빈 껍데기 함수로): 30개 중 25개 실패 → 고친 뒤 모두 통과. 고치기 전에도 통과한 5개: 지어낸 Ars 두 덩어리·BBC 블록·실제 꼴 매경·지어낸 동아 맨 글자(예전 Readability 결과로도 이 꼴은 이미 다 옴), 작은 그림(원래 맞음).
+- 확인: 전체 498 통과·8 건너뜀, `scripts/check-on-mac.sh` 경고 0·오류 0. 읽기 창 미리 보기(`reader.html?teaser=1&free=1` · `?partial=1`)를 머리 없는 브라우저로 라이트·다크 그림 확인. 실제 윈도우 PC 에서 WebView2 로 기사 몇 개 확인 필요.

@@ -688,9 +688,9 @@ fn fast_path_extracts_without_scripts() {
     let para = "This is a fairly long paragraph about a new AI model release that keeps going for a while so that the readability scorer thinks it is real content, with commas, and more words. ";
     let html = format!(
         r#"<html><head><title>Big News</title><script>document.body.innerHTML='hacked'</script></head><body><nav>menu</nav><article><h1>Big News</h1>
-<span class="sr-only">Skip to content</span><p>{p}</p><p>{p}</p><p>{p}</p></article><footer>foot</footer></body></html>"#,
+<span class="sr-only">Skip to content</span><p>One. {p}</p><p>Two. {p}</p><p>Three. {p}</p></article><footer>foot</footer></body></html>"#,
         p = para
-    );
+    ); // 문단마다 글이 달라야 함(같은 글은 한 번만 — READER-CUT.md)
     let a = article::extract_html(&html, "https://e.com/n").expect("본문");
     assert!(a.blocks.iter().filter(|b| b.kind == BlockKind::P).count() >= 3);
     assert!(!a.blocks.iter().any(|b| b.text.as_deref().unwrap_or("").contains("Skip to content")));

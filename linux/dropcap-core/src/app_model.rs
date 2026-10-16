@@ -267,6 +267,8 @@ impl AppModel {
         }
         let book = me.paywall.clone();
         me.articles.set_recorder(Arc::new(move |it, failed, blocked| book.record(it, failed, blocked)));
+        let book = me.paywall.clone();
+        me.articles.set_paywall_kind(Arc::new(move |it| book.kind(it)));
         let weak = Arc::downgrade(&me);
         me.articles.set_pinned(Arc::new(move || weak.upgrade().map(|m| m.state().saved.iter().map(|s| s.link.clone()).collect()).unwrap_or_default()));
         me

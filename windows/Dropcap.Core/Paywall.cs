@@ -81,6 +81,24 @@ public static class Paywall
         "unlock this article", "become a member to read", "유료 회원", "구독자 전용", "로그인 후 이용", "유료 기사", "프리미엄 회원",
     ];
 
+    // 길이와 상관없이 맛보기로 보는 강한 문구(STAT+ 맛보기는 구독 권유 줄까지 1,500자를 넘는다)
+    public static readonly System.Text.RegularExpressions.Regex StrongWall = new(
+        @"exclusive (?:to|for) [^.]{0,30}subscribers|read the rest of this (?:story|article)|this article is for (?:paid )?subscribers|unlock this article|구독자 전용|유료 회원 전용|한경 프리미엄9?의 모든 콘텐츠",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    // 맛보기(유료벽 뒤 앞부분만)인가 — 맥 Paywall.isTeaser(mac/READER-CUT.md C). 지금의 문구 판정에 더해
+    // 사이트가 유료라고 적었고(isAccessibleForFree=false · 한경 articlePayment) 본문이 1,500자 미만, 하드 유료 출처인데 2,500자 미만, 끝쪽에 강한 문구
+    public static bool IsTeaser(IReadOnlyList<Block> blocks, bool? paid, PaywallKind? kind)
+    {
+        if (LooksBlocked(blocks)) return true;
+        var texts = blocks.Select(b => b.Original ?? b.Text).OfType<string>().ToList();
+        var length = texts.Sum(t => t.Length);
+        if (StrongWall.IsMatch(string.Join(" ", texts.TakeLast(4)))) return true;
+        if (paid == true && length < 1500) return true;
+        if (kind == PaywallKind.Hard && length < 2500) return true;
+        return false;
+    }
+
     public static bool LooksBlocked(IEnumerable<Block> blocks)
     {
         var texts = blocks.Select(b => b.Text).OfType<string>().ToList();

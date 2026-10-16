@@ -55,3 +55,44 @@ struct FreeAlternativesBox: View {
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(.primary.opacity(0.08), lineWidth: 0.5))
     }
 }
+
+// 읽기 창: 맛보기(유료벽 앞부분)만 받은 기사 — 본문 바로 위에, 무료 보도가 없어도 늘(READER-CUT.md C②). 무료 보도 상자와 따로
+struct TeaserBanner: View {
+    let link: String
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "lock.fill").font(.app(14, .semibold)).foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("구독자만 전체를 볼 수 있는 기사예요").font(.app(13.5, .semibold))
+                Text("아래는 사이트가 공개한 앞부분입니다.").font(.app(12.5)).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            Button("원문 열기") { ExternalLink.open(link) }
+                .buttonStyle(.bordered).controlSize(.small)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.09), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.orange.opacity(0.28), lineWidth: 0.5))
+        .accessibilityElement(children: .combine)
+    }
+}
+
+// 본문 끝 한 줄: 맛보기가 끝난 자리, 또는 일부만 가져왔을 수 있음(READER-CUT.md A②·C②)
+struct CutEndNote: View {
+    let teaser: Bool
+    let link: String
+    let reload: () -> Void
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(teaser ? "— 여기까지가 공개된 부분입니다" : "본문 일부만 가져왔을 수 있어요")
+            Text("·")
+            Button(teaser ? "원문에서 이어 읽기" : "원문 열기") { ExternalLink.open(link) }.buttonStyle(.plain).foregroundStyle(.tint)
+            Text("·")
+            Button("다시 받기", action: reload).buttonStyle(.plain).foregroundStyle(.tint)
+        }
+        .font(.app(12.5))
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}

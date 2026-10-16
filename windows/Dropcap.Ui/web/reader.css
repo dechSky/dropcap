@@ -141,6 +141,28 @@ article { max-width: calc(660px + 72px); margin: 0 auto; padding: 20px 36px 80px
 .cut:hover { color: var(--text); }
 .blk.scrapped .cut { color: var(--orange); }
 
+/* 문단별 원문 펼치기(맥 ReaderView): 가위 아래 '원문' 단추, 펼친 원문은 번역문 아래 작게 */
+.ob { position: absolute; left: -41px; top: 28px; width: 32px; height: 20px; border-radius: 10px; font-size: 10px; font-weight: 600; padding: 0;
+  color: var(--text-2); background: var(--bg-elev); box-shadow: 0 0 0 0.5px var(--line), 0 1px 3px rgba(0,0,0,.08);
+  opacity: 0; visibility: hidden; transition: opacity 0.15s ease-out 0.25s, visibility 0s linear 0.4s; user-select: none; }
+.blk:hover .ob, .blk.orig-open .ob { opacity: 1; visibility: visible; transition-delay: 0s; }
+.ob.on { color: var(--accent); }
+.ob:hover { color: var(--text); }
+.porig { margin-top: 6px; padding-left: 12px; font-size: calc(var(--fs) - 2px); line-height: 1.6; color: var(--text-2);
+  border-left: 2px solid color-mix(in srgb, var(--accent-c) 40%, transparent); }
+
+/* 맛보기 띠(맥 TeaserBanner) · 본문 끝 한 줄(맥 CutEndNote) */
+.teaser { margin-top: 18px; padding: 11px 14px; border-radius: 12px; display: flex; align-items: center; gap: 12px;
+  background: color-mix(in srgb, var(--orange) 9%, transparent); box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--orange) 28%, transparent); }
+.teaser > .ic { color: var(--orange); font-size: 14px; flex: none; }
+.teaser .tx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.teaser .tx b { font-size: 13.5px; font-weight: 600; }
+.teaser .tx span { font-size: 12.5px; color: var(--text-2); }
+.btn.small { padding: 5px 11px; font-size: 12.5px; flex: none; }
+.cutnote { margin-top: 6px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-2); }
+.cutnote .link { padding: 0; background: none; font-size: 12.5px; color: var(--accent); }
+.cutnote .link:hover { text-decoration: underline; }
+
 /* 실패 화면(R-12) */
 .failed { padding-top: 24px; display: flex; flex-direction: column; gap: 14px; }
 .failed .sum { font-size: 17px; line-height: 1.75; user-select: text; }

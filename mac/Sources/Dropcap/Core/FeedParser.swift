@@ -41,7 +41,37 @@ enum FeedError: LocalizedError {
 }
 
 enum FeedParser {
-    struct Entry { var id: String; var title: String; var link: String; var date: Date?; var summary: String; var image: String? = nil }
+    struct Entry { var id: String; var title: String; var link: String; var date: Date?; var summary: String; var image: String? = nil; var body: String? = nil }
+
+    // 피드가 실어 준 본문 전문(content:encoded · Atom content). 읽기 창이 사이트 HTML 이 앞부분만 줄 때 대신 쓴다(Politico 등 — mac/READER-CUT.md '피드 전문 우선').
+    // 글이 bodyMinText 자 미만이면 요약일 뿐이라 두지 않는다. script·style·주석을 빼고 bodyMaxHTML 자까지(넘으면 마지막 문단 끝에서 자름)
+    static let bodyMinText = 1000
+    static let bodyMaxHTML = 60_000
+    static func body(_ it: XNode) -> String? {
+        let raw = it.value("content:encoded").nonEmpty
+            ?? it.all("content").first(where: { ($0.attrs["type"] ?? "html") == "html" })?.text.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+        guard let raw else { return nil }
+        let html = compactBody(String(raw.prefix(400_000)))
+        guard Plain.clean(html).count >= bodyMinText else { return nil }
+        return html
+    }
+
+    static func compactBody(_ s: String) -> String {
+        var out = s
+        for (open, close) in [("<script", "</script>"), ("<style", "</style>"), ("<!--", "-->"), ("<iframe", "</iframe>")] {
+            var rest = out[...], kept = ""
+            while let a = rest.range(of: open, options: .caseInsensitive) {
+                kept += rest[..<a.lowerBound]
+                guard let b = rest[a.upperBound...].range(of: close, options: .caseInsensitive) else { rest = rest[rest.endIndex...]; break }
+                rest = rest[b.upperBound...]
+            }
+            out = kept + rest
+        }
+        guard out.count > bodyMaxHTML else { return out }
+        let head = out.prefix(bodyMaxHTML)
+        if let end = head.range(of: "</p>", options: [.backwards, .caseInsensitive]) { return String(head[..<end.upperBound]) }
+        return String(head)
+    }
 
     // 대표 사진: media:content / media:thumbnail / 그림 enclosure / 본문의 첫 <img>
     static func image(_ it: XNode) -> String? {
@@ -109,7 +139,7 @@ enum FeedParser {
                 let link = it.value("link")
                 return Entry(id: it.value("guid").nonEmpty ?? link.nonEmpty ?? fallbackID(it.value("title"), it.value("pubDate")), title: Plain.clean(it.value("title")), link: link,
                              date: Dates.parse(it.value("pubDate").nonEmpty ?? it.value("dc:date")),
-                             summary: String(Plain.clean(it.value("description")).prefix(300)), image: image(it))
+                             summary: String(Plain.clean(it.value("description")).prefix(300)), image: image(it), body: body(it))
             }
         }
         if let feed = root.child("feed") {
@@ -119,7 +149,7 @@ enum FeedParser {
                 let link = alt?.attrs["href"] ?? alt?.text ?? ""
                 return Entry(id: it.value("id").nonEmpty ?? link.nonEmpty ?? fallbackID(it.value("title"), it.value("updated")), title: Plain.clean(it.value("title")), link: link,
                              date: Dates.parse(it.value("published").nonEmpty ?? it.value("updated")),
-                             summary: String(Plain.clean(it.value("summary").nonEmpty ?? it.value("content")).prefix(300)), image: image(it))
+                             summary: String(Plain.clean(it.value("summary").nonEmpty ?? it.value("content")).prefix(300)), image: image(it), body: body(it))
             }
         }
         if let rdf = root.child("rdf:RDF") {

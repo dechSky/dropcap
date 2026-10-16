@@ -16,6 +16,8 @@ struct PreparedArticle: Codable {
     var fallback = ""                 // 본문을 못 추렸을 때 보여 줄 요약 번역
     var paywalled: Bool? = nil        // 맛보기만 나오고 구독을 권함(유료벽 뒤)
     var failure: ReaderFailure? = nil // 못 추린 까닭(실패 화면 안내)
+    var partial: Bool? = nil
+    var savedAt: Date? = nil
 }
 
 @MainActor
@@ -40,10 +42,27 @@ final class ArticleService {
     }
     func stopObserving(_ link: String, _ id: UUID) { listeners[link]?[id] = nil }
 
+    // 맛보기·일부만 기사는 6시간 뒤 다시 받는다(사이트가 풀거나 앱이 고쳐지면 다시 열 때 온전히). 그 밖은 그대로 오래 둔다
+    nonisolated static let cutCacheLife: TimeInterval = 6 * 3600
+    nonisolated static func isStale(_ a: PreparedArticle, now: Date = Date()) -> Bool {
+        guard a.paywalled == true || a.partial == true else { return false }
+        guard let t = a.savedAt else { return true }
+        return now.timeIntervalSince(t) > cutCacheLife || t.timeIntervalSince(now) > 300 // 미래 시각(시계 틀어짐·고친 파일)도 만료로
+    }
+
+    // 읽기 창 '다시 받기': 기억·디스크의 것을 지우고 처음부터 다시 추린다
+    @discardableResult
+    func reload(_ item: NewsItem) async -> PreparedArticle {
+        memory[item.link] = nil
+        try? FileManager.default.removeItem(at: file(item.link))
+        return await prepare(item)
+    }
+
     func cached(_ link: String) -> PreparedArticle? {
-        if let m = memory[link], m.stage == .done { return m } // 실패한 기사는 다음에 다시 시도
+        if let m = memory[link], m.stage == .done, !Self.isStale(m) { return m } // 실패한 기사는 다음에 다시 시도
         guard let data = try? Data(contentsOf: file(link)),
               let a = try? JSONDecoder().decode(PreparedArticle.self, from: data), a.stage == .done else { return nil }
+        if Self.isStale(a) { memory[link] = nil; try? FileManager.default.removeItem(at: file(link)); return nil }
         memory[link] = a
         try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: file(link).path) // 최근에 쓴 것을 오래 남김
         return a
@@ -98,7 +117,16 @@ final class ArticleService {
         let extractor = ArticleExtractor()
         var got: Article?
         if let url = URL(string: item.link) { got = await extractor.extract(url, allowScripts: interactive) }
-        guard let art = got else {
+        // 피드 전문 우선: 사이트가 앞부분만 줬거나 못 추렸는데 피드에 전문이 있으면 그것을(FeedFullBody)
+        // 나중에 읽기·스크랩에서 연 사본에는 피드 본문이 빠져 있다(저장 때 뺌) — 피드 기록 DB 에서 다시 찾는다
+        let feedBody = item.feedBody ?? Database.shared.items(keys: [item.key]).first?.item.feedBody
+        if let body = feedBody, FeedFullBody.worthTrying(feedHTML: body, extracted: got?.blocks), let base = URL(string: item.link),
+           let feed = await ArticleExtractor().extractHTML(FeedFullBody.page(body, title: item.title), base: base),
+           FeedFullBody.prefer(feed: feed.blocks, over: got?.blocks ?? []) {
+            NSLog("[기사] 피드 전문 사용 %d → %d자", FeedFullBody.textLength(got?.blocks ?? []), FeedFullBody.textLength(feed.blocks))
+            got = Article(title: got?.title ?? item.title, byline: got?.byline, siteName: got?.siteName, blocks: feed.blocks, paid: got?.paid, partial: nil)
+        }
+        guard var art = got else {
             if !interactive { // 미리 받기 실패는 조용히 넘기고, 열 때 다시 시도
                 memory.removeValue(forKey: item.link)
                 order.removeAll { $0 == item.link } // 다시 준비할 때 LRU 목록에 두 번 들어가지 않게(A-23)
@@ -114,8 +142,10 @@ final class ArticleService {
         NSLog("[기사] 그림 %d개", art.blocks.filter { $0.type == .img }.count)
         let artTitle = ArticleService.stripSiteName(art.title?.nonEmpty ?? item.title, source: item.sourceName, feedTitle: item.title)
         a.originalTitle = artTitle
+        if Paywall.isTeaser(art.blocks, paid: art.paid, kind: PaywallBook.shared.kind(item), ldBody: art.ldBody) { a.paywalled = true }
+        a.partial = art.partial == true ? true : nil
+        art.blocks = BodyCleanup.dropJunk(art.blocks) // 맛보기 판정(끝의 구독 권유 문구)을 본 뒤에 군더더기를 뺀다
         a.blocks = art.blocks
-        if Paywall.looksBlocked(art.blocks) { a.paywalled = true }
         if interactive { PaywallBook.shared.record(item, failed: false, blocked: a.paywalled == true) }
         let texts = art.blocks.compactMap(\.text)
         let foreign = Translator.looksForeign(String(texts.joined(separator: " ").prefix(2000)))
@@ -129,17 +159,20 @@ final class ArticleService {
             let first = Array(idx.prefix(8)), rest = Array(idx.dropFirst(8))
             var done = 0, total = 0 // 실제로 바뀐(번역된) 문단 수 — 번역이 모두 실패하면 원문이 그대로 돌아온다
             for (n, chunk) in [first, rest].enumerated() where !chunk.isEmpty || n == 0 {
-                let inputs = (n == 0 ? [artTitle] : []) + chunk.map { art.blocks[$0].text! }
-                let (translatedTexts, usedEngine) = await Translator.shared.translateManyReporting(inputs)
-                var out = translatedTexts
+                // 표 한 줄은 셀 묶음으로(셀마다 번역해 다시 이음), 나머지는 한 글짜리 묶음
+                let inputs = (n == 0 ? [[artTitle]] : []) + chunk.map { art.blocks[$0].cells ?? [art.blocks[$0].text!] }
+                let (translatedGroups, usedEngine) = await Translator.shared.translateGroupsReporting(inputs)
+                var out = translatedGroups
                 if usedEngine != .none { a.engine = usedEngine.rawValue } // 이 기사에 실제로 쓴 엔진(A-24)
-                if n == 0 { a.title = out.removeFirst() }
+                if n == 0 { a.title = out.removeFirst()[0] }
                 for (k, i) in chunk.enumerated() where Translator.looksForeign(art.blocks[i].text!) {
                     total += 1
-                    guard out[k] != art.blocks[i].text else { continue } // 번역 안 된 문단은 원문 그대로(원문 보기 대상 아님)
+                    let text = art.blocks[i].cells != nil ? out[k].joined(separator: " · ") : out[k][0]
+                    guard text != art.blocks[i].text else { continue } // 번역 안 된 문단은 원문 그대로(원문 보기 대상 아님)
                     done += 1
                     a.blocks[i].original = art.blocks[i].text
-                    a.blocks[i].text = out[k]
+                    a.blocks[i].text = text
+                    if art.blocks[i].cells != nil { a.blocks[i].cells = out[k] }
                 }
                 a.translated = done > 0
                 emit(item.link, a)
@@ -159,6 +192,7 @@ final class ArticleService {
             NSLog("[기사] 요약 %@", a.summary == nil ? "없음" : "완료")
             emit(item.link, a)
         }
+        a.savedAt = Date()
         save(item.link, a)
         return a
     }

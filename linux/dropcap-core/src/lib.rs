@@ -32,6 +32,7 @@ pub mod watch_words;
 pub mod backup;
 pub mod source_filter;
 pub mod reader_find;
+pub mod reader_extract;
 pub mod cover_pick;
 pub mod image_text;
 // 바깥과 잇기(I-02~I-06): 아무 주소 저장 · dropcap:// 주소·명령줄 · 데스크톱 검색 · 스크랩 노트 폴더

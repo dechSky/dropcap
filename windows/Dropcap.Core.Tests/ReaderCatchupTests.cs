@@ -110,7 +110,7 @@ public class ReaderCatchupTests : IDisposable
     {
         Assert.Null(ReaderPage.FreeReason(0, "failed", true, PaywallKind.Hard));                     // 권할 보도가 없으면 상자도 없음
         Assert.Equal("본문을 열지 못했습니다", ReaderPage.FreeReason(2, "failed", true, PaywallKind.Hard));
-        Assert.Equal("구독자만 읽을 수 있는 기사입니다", ReaderPage.FreeReason(1, "done", true, null));
+        Assert.Equal("다른 곳 보도로 전체를 읽을 수 있어요", ReaderPage.FreeReason(1, "done", true, null));
         Assert.Equal("유료 기사입니다", ReaderPage.FreeReason(1, "loading", false, PaywallKind.Hard));
         Assert.Equal("이곳 기사는 자주 막힙니다", ReaderPage.FreeReason(1, "done", false, PaywallKind.Learned));
         Assert.Null(ReaderPage.FreeReason(1, "done", false, PaywallKind.Metered));                    // metered 는 먼저 권하지 않음
@@ -140,7 +140,7 @@ public class ReaderCatchupTests : IDisposable
         var failed = Node(ReaderPage.View(Nyt, new PreparedArticle { Stage = Stage.Failed }, model, book, paywall));
         Assert.Equal("본문을 열지 못했습니다", failed["freeReason"]!.GetValue<string>());
         var walled = Node(ReaderPage.View(Nyt, new PreparedArticle { Stage = Stage.Done, Paywalled = true }, model, book, paywall));
-        Assert.Equal("구독자만 읽을 수 있는 기사입니다", walled["freeReason"]!.GetValue<string>());
+        Assert.Equal("다른 곳 보도로 전체를 읽을 수 있어요", walled["freeReason"]!.GetValue<string>());
         Assert.True(walled["paywalled"]!.GetValue<bool>());
 
         // 시험·미리 보기처럼 유료 기록이 없으면 상자 없음

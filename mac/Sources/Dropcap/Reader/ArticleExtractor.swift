@@ -2,11 +2,13 @@ import Foundation
 import WebKit
 
 struct Block: Codable, Hashable {
-    enum Kind: String, Codable { case h, p, li, quote, pre, img, cap }
+    enum Kind: String, Codable { case h, p, li, quote, pre, img, cap, row }
     var type: Kind
-    var text: String?
+    var text: String?          // row: 셀을 ' · ' 로 이은 글(찾기·요약·군더더기 규칙이 그대로 본다)
     var src: String?
     var original: String?
+    var cells: [String]? = nil // row: 표 한 줄의 셀(번역됐으면 번역문)
+    var head: Bool? = nil      // row: 머리행
 }
 
 struct Article: Codable {
@@ -14,6 +16,9 @@ struct Article: Codable {
     var byline: String?
     var siteName: String?
     var blocks: [Block]
+    var paid: Bool? = nil     // 사이트가 유료 기사라고 적음(ld+json isAccessibleForFree=false · 한경 articlePayment="Y")
+    var partial: Bool? = nil  // 본문 일부만 가져왔을 수 있음(앞 문단이 본문 영역에 더 있음)
+    var ldBody: Int? = nil    // 사이트가 ld+json articleBody 로 적은 본문 글자 수(맛보기 판정 — Paywall.matchesSiteBody)
 }
 
 // 한 번의 본문 추리기가 어떻게 흘러갔는지(전수 점검 READSWEEP 와 기록용)
@@ -64,8 +69,46 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
 
     private static let script = """
     (() => {
+      const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
       const doc = document.cloneNode(true);
       doc.querySelectorAll('.sr-only, .visually-hidden, .screen-reader-text, [class*="sr-only"], [class*="visually-hidden"]').forEach((n) => n.remove());
+      // 본문 밖 상자(기자 소개·댓글 수·공유·단추)는 미리 뺀다. 페이지 글의 30% 넘는 상자는 건드리지 않는다(본문을 지우지 않게)
+      const total = norm(doc.body ? doc.body.textContent : '').length || 1;
+      doc.querySelectorAll('.author-mini-bio, [class*="author-bio" i], [class*="authorbio" i], [class*="author-box" i], [class*="authorbox" i], [class*="author-card" i], [class*="about-author" i], [class*="about-the-author" i], [class*="author-info" i], [class*="bio-box" i], [class*="byline-bio" i], [class*="contributor-bio" i], .story-tools, .view-comments, [class*="comment-count" i], [class*="comments-link" i], [class*="share-bar" i], [class*="social-share" i], [class*="hide-caption" i], [class*="toggle-caption" i], button')
+        .forEach((n) => { if (n.isConnected && norm(n.textContent).length < total * 0.3) n.remove(); });
+      doc.querySelectorAll('a[href*="/author/" i] img, a[href*="/authors/" i] img, a[href*="/people/" i] img, a[href*="/staff/" i] img, a[href*="/reporter/" i] img').forEach((n) => n.remove()); // 기자 얼굴
+      doc.querySelectorAll('sup').forEach((n) => { if (/^\\[?\\s*\\d{1,3}\\s*\\]?$/.test(norm(n.textContent))) n.remove(); }); // 각주 번호
+      const klass = (el) => (el.className && el.className.baseVal === undefined ? el.className : '');
+      const ln = (el) => norm(el.textContent).length;
+      // 본문 중간 추천 상자(ZDNet '관련기사' + .news_box · Al Jazeera 'Recommended Stories'): 그 제목 + 바로 뒤(또는 감싼 상자)의 링크 목록을 상자째 뺀다.
+      // 링크 글이 60% 넘는 2,000자 미만 상자만, 모두 합쳐 페이지 글의 30% 미만일 때만
+      const RECO = /^(recommended( stories| reading| for you)?|related( stories| articles| coverage| content| posts| news)?|read more|more on this( story)?|keep reading|you may also like|also read|관련\\s?기사|추천\\s?기사|함께\\s?(볼|읽을|보면 좋은)\\s?기사|이 기사와 함께 (본|읽은) 기사)\\s*:?$/i;
+      const linky = (el) => { const t = el ? ln(el) : 0; if (!t || t >= 2000 || el.querySelector('img + p, figure')) return false; const a = [...el.querySelectorAll('a')].reduce((s, x) => s + ln(x), 0); return a >= t * 0.6; };
+      let recoCut = 0;
+      doc.querySelectorAll('h2, h3, h4, h5, h6, p, strong, b, span, div').forEach((hd) => {
+        if (!hd.isConnected || ln(hd) > 40 || !RECO.test(norm(hd.textContent))) return;
+        let head = hd;
+        while (head.parentElement && head.parentElement !== doc.body && ln(head.parentElement) === ln(hd)) head = head.parentElement;
+        const next = head.nextElementSibling, wrap = head.parentElement;
+        let gone = null;
+        if (next && linky(next)) gone = [head, next];
+        else if (wrap && wrap !== doc.body && ln(wrap) < 2000 && [...wrap.querySelectorAll('a')].reduce((s, x) => s + ln(x), 0) >= (ln(wrap) - ln(head)) * 0.6 && wrap.querySelector('a')) gone = [wrap];
+        if (!gone) return;
+        const cut = gone.reduce((s, x) => s + ln(x), 0);
+        if (recoCut + cut >= total * 0.3) return;
+        recoCut += cut;
+        gone.forEach((x) => x.remove());
+      });
+      // 사진 설명·출처 상자(figcaption 밖 — 경향 p.caption · 노컷 span.fr-inner · CNBC InlineImage-imageEmbedCaption/Credit · NPR .credit-caption):
+      // Readability 가 class 와 data-* 를 지우므로 figcaption 으로 바꿔 두고(그건 남는다) 걷기에서 설명(cap)으로 낸다
+      doc.querySelectorAll('[class]').forEach((n) => {
+        if (n.tagName === 'FIGCAPTION' || !/caption|cutline|credit|img_?desc|photo_?desc|desc_?img|fr-inner/i.test(klass(n))) return;
+        if (!n.isConnected || (n.parentElement && n.parentElement.closest('figcaption'))) return;
+        if (n.querySelector('img, picture, video, figure, table, ul, ol, h1, h2, h3, h4, h5, h6') || n.querySelectorAll('p').length > 1 || ln(n) > 400) return;
+        const f = doc.createElement('figcaption');
+        while (n.firstChild) f.appendChild(n.firstChild);
+        n.replaceWith(f);
+      });
       // 기본 기준(500자)으로 못 찾으면 짧은 글(GeekNews 소개글 등)을 위해 100자 기준으로 한 번 더(parse 가 문서를 고치므로 새 사본으로)
       const fresh = doc.cloneNode(true);
       let art = new Readability(doc).parse();
@@ -79,12 +122,72 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
           if (len > bestLen && len < 40000) { best = el; bestLen = len; }
         });
         if (best && bestLen >= 80) {
+          best = best.cloneNode(true);
           best.querySelectorAll('script, style, nav, form, button, .related-topics, [class*="related" i], [class*="share" i]').forEach((n) => n.remove());
           art = { title: document.title, content: '<div>' + best.innerHTML + '</div>' };
         }
       }
       if (!art || !art.content) return null;
-      const box = new DOMParser().parseFromString(art.content, 'text/html').body;
+      let content = art.content, partial = false;
+      const parse = (h) => new DOMParser().parseFromString(h, 'text/html').body;
+      const lenOf = (el) => norm(el.textContent).length;
+      const longP = (el) => [...el.querySelectorAll('p')].filter((p) => lenOf(p) >= 80);
+      const BAD = /related|recommend|share|social|promo|newsletter|comment|sidebar|links|tags?\\b|topic|footer|nav|advert|popular|most-?read|author|byline|headline|elsewhere|features|top-?stories/i;
+      const isAd = (el) => /(^|[\\s_-])(ad|ads|adv|advert|advertisement|banner|sponsor)([\\s_-]|$)/i.test((el.className && el.className.baseVal === undefined ? el.className : '') + ' ' + (el.id || ''));
+      const label = (el) => (el.className && el.className.baseVal === undefined ? el.className : '') + ' ' + (el.getAttribute('data-component') || '') + ' ' + (el.getAttribute('data-block') || '');
+      const prune = (root) => { root.querySelectorAll('script, style, nav, form, aside, iframe').forEach((n) => n.remove()); root.querySelectorAll('*').forEach((n) => { if (n.isConnected && (isAd(n) || BAD.test(label(n)))) n.remove(); }); return root; };
+      // Readability 가 고른 글이 원문 문서 어디인지(첫 긴 문단으로 찾음)
+      const firstOf = (body) => { const p = [...body.querySelectorAll('p')].find((x) => lenOf(x) >= 40); return p ? norm(p.textContent).slice(0, 40) : ''; };
+      const first = firstOf(parse(content));
+      const anchor = first ? [...fresh.querySelectorAll('p')].find((p) => norm(p.textContent).startsWith(first)) : null;
+      // B: itemprop=articleBody 가 따로 있는데 고른 글이 그 밖이면(옆 상자를 고름) 그쪽을 쓴다
+      const ip = [...fresh.querySelectorAll('[itemprop="articleBody"]')].find((e) => lenOf(e) >= 300);
+      if (ip && !(anchor && ip.contains(anchor)) && lenOf(ip) >= lenOf(parse(content)) * 0.3) {
+        content = '<div>' + prune(ip.cloneNode(true)).innerHTML + '</div>';
+      } else if (anchor) {
+        // A: 본문이 광고·사진을 사이에 둔 여러 덩어리면(같은 꼴의 형제) 모두 순서대로 모은다
+        const firstClass = (el) => ((el.className && el.className.baseVal === undefined ? el.className : '').trim().split(/\\s+/)[0] || '');
+        const alike = (a, b) => a.tagName === b.tagName && ((a.hasAttribute('data-block') && b.hasAttribute('data-block')) || (a.hasAttribute('data-component') && b.hasAttribute('data-component')) || (firstClass(a) !== '' && firstClass(a) === firstClass(b)));
+        // 형제가 같은 꼴이거나, 겉 포장이 달라도 안에 본문 상자와 같은 class 의 상자가 있으면(Ars: div.my-2.5 > … > .post-content) 같은 본문
+        const core = anchor.parentElement, coreClass = firstClass(core);
+        // 같은 class 가 겹치면 바깥 상자만(후손은 바깥 사본에 이미 들어 있다 — 겹마다 복사하면 크기·시간이 N²)
+        const outer = (list) => { const r = []; for (const c of list) if (!r.length || !r[r.length - 1].contains(c)) r.push(c); return r; };
+        const cores = (k, el) => k === el || alike(k, el) || !coreClass || k.classList.contains(coreClass) ? [k] : outer([...k.querySelectorAll('.' + CSS.escape(coreClass))]);
+        for (let el = core, depth = 0; el && el.parentElement && depth < 6; el = el.parentElement, depth++) {
+          const kids = [...el.parentElement.children].filter((k) => k === el || ((alike(k, el) || (coreClass && k.querySelector('.' + CSS.escape(coreClass)))) && !BAD.test(label(k)) && !isAd(k)));
+          const texty = kids.filter((k) => longP(k).length > 0);
+          if (texty.length < 2 || !texty.includes(el)) continue;
+          const from = kids.indexOf(texty[0]), to = kids.indexOf(texty[texty.length - 1]);
+          const box = document.createElement('div');
+          // 모은 글이 원문 글의 2배를 넘으면(겹친 상자를 거듭 담은 꼴) 모으기를 그만둔다
+          let size = 0; const cap = fresh.body ? fresh.body.textContent.length * 2 + 1000 : 0;
+          kids.slice(from, to + 1).forEach((k) => cores(k, el).forEach((c) => { size += c.textContent.length; if (size <= cap) box.appendChild(prune(c.cloneNode(true))); }));
+          // 글이 15% 넘게 늘거나, 글은 비슷한데(90% 이상) 사진이 더 있으면(BBC: Readability 가 사진 블록을 버림) 모은 쪽
+          const cur = parse(content), more = lenOf(box) >= lenOf(cur) * 1.15;
+          const pics = lenOf(box) >= lenOf(cur) * 0.9 && box.querySelectorAll('img').length > cur.querySelectorAll('img').length;
+          if (size <= cap && (more || pics)) content = '<div>' + box.innerHTML + '</div>';
+          break;
+        }
+        // 본문 영역(itemprop·article)에 우리 글에 없는 긴 문단이 여럿 남으면 '일부만'
+        const area = ip || anchor.closest('article');
+        if (area) {
+          const got = norm(parse(content).textContent).replace(/\\s/g, '');
+          const ps = longP(area).filter((p) => !BAD.test(label(p.parentElement || p)));
+          const miss = ps.filter((p) => !got.includes(norm(p.textContent).replace(/\\s/g, '').slice(0, 30)));
+          const all = ps.reduce((s, p) => s + lenOf(p), 0), gone = miss.reduce((s, p) => s + lenOf(p), 0);
+          partial = miss.length >= 2 && gone > all * 0.25;
+        }
+      }
+      const box = prune(parse(content));
+      // 유료 표시: ld+json isAccessibleForFree=false 또는 한경 articlePayment="Y"
+      let paid = null, ldBody = null;
+      document.querySelectorAll('script[type="application/ld+json"]').forEach((s) => {
+        const m = (s.textContent || '').match(/"isAccessibleForFree"\\s*:\\s*"?(true|false)"?/i);
+        if (m && paid === null) paid = m[1].toLowerCase() === 'false';
+        const find = (v) => { if (!v || typeof v !== 'object') return null; if (typeof v.articleBody === 'string' && v.articleBody) return v.articleBody; for (const k in v) { const r = find(v[k]); if (r) return r; } return null; };
+        try { const b = find(JSON.parse(s.textContent || '')); if (b) ldBody = Math.max(ldBody || 0, norm(b.replace(/<[^>]*>/g, ' ')).length); } catch (e) {}
+      });
+      if (paid !== true) for (const s of document.querySelectorAll('script:not([src])')) { if (/articlePayment\\s*=\\s*["']Y["']/.test(s.textContent || '')) { paid = true; break; } }
       const blocks = [];
       const abs = (u) => { try { const h = new URL(u, location.href).href; return /^https?:/.test(h) ? h : null; } catch { return null; } };
       // 늦게 불러오는 사진은 src 가 빈 자리표시이고 진짜 주소는 srcset·data-* 에 있다 — 가장 큰 진짜 주소를 고른다
@@ -105,11 +208,44 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
         }
         return null;
       };
-      const clean = (s) => (s || '').replace(/\\((opens in a new (window|tab)|새 창에서 열기)\\)/gi, '').replace(/\\s+/g, ' ').trim();
+      const clean = (s) => (s || '').replace(/\\((opens in a new (window|tab)|새 창에서 열기)\\)/gi, '').replace(/\\b(hide|toggle) caption\\b/gi, '').replace(/\\s+/g, ' ').trim();
+      // <br> 은 빈칸으로(글이 붙지 않게)
+      const tx = (n) => { const c = n.cloneNode(true); c.querySelectorAll('br').forEach((b) => b.replaceWith(' ')); return c.textContent; };
+      const INLINE = new Set(['a', 'b', 'strong', 'em', 'i', 'u', 'span', 'font', 'small', 'mark', 'abbr', 'cite', 'code', 'time', 'q', 's', 'del', 'ins', 'sub', 'sup', 'label']);
+      const hasBlock = (n) => !!n.querySelector('p, div, ul, ol, li, h1, h2, h3, h4, h5, h6, blockquote, figure, img, picture, table, pre, section, article');
+      // 표(AWS·Hugging Face 벤치마크 표): 행마다 한 블록(셀은 따로, 글은 ' · ' 로 이음). 머리행은 thead·th 뿐이거나 첫 행 셀이 모두 굵은 글.
+      // 칸이 하나뿐이거나 안에 사진·목록·소제목·긴 셀이 든 표는 자리 잡기용이라 안을 그대로 걷는다
+      const table = (t) => {
+        const cellsOf = (tr) => [...tr.children].filter((c) => c.tagName === 'TD' || c.tagName === 'TH');
+        const rows = [...t.querySelectorAll('tr')].filter((tr) => tr.closest('table') === t && cellsOf(tr).length > 0);
+        if (rows.length < 2 || Math.max(...rows.map((r) => cellsOf(r).length)) < 2) return false;
+        if (t.querySelector('table table, img, picture, figure, pre, ul, ol, blockquote, h1, h2, h3, h4, h5, h6')) return false;
+        if (rows.some((r) => cellsOf(r).some((c) => lenOf(c) > 400))) return false;
+        const bold = (c) => { const t = norm(c.textContent); return !t || [...c.querySelectorAll('strong, b')].map((x) => norm(x.textContent)).join(' ') === t; };
+        const cap = t.querySelector('caption'); const ct = cap && clean(tx(cap));
+        if (ct) blocks.push({ type: 'cap', text: ct });
+        rows.forEach((tr, k) => {
+          const cs = cellsOf(tr), cells = cs.map((c) => clean(tx(c)));
+          if (!cells.some((c) => c)) return;
+          const head = !!tr.closest('thead') || cs.every((c) => c.tagName === 'TH') || (k === 0 && cs.every(bold));
+          blocks.push({ type: 'row', text: cells.join(' · '), cells, head: head || null });
+        });
+        return true;
+      };
       const walk = (el) => {
-        for (const n of el.children) {
+        // 요소 사이 맨 글자(동아처럼 <br><br> 로 문단을 나눈 본문)도 문단으로 모은다
+        let buf = '', brs = 0;
+        const flush = () => { const t = clean(buf); if (t.length > 1) blocks.push({ type: 'p', text: t }); buf = ''; brs = 0; };
+        for (const n of el.childNodes) {
+          if (n.nodeType === 3) { if (n.textContent.trim()) brs = 0; buf += n.textContent; continue; }
+          if (n.nodeType !== 1) continue;
           const tag = n.tagName.toLowerCase();
-          const t = clean(n.textContent);
+          if (tag === 'br') { brs++; if (brs >= 2) flush(); else buf += ' '; continue; }
+          if (tag === 'figcaption') { flush(); const c = clean(tx(n)); if (c) blocks.push({ type: 'cap', text: c }); continue; }
+          if (INLINE.has(tag) && !hasBlock(n)) { buf += tx(n); brs = 0; continue; }
+          flush();
+          // 글은 쓰는 태그만 만든다(겹친 div 마다 하위 전체를 복사하면 깊이²)
+          const t = /^(h[1-6]|p|li|blockquote|pre)$/.test(tag) ? clean(tx(n)) : '';
           if (/^h[1-6]$/.test(tag)) { if (t) blocks.push({ type: 'h', text: t }); }
           else if (tag === 'p') {
             const img = n.querySelector('img'); const src = bestSrc(img);
@@ -124,18 +260,43 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
           else if (tag === 'figure') {
             const s = bestSrc(n.querySelector('img'));
             if (s) blocks.push({ type: 'img', src: s });
-            const cap = n.querySelector('figcaption'); const c = cap && clean(cap.textContent);
+            const c = [...n.querySelectorAll('figcaption')].map((x) => clean(tx(x))).filter((x) => x).join(' · ');
             if (c) blocks.push({ type: 'cap', text: c });
           }
+          else if (tag === 'table') { if (!table(n)) walk(n); }
           else walk(n);
         }
+        flush();
       };
       walk(box);
       // 문단 태그 없이 맨 글자로 든 본문(GeekNews 등): 줄 단위로 문단을 만든다
       if (!blocks.some((b) => b.type === 'p' || b.type === 'li')) {
         (box.innerText || box.textContent || '').split(/\\n+/).map(clean).filter((t) => t.length > 1).forEach((t) => blocks.push({ type: 'p', text: t }));
       }
-      return JSON.stringify({ title: art.title, byline: art.byline, siteName: art.siteName, blocks });
+      // 같은 글·같은 사진이 또 나오면 뺀다(화면 크기별로 기사를 여러 벌 싣는 사이트 — Politico, 부제·사진 설명 중복)
+      const seen = new Set();
+      const uniq = blocks.filter((b) => { const k = b.type === 'img' ? 'img ' + b.src : ((b.text || '').length >= 30 ? b.type + ' ' + b.text : null); if (!k) return true; if (seen.has(k)) return false; seen.add(k); return true; });
+      blocks.length = 0; blocks.push(...uniq);
+      // 사진 설명·출처가 문단으로 온 것(경향 '… 제공'·CNBC '| Getty Images'·NPR 'for NPR'·'/AP'): 사진 바로 뒤의 짧은 출처 줄은 설명으로,
+      // 사진 바로 앞이면(노컷) 사진 뒤로 옮겨 설명으로. 이어진 설명은 하나로 합친다
+      const CREDIT = /(\\|\\s*(Getty Images|AP|AFP|Reuters|Bloomberg|EPA)\\b|(Getty Images|\\/\\s?(AP|AFP|Reuters|EPA|Bloomberg|Getty)|for NPR|via Getty Images|via AP)\\s*\\)?\\.?$|^(Photo|Photograph|Credit|Illustration|Image)( credit)?\\s*:|^[(\\[]?(사진|그래픽|자료|이미지)\\s*[=:]|(제공|연합뉴스|뉴스1|뉴시스|게티이미지(뱅크|코리아)?|AFP|AP|로이터|EPA)(\\s*[=\\/]\\s*\\S+)?\\s*[)\\]]?\\.?$)/;
+      for (let i = 0; i < blocks.length; i++) {
+        const b = blocks[i];
+        if (b.type !== 'p' || b.text.length > 150 || !CREDIT.test(b.text)) continue;
+        const prev = blocks[i - 1], next = blocks[i + 1];
+        if (prev && (prev.type === 'img' || (prev.type === 'cap' && blocks[i - 2] && blocks[i - 2].type === 'img'))) b.type = 'cap';
+        else if (prev && prev.type === 'p' && prev.text.length <= 200 && blocks[i - 2] && blocks[i - 2].type === 'img') { prev.type = 'cap'; b.type = 'cap'; } // 설명 문장 + 출처 줄
+        else if (next && next.type === 'img') { b.type = 'cap'; blocks[i] = next; blocks[i + 1] = b; i++; }
+      }
+      for (let i = blocks.length - 1; i > 0; i--) {
+        const a = blocks[i - 1], b = blocks[i];
+        if (a.type === 'cap' && b.type === 'cap') { if (!a.text.includes(b.text)) a.text = a.text + ' · ' + b.text; blocks.splice(i, 1); }
+      }
+      // 기사 글은 거의 없고 목록(메뉴·많이 본 기사)만 많으면 본문이 아니다(사진뿐인 속보 등) — 빈 본문으로 돌려 '글 거의 없음' 안내
+      const sum = (types) => blocks.filter((b) => types.includes(b.type)).reduce((s, b) => s + (b.text || '').length, 0);
+      const prose = sum(['p', 'quote', 'h']), listed = sum(['li']);
+      if (prose < 150 && listed > prose * 2) return JSON.stringify({ title: art.title, blocks: [] });
+      return JSON.stringify({ title: art.title, byline: art.byline, siteName: art.siteName, blocks, paid, partial: partial || null, ldBody });
     })();
     """
 
@@ -155,12 +316,16 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
                 let art = await run(data: got.data, encoding: got.encoding ?? Self.sniffCharset(got.data), base: url)
                 trace.fastSeconds = Date().timeIntervalSince(t0)
                 trace.visible = Self.visibleTextLength(got.data)
-                if let art {
+                if var art {
+                    if art.paid == nil { art.paid = Self.paidFlag(got.data) } // 스크립트를 끈 빠른 길에서는 페이지의 <script> 를 못 읽는다
+                    if art.ldBody == nil { art.ldBody = Self.ldBodyLength(got.data) }
                     trace.path = "fast"
                     NSLog("[기사] 빠른 길 %.2f초 %@", Date().timeIntervalSince(t0), host)
                     return art
                 }
-                if let art = EmbeddedArticle.extract(got.data) { // 스크립트로 그리는 사이트가 HTML 에 실어 보낸 본문 자료
+                if var art = EmbeddedArticle.extract(got.data) { // 스크립트로 그리는 사이트가 HTML 에 실어 보낸 본문 자료
+                    art.paid = Self.paidFlag(got.data)
+                    art.ldBody = Self.ldBodyLength(got.data)
                     trace.path = "embedded"
                     trace.fastSeconds = Date().timeIntervalSince(t0)
                     NSLog("[기사] 실린 본문 자료 %.2f초 %@", trace.fastSeconds, host)
@@ -187,6 +352,51 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
         Self.noteSlow(host: host, refused: refused, ok: art != nil)
         NSLog("[기사] 느린 길 %.2f초 %@ %@", Date().timeIntervalSince(t0), host, art == nil ? "실패" : "성공")
         return art
+    }
+
+    // 받은 HTML 로 빠른 길만(시험·점검용): 스크립트 없이 추리고, 못 찾으면 실린 본문 자료
+    func extractHTML(_ html: String, base: URL) async -> Article? {
+        let data = Data(html.utf8)
+        guard var art = await run(data: data, encoding: "utf-8", base: base) ?? EmbeddedArticle.extract(data) else { return nil }
+        if art.paid == nil { art.paid = Self.paidFlag(data) }
+        if art.ldBody == nil { art.ldBody = Self.ldBodyLength(data) }
+        return art
+    }
+
+    // ld+json 의 articleBody 글자 수(빈칸을 하나로 — 우리 본문 글자 수와 같은 셈). 앞 1MB의 ld+json 만 본다
+    nonisolated static func ldBodyLength(_ data: Data) -> Int? {
+        let h = String(decoding: data.prefix(1_000_000), as: UTF8.self)
+        var rest = h[...], best: Int?
+        func find(_ v: Any) -> String? {
+            if let d = v as? [String: Any] {
+                if let b = d["articleBody"] as? String, !b.isEmpty { return b }
+                for x in d.values { if let b = find(x) { return b } }
+            } else if let a = v as? [Any] {
+                for x in a { if let b = find(x) { return b } }
+            }
+            return nil
+        }
+        while let start = rest.range(of: "application/ld+json", options: .caseInsensitive) {
+            guard let gt = rest[start.upperBound...].firstIndex(of: ">"),
+                  let close = rest[gt...].range(of: "</script>", options: .caseInsensitive) else { break }
+            let json = rest[rest.index(after: gt)..<close.lowerBound]
+            if let obj = try? JSONSerialization.jsonObject(with: Data(json.utf8)), let body = find(obj) {
+                let n = Plain.clean(body).count
+                best = max(best ?? 0, n)
+            }
+            rest = rest[close.upperBound...]
+        }
+        return best
+    }
+
+    // 사이트가 유료 기사라고 적었나: ld+json "isAccessibleForFree": false · 한경 articlePayment = "Y"(앞 1MB만 봄)
+    nonisolated static func paidFlag(_ data: Data) -> Bool? {
+        let h = String(decoding: data.prefix(1_000_000), as: UTF8.self)
+        if let r = h.range(of: #""isAccessibleForFree"\s*:\s*"?(true|false|True|False)"#, options: .regularExpression) {
+            return h[r].lowercased().hasSuffix("false")
+        }
+        if h.range(of: #"articlePayment\s*=\s*["']Y["']"#, options: .regularExpression) != nil { return true }
+        return nil
     }
 
     // 스크립트·스타일을 뺀 보이는 글자 수(대략)
@@ -291,6 +501,7 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
         web = w
         defer { w.stopLoading(); web = nil }
         loadDone = false
+        scriptTimedOut = false
         w.load(data, mimeType: "text/html", characterEncodingName: encoding, baseURL: base)
         await waitForLoad(seconds: 6)
         return await tryExtract(w)
@@ -317,12 +528,13 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
         let w = await makeWeb(js: true, block: ["image", "media", "font", "popup", "websocket"], id: "ainews-full-2")
         web = w
         defer { w.stopLoading(); web = nil }
+        scriptTimedOut = false
         w.load(URLRequest(url: url, timeoutInterval: 20))
         // 다 뜨기를 기다리지 않고, 0.6초 뒤부터 0.4초마다 본문이 생겼는지 본다(최대 15초)
         let deadline = Date().addingTimeInterval(maxWait)
         try? await Task.sleep(for: .milliseconds(600))
         var last = 0
-        while Date() < deadline {
+        while Date() < deadline, !scriptTimedOut {
             if let art = await tryExtract(w) {
                 let n = art.blocks.count
                 if n >= 4, n == last { return art } // 두 번 연속 같으면 다 그려진 것
@@ -336,13 +548,14 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
     // 페이지와 분리된 공간(앱 전용 world)에서 실행: 페이지 스크립트가 추출 코드를 건드리지 못한다.
     // Readability 는 한 번만 넣고, 이후엔 짧은 추출 스크립트만 다시 돌린다.
     private func tryExtract(_ w: WKWebView) async -> Article? {
-        let loaded = (try? await w.evaluateJavaScript("typeof Readability !== 'undefined'", in: nil, contentWorld: .defaultClient)) as? Bool ?? false
-        if !loaded { _ = try? await w.evaluateJavaScript(Self.readability + "\n;true", in: nil, contentWorld: .defaultClient) }
+        guard !scriptTimedOut else { return nil }
+        let loaded = await evaluate(w, "typeof Readability !== 'undefined'") as? Bool ?? false
+        if !loaded { _ = await evaluate(w, Self.readability + "\n;true") }
         if ProcessInfo.processInfo.environment["DROPCAP_DEBUG_EXTRACT"] != nil { // 진단용
             do { let r = try await w.evaluateJavaScript(Self.script, in: nil, contentWorld: .defaultClient); NSLog("[추출 진단] %@", String(describing: r).prefix(600) as CVarArg) }
             catch { NSLog("[추출 진단] 오류 %@", String(describing: error)) }
         }
-        guard let json = (try? await w.evaluateJavaScript(Self.script, in: nil, contentWorld: .defaultClient)) as? String,
+        guard let json = await evaluate(w, Self.script) as? String,
               let art = try? JSONDecoder().decode(Article.self, from: Data(json.utf8)) else { return nil }
         let textLen = art.blocks.compactMap(\.text).joined().count
         guard // 짧은 글(소개글·단신)도 받는다: 글 100자 이상이면 본문으로(예전 '2문단·280자' 기준은 GeekNews 같은 짧은 글을 버렸다)
@@ -350,6 +563,27 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
               textLen >= 100 else { trace.shortText = textLen; return nil }
         trace.shortText = nil
         return art
+    }
+
+    // 추출 스크립트 시간 제한: 넘으면 이 기사만 실패로(스크립트는 멈출 수 없으니 기다리지 않고, 이 웹 보기에서는 더 돌리지 않는다)
+    private var scriptTimedOut = false
+    nonisolated static let scriptSeconds: Double = 8
+    private func evaluate(_ w: WKWebView, _ js: String) async -> Any? {
+        await withCheckedContinuation { c in
+            var done = false
+            let finish = { (v: Any?) in
+                guard !done else { return }
+                done = true
+                c.resume(returning: v)
+            }
+            w.evaluateJavaScript(js, in: nil, in: .defaultClient) { r in finish(try? r.get()) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.scriptSeconds) { [weak self] in
+                guard !done else { return }
+                self?.scriptTimedOut = true
+                NSLog("[기사] 추출 스크립트 %.0f초 넘음 — 이 기사는 실패로", Self.scriptSeconds)
+                finish(nil)
+            }
+        }
     }
 
     private func waitForLoad(seconds: Double) async {

@@ -17,6 +17,7 @@ final class ReaderModel: ObservableObject {
     @Published var engine = ""
     @Published var cover: String?        // 표지 사진(피드 → 매거진 기록 → 기사 머리 대표 사진)
     @Published var paywalled = false     // 맛보기만 나옴(유료벽 뒤)
+    @Published var partial = false       // 본문 일부만 가져왔을 수 있음
     @Published var failure: ReaderFailure?
     @Published var alternatives: [NewsItem] = [] // 같은 스토리의 무료 보도(D-9)
     var paywall: PaywallKind?
@@ -42,6 +43,15 @@ final class ReaderModel: ObservableObject {
         if let token { svc.stopObserving(item.link, token) }
     }
 
+    // '다시 받기': 저장한 것을 지우고 처음부터(맛보기·일부만이 풀렸는지, 앱이 고쳐졌는지)
+    func reload() async {
+        withAnimation(.easeOut(duration: 0.2)) { phase = .loading }
+        let svc = ArticleService.shared
+        let t = svc.observe(item.link) { [weak self] a in self?.apply(a) }
+        apply(await svc.reload(item))
+        svc.stopObserving(item.link, t)
+    }
+
     private func apply(_ a: PreparedArticle) {
         title = ArticleService.stripSiteName(a.title, source: item.sourceName, feedTitle: item.title) // 예전에 저장한 기사에도 적용
         originalTitle = ArticleService.stripSiteName(a.originalTitle, source: item.sourceName, feedTitle: item.title)
@@ -51,6 +61,7 @@ final class ReaderModel: ObservableObject {
         summarizing = a.summarizing
         summary = a.fallback
         paywalled = a.paywalled == true
+        partial = a.partial == true
         failure = a.failure
         if !a.blocks.isEmpty { blocks = a.blocks }
         let next: Phase
@@ -67,7 +78,7 @@ final class ReaderModel: ObservableObject {
     var freeReason: String? {
         guard !alternatives.isEmpty else { return nil }
         if phase == .failed { return "본문을 열지 못했습니다" }
-        if paywalled { return "구독자만 읽을 수 있는 기사입니다" }
+        if paywalled { return "다른 곳 보도로 전체를 읽을 수 있어요" } // 맛보기 안내는 본문 위 띠(TeaserBanner)가 따로 맡는다
         if let p = paywall, p.blocks { return p == .hard ? "유료 기사입니다" : "이곳 기사는 자주 막힙니다" }
         return nil
     }
@@ -125,6 +136,8 @@ struct ReaderView: View {
     @StateObject private var speaker = Speaker()
     @ObservedObject private var scrapbook = Scrapbook.shared
     @State private var scrapFlash = false
+    @State private var openOriginals: Set<Int> = [] // 원문을 펼친 문단(번역 보기에서 문단마다)
+    @State private var scrolledPastTop = false // 본문이 투명 제목줄 밑으로 들어갔나(머리 겹침 — TitlebarBackdrop)
     @State private var linkCopied = false
     @State private var newFolder = false
     @State private var folderName = ""
@@ -194,8 +207,12 @@ struct ReaderView: View {
     private var page: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
+                Color.clear.frame(height: 0).reportsScrolledPastTop(in: "readerScroll")
                 cover
                 header
+                if model.paywalled, model.phase == .translating || model.phase == .done {
+                    TeaserBanner(link: model.item.link).padding(.top, 18).transition(.opacity)
+                }
                 if let reason = model.freeReason {
                     FreeAlternativesBox(item: model.item, alternatives: model.alternatives, reason: reason)
                         .padding(.top, 18)
@@ -222,6 +239,10 @@ struct ReaderView: View {
                     articleBody(model.blocks)
                         .padding(.top, 24)
                         .transition(.opacity.combined(with: .offset(y: 8)))
+                    if model.paywalled || model.partial {
+                        CutEndNote(teaser: model.paywalled, link: model.item.link) { Task { await model.reload() } }
+                            .padding(.top, 6)
+                    }
                 case .failed:
                     failed.padding(.top, 24)
                 }
@@ -233,7 +254,12 @@ struct ReaderView: View {
             .frame(maxWidth: .infinity)
             .foregroundStyle(theme.text.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.primary))
         }
+        .coordinateSpace(name: "readerScroll")
         .textSelection(.enabled)
+        // 제목줄이 투명이라 스크롤한 본문이 머리(신호등·도구 막대)에 비쳐 겹쳐 보였다 → 머리 자리에 읽기 바탕색(종이·세피아·어둡게)
+        .overlay(alignment: .top) { TitlebarBackdrop(fill: theme.background, separator: scrolledPastTop) }
+        .onPreferenceChange(ScrolledPastTopKey.self) { scrolledPastTop = $0 }
+        .onChange(of: model.item.key) { openOriginals = [] } // J/K 로 다음 기사(같은 창의 보기를 바꿔 끼움)
         .background(theme.background)
         .environment(\.colorScheme, theme.scheme ?? colorSchemeFallback)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: themeRaw)
@@ -293,6 +319,9 @@ struct ReaderView: View {
                 } label: { Label("기사 주소 복사", systemImage: linkCopied ? "checkmark" : "link") }
                 .keyboardShortcut("c", modifiers: [.command, .shift])
                 .help("기사 주소 복사 (⌘⇧C)")
+                Button { Task { await model.reload() } } label: { Label("다시 받기", systemImage: "arrow.clockwise") }
+                    .disabled(model.phase == .loading || model.phase == .translating)
+                    .help("저장한 본문을 지우고 원문에서 다시 받기")
                 Button {
                     ExternalLink.open(model.item.link)
                 } label: { Label("브라우저에서 열기", systemImage: "safari") }
@@ -484,11 +513,23 @@ struct ReaderView: View {
                 let text = (model.showOriginal ? b.original : nil) ?? b.text ?? ""
                 let prevIsLi = i > 0 && blocks[i - 1].type == .li
                 if !hidden.contains(i) {
-                blockView(b, text: text, prevIsLi: prevIsLi, id: i)
+                let canOpen = !model.showOriginal && b.original != nil && b.type != .img
+                blockView(b, text: text, prevIsLi: prevIsLi, id: i,
+                          rowEdge: (i == 0 || blocks[i - 1].type != .row, i + 1 == blocks.count || blocks[i + 1].type != .row))
                     .id(i)
                     .modifier(ScrapHover(item: model.item, text: text,
                                          original: model.showOriginal ? nil : b.original,
-                                         enabled: [.p, .li, .quote, .h].contains(b.type) && !text.isEmpty))
+                                         enabled: [.p, .li, .quote, .h, .row].contains(b.type) && !text.isEmpty,
+                                         originalOpen: openOriginals.contains(i),
+                                         toggleOriginal: canOpen ? { withAnimation(.easeOut(duration: 0.18)) { if openOriginals.remove(i) == nil { openOriginals.insert(i) } } } : nil))
+                if canOpen, openOriginals.contains(i), let o = b.original {
+                    // 문단별 원문 펼치기: 번역문 바로 아래에 원문을 작게
+                    Text(o).font(bf(fs - 2)).lineSpacing(fs * 0.35 * lineFactor).foregroundStyle(.secondary).textSelection(.enabled)
+                        .padding(.leading, 12)
+                        .overlay(alignment: .leading) { Capsule().fill(model.item.accent.opacity(0.4)).frame(width: 2) }
+                        .padding(.top, -(fs - 4)).padding(.bottom, fs)
+                        .transition(.opacity)
+                }
                 }
             }
         }
@@ -504,7 +545,7 @@ struct ReaderView: View {
         return out
     }
 
-    @ViewBuilder private func blockView(_ b: Block, text: String, prevIsLi: Bool, id: Int) -> some View {
+    @ViewBuilder private func blockView(_ b: Block, text: String, prevIsLi: Bool, id: Int, rowEdge: (first: Bool, last: Bool) = (true, true)) -> some View {
         switch b.type {
         case .h:
             styled(text, id).font(bf(fs + 4, .bold)).tracking(-0.2)
@@ -535,6 +576,10 @@ struct ReaderView: View {
             }
         case .cap:
             styled(text, id).font(bf(13)).foregroundStyle(.secondary).padding(.top, -8).padding(.bottom, 18)
+        case .row:
+            // 표 한 줄: 셀을 같은 폭으로(원문 보기면 원문을 ' · ' 로 다시 나눔)
+            TableRowView(cells: text == b.text ? (b.cells ?? [text]) : text.components(separatedBy: " · "), head: b.head == true,
+                         font: bf(fs - 2, b.head == true ? .semibold : .regular), first: rowEdge.first, last: rowEdge.last)
         }
     }
 
@@ -683,6 +728,8 @@ private struct ScrapHover: ViewModifier {
     let text: String
     let original: String?
     let enabled: Bool
+    var originalOpen = false
+    var toggleOriginal: (() -> Void)? = nil  // 번역된 문단이면 원문 펼치기 단추
     @State private var hover = false
     @State private var hoverToken = 0
     @State private var showSheet = false
@@ -727,6 +774,21 @@ private struct ScrapHover: ViewModifier {
                     .popover(isPresented: $showSheet, arrowEdge: .leading) { sheet.onDisappear { if let s = scrap, s.memo != memo { var n = s; n.memo = memo; book.update(n) } } }
                 }
             }
+            .overlay(alignment: .topLeading) {
+                if let toggleOriginal, hover || originalOpen {
+                    Button(action: toggleOriginal) {
+                        Text("원문").font(.app(9.5, .semibold))
+                            .frame(width: 26, height: 20)
+                            .background(.regularMaterial, in: Capsule())
+                            .overlay(Capsule().strokeBorder(.primary.opacity(0.1), lineWidth: 0.5))
+                            .foregroundStyle(originalOpen ? Color.accentColor : Color.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help(originalOpen ? "이 문단 원문 접기" : "이 문단 원문 펼치기")
+                    .offset(x: -38, y: 28)
+                    .transition(.opacity)
+                }
+            }
             // 단추가 문단 바깥 왼쪽 여백에 있으므로, 그 여백까지 마우스 올림 영역으로 잡는다(자리 배치는 그대로)
             .padding(.leading, Self.gutter)
             .contentShape(Rectangle())
@@ -755,6 +817,7 @@ private struct ScrapHover: ViewModifier {
                             Button(c) { book.add(item, quote: text, original: original, to: c) }
                         }
                     }
+                    if let toggleOriginal { Button(originalOpen ? "이 문단 원문 접기" : "이 문단 원문 펼치기", action: toggleOriginal) }
                     Divider()
                     Button("이 문단 복사") {
                         NSPasteboard.general.clearContents()
@@ -799,6 +862,11 @@ private struct ScrapHover: ViewModifier {
 }
 
 // 기사 본문 속 사진(안전 로더, 원래 비율 유지)
+enum ImageFit {
+    // 작은 그림(기자 얼굴·아이콘)은 본래 크기보다 키우지 않는다 — 480 이하면 그 폭까지만
+    static func maxWidth(_ size: CGSize) -> CGFloat? { size.width > 0 && size.width < 480 ? size.width : nil }
+}
+
 private struct ArticleImage: View {
     let url: String
     @State private var image: NSImage?
@@ -810,6 +878,7 @@ private struct ArticleImage: View {
             if let image {
                 Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .frame(maxWidth: ImageFit.maxWidth(image.size) ?? .infinity)
                     .transition(.opacity)
             } else if !failed {
                 RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.quaternary.opacity(0.5))

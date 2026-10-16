@@ -80,9 +80,46 @@ struct NewsItem: Codable, Identifiable, Hashable {
     var itemKind: ItemKind { ItemKind(rawValue: kind ?? "article") ?? .article }
     var important: Bool? = nil      // '꼭 알림' 낱말에 걸림
     var watch: String? = nil        // 걸린 '지켜볼 낱말'(★ 와 겹치면 표시는 ★)
+    // 피드가 준 본문 전문 HTML(FeedParser.body — 1,000자 이상만, 60,000자 상한). 예전 기록·다른 기기 기록에는 없다(nil).
+    // 사이트 HTML 이 앞부분만 줄 때 읽기 창이 대신 쓴다(ArticleService · FeedFullBody).
+    // 저장할 때는 기본으로 빠진다(앱 상태의 최근·나중에 읽기·고인 소식, 스크랩, 백업, Spotlight) — 피드 기록 DB 의 items 줄만
+    // NewsItem.keepFeedBody 를 켠 인코더로 남긴다(Database.itemEncoder). 읽기 창은 없으면 DB 에서 다시 찾는다
+    @FeedBodyText var feedBody: String? = nil
+    static let keepFeedBody = CodingUserInfoKey(rawValue: "dropcap.keepFeedBody")!
 
     var key: String { "\(sourceId)|\(id)" }
     var displayTitle: String { titleKo ?? title }
+}
+
+// NewsItem.feedBody 의 저장 규칙: 인코더 userInfo[keepFeedBody] 가 true 일 때만 글을 쓰고, 그 밖에는 null("feedBody":null).
+// 읽을 때도 같다: 디코더 userInfo[keepFeedBody] 가 true(피드 기록 DB — Database.decoder)일 때만 받고, 가져온 백업·앱 상태 파일에
+// 든 글은 버린다(보안 점검 2 M13: 고친 파일이 실제 기사 링크 아래 가짜 본문을 보여 주지 못하게).
+// 같음·해시는 글 전체를 비교하지 않아도 되게 길이와 앞머리로(목록 비교가 60KB 글을 훑지 않게)
+@propertyWrapper
+struct FeedBodyText: Codable, Hashable {
+    var wrappedValue: String?
+    init(wrappedValue: String?) { self.wrappedValue = wrappedValue }
+    init(from decoder: Decoder) throws {
+        guard decoder.userInfo[NewsItem.keepFeedBody] as? Bool == true else { wrappedValue = nil; return }
+        let c = try decoder.singleValueContainer()
+        wrappedValue = c.decodeNil() ? nil : try c.decode(String.self)
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        if encoder.userInfo[NewsItem.keepFeedBody] as? Bool == true, let v = wrappedValue { try c.encode(v) } else { try c.encodeNil() }
+    }
+    static func == (a: Self, b: Self) -> Bool {
+        a.wrappedValue?.utf8.count == b.wrappedValue?.utf8.count && a.wrappedValue?.prefix(200) == b.wrappedValue?.prefix(200)
+    }
+    func hash(into h: inout Hasher) { h.combine(wrappedValue?.utf8.count); h.combine(wrappedValue?.prefix(200)) }
+}
+
+extension KeyedDecodingContainer {
+    // 칸이 없는 예전 기록도 읽히게(nil)
+    func decode(_ type: FeedBodyText.Type, forKey key: Key) throws -> FeedBodyText {
+        guard contains(key) else { return FeedBodyText(wrappedValue: nil) }
+        return try FeedBodyText(from: superDecoder(forKey: key))
+    }
 }
 
 enum Resources {

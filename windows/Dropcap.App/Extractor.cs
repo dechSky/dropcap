@@ -109,6 +109,13 @@ internal sealed class Extractor(nint parent, DispatcherQueue ui) : IArticleExtra
             finally { c.CoreWebView2.NavigationCompleted -= OnDone; }
             return await Run(c.CoreWebView2);
         }
+        catch (ScriptTimeout)
+        {
+            // 돌던 스크립트는 멈출 수 없으니 이 격리 칸은 닫고, 다음 기사는 새 칸에서(sandboxGate 가 막히지 않게)
+            try { sandbox?.Close(); } catch { }
+            sandbox = null;
+            return null;
+        }
         catch { return null; }
         finally
         {
@@ -117,9 +124,22 @@ internal sealed class Extractor(nint parent, DispatcherQueue ui) : IArticleExtra
         }
     }
 
+    // 스크립트 시간 제한(보안 점검 2 X1): 추출이 멈추는 페이지(겹친 상자 등)는 기다리지 않고 이 기사만 실패로
+    internal static readonly TimeSpan ScriptLimit = TimeSpan.FromSeconds(8);
+    private sealed class ScriptTimeout : Exception;
+
+    private static async Task<string> Execute(CoreWebView2 core, string js)
+    {
+        async Task<string> Go() => await core.ExecuteScriptAsync(js);
+        var run = Go();
+        if (await Task.WhenAny(run, Task.Delay(ScriptLimit)) == run) return await run;
+        _ = run.ContinueWith(t => _ = t.Exception, TaskScheduler.Default);   // 늦게 끝나거나 실패해도 조용히
+        throw new ScriptTimeout();
+    }
+
     private static async Task<Article?> Run(CoreWebView2 core)
     {
-        var raw = await core.ExecuteScriptAsync(readability.Value + "\n;\n" + script.Value);
+        var raw = await Execute(core, readability.Value + "\n;\n" + script.Value);
         // 돌려받는 값은 JSON 으로 감싼 글자(추출 결과 JSON) 또는 null
         if (string.IsNullOrEmpty(raw) || raw == "null") return null;
         var inner = JsonSerializer.Deserialize<string>(raw);
@@ -217,7 +237,7 @@ internal sealed class Extractor(nint parent, DispatcherQueue ui) : IArticleExtra
     {
         try
         {
-            var raw = await core.ExecuteScriptAsync("document.documentElement ? document.documentElement.outerHTML : null");
+            var raw = await Execute(core, "document.documentElement ? document.documentElement.outerHTML : null");
             return raw is null or "null" ? null : JsonSerializer.Deserialize<string>(raw);
         }
         catch { return null; }

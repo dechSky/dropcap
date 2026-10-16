@@ -133,6 +133,27 @@ pub const WALL_PHRASES: &[&str] = &[
     "프리미엄 회원",
 ];
 
+// 길이와 상관없이 맛보기로 보는 강한 문구(STAT+ 맛보기는 구독 권유 줄까지 1,500자를 넘는다 — 맥 Paywall.strongWall)
+static STRONG_WALL: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
+    regex::Regex::new(r"(?i)exclusive (?:to|for) [^.]{0,30}subscribers|read the rest of this (?:story|article)|this article is for (?:paid )?subscribers|unlock this article|구독자 전용|유료 회원 전용|한경 프리미엄9?의 모든 콘텐츠").unwrap()
+});
+pub const PAID_TEASER_CHARS: usize = 1500; // 사이트가 유료라고 적었을 때
+pub const HARD_TEASER_CHARS: usize = 2500; // 하드 유료 출처일 때
+
+// 맛보기(유료벽 뒤 앞부분만)인가 — READER-CUT.md C(맥 Paywall.isTeaser). 지금의 문구 판정에 더해
+// 사이트가 유료라고 적었고(isAccessibleForFree=false · 한경 articlePayment) 본문이 1,500자 미만, 하드 유료 출처인데 2,500자 미만, 끝쪽에 강한 문구
+pub fn is_teaser(blocks: &[Block], paid: Option<bool>, kind: Option<PaywallKind>) -> bool {
+    if looks_blocked(blocks) {
+        return true;
+    }
+    let texts: Vec<&str> = blocks.iter().filter_map(|b| b.original.as_deref().or(b.text.as_deref())).collect();
+    let length: usize = texts.iter().map(|t| t.chars().count()).sum();
+    if STRONG_WALL.is_match(&texts[texts.len().saturating_sub(4)..].join(" ")) {
+        return true;
+    }
+    (paid == Some(true) && length < PAID_TEASER_CHARS) || (kind == Some(PaywallKind::Hard) && length < HARD_TEASER_CHARS)
+}
+
 pub fn looks_blocked(blocks: &[Block]) -> bool {
     let texts: Vec<&str> = blocks.iter().filter_map(|b| b.text.as_deref()).collect();
     let length: usize = texts.iter().map(|t| t.chars().count()).sum();
@@ -142,6 +163,15 @@ pub fn looks_blocked(blocks: &[Block]) -> bool {
     let lower = texts.join(" ").to_lowercase();
     WALL_PHRASES.iter().any(|p| lower.contains(p))
 }
+
+// 읽기 창 문구(맥 PaywallViews TeaserBanner·CutEndNote 그대로 — READER-CUT.md C②·A②)
+pub const TEASER_TITLE: &str = "구독자만 전체를 볼 수 있는 기사예요";
+pub const TEASER_DETAIL: &str = "아래는 사이트가 공개한 앞부분입니다.";
+pub const TEASER_END: &str = "— 여기까지가 공개된 부분입니다";
+pub const TEASER_CONTINUE: &str = "원문에서 이어 읽기";
+pub const PARTIAL_END: &str = "본문 일부만 가져왔을 수 있어요";
+pub const OPEN_ORIGINAL: &str = "원문 열기";
+pub const RELOAD: &str = "다시 받기";
 
 // 같은 소식 중 열리는 보도: 유료가 아니고(배운 막힘 포함), 숨긴 출처가 아니고, 자기 자신이 아닌 것.
 // 출처마다 하나, 공식 발표 > 국내 > 언론, 최신 순, limit 개까지
@@ -183,7 +213,7 @@ pub fn free_reason(has_alternatives: bool, failed: bool, paywalled: bool, kind: 
         return Some("본문을 열지 못했습니다");
     }
     if paywalled {
-        return Some("구독자만 읽을 수 있는 기사입니다");
+        return Some("다른 곳 보도로 전체를 읽을 수 있어요"); // 맛보기 안내는 본문 위 띠(TEASER_*)가 따로 맡는다
     }
     match kind {
         Some(PaywallKind::Hard) => Some("유료 기사입니다"),

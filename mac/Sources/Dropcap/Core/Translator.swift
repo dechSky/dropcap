@@ -88,6 +88,20 @@ actor Translator {
         await translateStreaming(texts, onChunk: nil)
     }
 
+    // 묶음 번역(표 셀): 묶음마다 여러 글을 한 번의 요청에 펴서 보내고 같은 모양으로 돌려준다.
+    // 외국어로 보이지 않는 글(숫자·'20.3%'·이미 한국어)은 보내지 않고 그대로 둔다
+    func translateGroupsReporting(_ groups: [[String]]) async -> (groups: [[String]], engine: Engine) {
+        var flat: [String] = [], at: [(Int, Int)] = []
+        for (g, group) in groups.enumerated() {
+            for (k, t) in group.enumerated() where Self.looksForeign(t) { flat.append(t); at.append((g, k)) }
+        }
+        guard !flat.isEmpty else { return (groups, .none) }
+        let (out, engine) = await translateManyReporting(flat)
+        var result = groups
+        for (n, (g, k)) in at.enumerated() where n < out.count { result[g][k] = out[n] }
+        return (result, engine)
+    }
+
     // 흘려 주기(케이스 5): 끝난 문단부터 onChunk 로 알린다(문단 번호 → 번역). 기기 내 번역은 chunk 문단씩 나눠 보내고
     // 구글은 묶음마다. 읽기 창이 다 끝나기를 기다리지 않고 바꿔 끼울 수 있게(ArticleService 연결은 TRANSLATE.md '인계').
     // 끝나면 전체 결과를 돌려준다(translateManyReporting 과 같음).
@@ -155,20 +169,27 @@ actor Translator {
         }
         let call = googleCall
         var any = false
+        let retries = RetryBudget(Self.retryLimit)
+        var pending = batches.filter { !$0.isEmpty }[...]
         await withTaskGroup(of: [(Int, String)].self) { group in
-            for batch in batches where !batch.isEmpty {
+            // 묶음은 동시에 몇 개까지만(표가 큰 기사 하나가 요청을 한꺼번에 수백 건 보내지 않게 — 보안 점검 2 X3)
+            func next() {
+                guard let batch = pending.popFirst() else { return }
                 group.addTask {
                     let sources = batch.map { texts[$0].replacingOccurrences(of: "\n", with: " ") }
                     if let out = await call(sources.joined(separator: "\n\n")) {
                         let parts = out.components(separatedBy: "\n\n").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
                         if parts.count == batch.count, !Translator.looksShifted(sources, parts) { return Array(zip(batch, parts)) }
                     }
+                    // 문단별 다시 보내기는 번역 한 번에 retryLimit 개까지(넘는 문단은 원문 그대로)
                     var one: [(Int, String)] = []
-                    for i in batch { if let t = await call(texts[i]) { one.append((i, t)) } }
+                    for i in batch where retries.take() { if let t = await call(texts[i]) { one.append((i, t)) } }
                     return one
                 }
             }
-            for await pairs in group {
+            for _ in 0..<Self.parallelBatches { next() }
+            while let pairs = await group.next() {
+                next()
                 var got: [Int: String] = [:]
                 for (i, raw) in pairs {
                     let t = Self.polish(source: texts[i], translated: raw)
@@ -178,6 +199,17 @@ actor Translator {
             }
         }
         return any
+    }
+
+    // 구글 묶음 동시 개수 · 번역 한 번의 문단별 다시 보내기 상한
+    static let parallelBatches = 4
+    static let retryLimit = 40
+
+    final class RetryBudget: @unchecked Sendable {
+        private let lock = NSLock()
+        private var left: Int
+        init(_ n: Int) { left = n }
+        func take() -> Bool { lock.lock(); defer { lock.unlock() }; guard left > 0 else { return false }; left -= 1; return true }
     }
 
     // MARK: 다듬기(번역 결과 후처리)

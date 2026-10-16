@@ -1,0 +1,471 @@
+// 본문 추리기의 앞뒤 손질(맥 ArticleExtractor 추출 스크립트의 2단계 — mac/READER-CUT.md '2단계 결과').
+// 웹 엔진 없이 도는 빠른 길(dom_smoothie)도 맥 스크립트와 같은 순서로:
+//  ① 추리기 전에 본문 밖 상자(기자 소개·댓글 수·공유·단추)·기자 얼굴·각주 번호를 뺀다(pre_clean)
+//  ② Readability 결과를 원문에서 찾아 B: itemprop=articleBody 우선(옆 상자를 고른 경우), A: 같은 꼴 형제 덩어리 모으기,
+//     본문 영역에 우리 글에 없는 긴 문단이 많이 남으면 '일부만'(gather)
+//  ③ 블록으로 바꿀 때 요소 사이 맨 글자·<br><br> 문단, <br> 은 빈칸(walk), 같은 글·사진은 한 번만,
+//     기사 글은 거의 없고 목록만 많으면 '글 거의 없음'(finish)
+use crate::article::{best_src, clean_text, Block, BlockKind};
+use dom_query::{Document, NodeRef, Selection};
+use once_cell::sync::Lazy;
+use regex::Regex;
+use std::collections::HashSet;
+
+pub fn norm(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn len_of(n: &NodeRef) -> usize {
+    norm(&n.text()).chars().count()
+}
+
+fn body_of(doc: &Document) -> Option<NodeRef<'_>> {
+    doc.select("body").nodes().first().cloned()
+}
+
+fn doc_len(html: &str) -> usize {
+    let d = Document::from(html);
+    body_of(&d).map(|b| len_of(&b)).unwrap_or(0)
+}
+
+fn doc_imgs(html: &str) -> usize {
+    Document::from(html).select("img").length()
+}
+
+const SR_ONLY: &str = crate::article::SR_ONLY;
+// 본문 밖 상자(맥 스크립트와 같은 목록)
+const JUNK_BOX: &str = r#".author-mini-bio, [class*="author-bio" i], [class*="authorbio" i], [class*="author-box" i], [class*="authorbox" i], [class*="author-card" i], [class*="about-author" i], [class*="about-the-author" i], [class*="author-info" i], [class*="bio-box" i], [class*="byline-bio" i], [class*="contributor-bio" i], .story-tools, .view-comments, [class*="comment-count" i], [class*="comments-link" i], [class*="share-bar" i], [class*="social-share" i], [class*="hide-caption" i], [class*="toggle-caption" i], button"#;
+const AUTHOR_IMG: &str = r#"a[href*="/author/" i] img, a[href*="/authors/" i] img, a[href*="/people/" i] img, a[href*="/staff/" i] img, a[href*="/reporter/" i] img"#;
+
+static FOOTNOTE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\[?\s*\d{1,3}\s*\]?$").unwrap());
+static BAD: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)related|recommend|share|social|promo|newsletter|comment|sidebar|links|tags?\b|topic|footer|nav|advert|popular|most-?read|author|byline|headline|elsewhere|features|top-?stories").unwrap()
+});
+static AD: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)(^|[\s_-])(ad|ads|adv|advert|advertisement|banner|sponsor)([\s_-]|$)").unwrap());
+
+// ① 추리기 전 손질. 페이지 글의 30% 넘는 상자는 건드리지 않는다(본문을 지우지 않게)
+pub fn pre_clean(doc: &Document) {
+    doc.select(SR_ONLY).remove();
+    let total = body_of(doc).map(|b| len_of(&b)).unwrap_or(0).max(1) as f64;
+    // 지운 상자 안의 상자는 건너뛰고(겹친 상자마다 하위 글을 세면 N²), 센 글이 페이지 글의 8배를 넘으면 그만
+    let mut gone = HashSet::new();
+    let mut budget = total * 8.0 + 10_000.0;
+    for n in doc.select(JUNK_BOX).nodes() {
+        if gone.contains(&n.id) {
+            continue;
+        }
+        let len = len_of(n) as f64;
+        budget -= len;
+        if budget < 0.0 {
+            break;
+        }
+        if len < total * 0.3 {
+            gone.extend(n.descendants_it().map(|d| d.id));
+            n.remove_from_parent();
+        }
+    }
+    doc.select(AUTHOR_IMG).remove(); // 기자 얼굴
+    for n in doc.select("sup").nodes() {
+        if FOOTNOTE.is_match(&norm(&n.text())) {
+            n.remove_from_parent(); // 각주 번호
+        }
+    }
+}
+
+fn attr(n: &NodeRef, a: &str) -> String {
+    n.attr(a).map(|s| s.to_string()).unwrap_or_default()
+}
+fn label(n: &NodeRef) -> String {
+    format!("{} {} {}", attr(n, "class"), attr(n, "data-component"), attr(n, "data-block"))
+}
+fn is_ad(n: &NodeRef) -> bool {
+    AD.is_match(&format!("{} {}", attr(n, "class"), attr(n, "id")))
+}
+fn first_class(n: &NodeRef) -> String {
+    attr(n, "class").split_whitespace().next().unwrap_or("").to_string()
+}
+fn tag(n: &NodeRef) -> String {
+    n.node_name().map(|t| t.to_lowercase()).unwrap_or_default()
+}
+fn alike(a: &NodeRef, b: &NodeRef) -> bool {
+    let fa = first_class(a);
+    tag(a) == tag(b)
+        && ((a.has_attr("data-block") && b.has_attr("data-block"))
+            || (a.has_attr("data-component") && b.has_attr("data-component"))
+            || (!fa.is_empty() && fa == first_class(b)))
+}
+fn long_p<'a>(n: &NodeRef<'a>) -> Vec<NodeRef<'a>> {
+    Selection::from(n.clone()).select("p").nodes().iter().filter(|p| len_of(p) >= 80).cloned().collect()
+}
+fn has_class_inside(n: &NodeRef, class: &str) -> bool {
+    n.descendants_it().any(|d| d.is_element() && d.has_class(class))
+}
+fn contains(outer: &NodeRef, inner: &NodeRef) -> bool {
+    outer.id == inner.id || inner.ancestors_it(None).any(|a| a.id == outer.id)
+}
+// 안쪽에서 class 를 가진 가장 바깥 상자들(문서 순서) — 찾은 상자 안으로는 더 내려가지 않는다
+fn outer_with_class<'a>(root: &NodeRef<'a>, class: &str) -> Vec<NodeRef<'a>> {
+    let mut out = vec![];
+    let mut stack: Vec<NodeRef> = root.element_children().into_iter().rev().collect();
+    while let Some(n) = stack.pop() {
+        if n.has_class(class) {
+            out.push(n);
+        } else {
+            stack.extend(n.element_children().into_iter().rev());
+        }
+    }
+    out
+}
+
+// 파싱 전에 대략 센 겹침 깊이(여는 표지 +1, 센 여는 표지가 남은 이름의 닫는 표지 −1 — 짝 없는 닫는 표지로 줄이지 못하게;
+// 빈 요소·닫는 표지를 흔히 빼는 요소·주석·script 안은 셈하지 않음).
+// html5ever 는 깊게 겹친 div 에서 파싱 자체가 깊이²라(2MB 면 몇 분) 이 값이 MAX_PARSE_DEPTH 를 넘는 페이지는 추리지 않는다
+pub const MAX_PARSE_DEPTH: usize = 20_000;
+pub fn rough_depth(html: &str) -> usize {
+    const SKIP: &[&str] = &["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr", "p", "li", "dt", "dd", "option", "optgroup", "tr", "td", "th", "tbody", "thead", "tfoot", "colgroup", "rb", "rt", "rp", "rtc"];
+    const RAW: &[&str] = &["script", "style", "textarea", "title", "xmp", "noscript", "iframe", "noembed", "noframes"];
+    let b = html.as_bytes();
+    let find = |from: usize, pat: &str| -> Option<usize> {
+        let p = pat.as_bytes();
+        (from..b.len().saturating_sub(p.len() - 1)).find(|&j| b[j..j + p.len()].eq_ignore_ascii_case(p))
+    };
+    let name_at = |i: usize| -> String {
+        let n = b[i..].iter().position(|c| !c.is_ascii_alphanumeric() && *c != b'-').unwrap_or(b.len() - i);
+        String::from_utf8_lossy(&b[i..i + n]).to_ascii_lowercase()
+    };
+    let mut open: std::collections::HashMap<String, usize> = Default::default();
+    let (mut i, mut depth, mut max) = (0usize, 0usize, 0usize);
+    while let Some(off) = b[i..].iter().position(|&c| c == b'<') {
+        i += off + 1;
+        if b[i..].starts_with(b"!--") {
+            i = find(i, "-->").map(|j| j + 3).unwrap_or(b.len());
+            continue;
+        }
+        if b.get(i) == Some(&b'/') {
+            if let Some(c) = open.get_mut(&name_at(i + 1)).filter(|c| **c > 0) {
+                *c -= 1;
+                depth -= 1;
+            }
+            continue;
+        }
+        if !b.get(i).is_some_and(|c| c.is_ascii_alphabetic()) {
+            continue;
+        }
+        let name = name_at(i);
+        let end = b[i..].iter().position(|&c| c == b'>').map(|e| i + e).unwrap_or(b.len());
+        if RAW.contains(&name.as_str()) {
+            i = find(end, &format!("</{name}")).map(|j| j + 2 + name.len()).unwrap_or(b.len());
+            continue;
+        }
+        if SKIP.contains(&name.as_str()) || (end > 0 && b.get(end - 1) == Some(&b'/')) {
+            continue;
+        }
+        *open.entry(name).or_default() += 1;
+        depth += 1;
+        max = max.max(depth);
+    }
+    max
+}
+
+// 겹침 깊이 상한(Chromium HTML 파서와 같은 512). 더 깊은 요소 가운데 안에 요소를 품은 것은 풀어(자식은 그 자리에) 평평하게 —
+// dom_smoothie·walk 의 재귀가 스택(spawn_blocking 2MB)을 넘어 프로세스가 죽지 않게
+pub const MAX_DEPTH: usize = 512;
+pub fn flatten_deep(root: &NodeRef) {
+    let mut stack: Vec<(NodeRef, usize)> = root.element_children().into_iter().map(|c| (c, 1)).collect();
+    while let Some((n, d)) = stack.pop() {
+        let kids = n.element_children();
+        if d > MAX_DEPTH && !kids.is_empty() {
+            for c in n.children_it(false).collect::<Vec<_>>() {
+                n.insert_before(&c);
+            }
+            n.remove_from_parent();
+            stack.extend(kids.into_iter().map(|c| (c, d)));
+        } else {
+            stack.extend(kids.into_iter().map(|c| (c, d + 1)));
+        }
+    }
+}
+
+// 맥 prune: script·style·nav·form·aside·iframe 를 빼고, full 이면 광고·관련·공유·기자 꼴의 하위 요소도 뺀다(뿌리는 그대로).
+// (맥 스크립트에서 문서에 붙지 않은 사본은 isConnected 가 거짓이라 두 번째 단계가 돌지 않는다 — 같은 결과가 되게 full 로 가림)
+fn prune(root: &NodeRef, full: bool) {
+    Selection::from(root.clone()).select("script, style, nav, form, aside, iframe").remove();
+    if !full {
+        return;
+    }
+    let all: Vec<NodeRef> = root.descendants_it().filter(|n| n.is_element()).collect();
+    for n in all {
+        if is_ad(&n) || BAD.is_match(&label(&n)) {
+            n.remove_from_parent();
+        }
+    }
+}
+
+// 요소 하나를 떼어 손질한 HTML(outer: 요소째, 아니면 안쪽만)
+fn pruned_copy(n: &NodeRef, outer: bool) -> String {
+    let d = Document::from(n.html().to_string().as_str());
+    let Some(body) = body_of(&d) else { return String::new() };
+    let Some(root) = body.first_element_child() else { return String::new() };
+    prune(&root, false);
+    if outer {
+        root.html().to_string()
+    } else {
+        root.inner_html().to_string()
+    }
+}
+
+// ② Readability 가 고른 글(content)을 원문(fresh — pre_clean 을 거친 문서)에서 찾아 B·A 를 적용한다. (새 content, 일부만)
+pub fn gather(content: &str, fresh: &Document) -> (String, bool) {
+    let mut content = content.to_string();
+    let mut partial = false;
+    let first: String = {
+        let d = Document::from(content.as_str());
+        let x = d.select("p").nodes().iter().find(|p| len_of(p) >= 40).map(|p| norm(&p.text()).chars().take(40).collect()).unwrap_or_default();
+        x
+    };
+    let ps = fresh.select("p");
+    let anchor = if first.is_empty() { None } else { ps.nodes().iter().find(|p| norm(&p.text()).starts_with(&first)).cloned() };
+    let ips = fresh.select(r#"[itemprop="articleBody"]"#);
+    let ip = ips.nodes().iter().find(|e| len_of(e) >= 300).cloned();
+    // B: itemprop=articleBody 가 따로 있는데 고른 글이 그 밖이면(옆 상자를 고름) 그쪽을 쓴다
+    if let Some(ip) = ip.as_ref().filter(|ip| {
+        !anchor.as_ref().is_some_and(|a| contains(ip, a)) && len_of(ip) as f64 >= doc_len(&content) as f64 * 0.3
+    }) {
+        return (format!("<div>{}</div>", pruned_copy(ip, false)), false);
+    }
+    let Some(anchor) = anchor else { return (content, false) };
+    // A: 본문이 광고·사진을 사이에 둔 여러 덩어리면(같은 꼴의 형제) 모두 순서대로 모은다.
+    // 형제가 같은 꼴이거나, 겉 포장이 달라도 안에 본문 상자와 같은 class 의 상자가 있으면(Ars: div.my-2.5 > … > .post-content) 같은 본문
+    if let Some(core) = anchor.parent() {
+        let core_class = first_class(&core);
+        let cores = |k: &NodeRef<'_>, el: &NodeRef<'_>| -> Vec<String> {
+            if k.id == el.id || alike(k, el) || core_class.is_empty() || k.has_class(&core_class) {
+                vec![pruned_copy(k, true)]
+            } else {
+                // 같은 class 가 겹치면 바깥 상자만(후손은 바깥 사본에 이미 들어 있다 — 겹마다 복사하면 크기·시간이 N²)
+                outer_with_class(k, &core_class).iter().map(|c| pruned_copy(c, true)).collect()
+            }
+        };
+        let mut el = core.clone();
+        let mut depth = 0;
+        while depth < 6 {
+            let Some(parent) = el.parent().filter(|p| p.is_element()) else { break };
+            let kids: Vec<NodeRef> = parent
+                .element_children()
+                .into_iter()
+                .filter(|k| {
+                    k.id == el.id
+                        || ((alike(k, &el) || (!core_class.is_empty() && has_class_inside(k, &core_class))) && !BAD.is_match(&label(k)) && !is_ad(k))
+                })
+                .collect();
+            let texty: Vec<usize> = (0..kids.len()).filter(|&i| !long_p(&kids[i]).is_empty()).collect();
+            if texty.len() >= 2 && texty.iter().any(|&i| kids[i].id == el.id) {
+                let (from, to) = (texty[0], *texty.last().unwrap());
+                let boxed: String = kids[from..=to].iter().flat_map(|k| cores(k, &el)).collect();
+                // 모은 글이 원문 글의 2배를 넘으면(겹친 상자를 거듭 담은 꼴) 모으기를 그만둔다
+                let cap = fresh.select("body").nodes().first().map(|b| b.text().len()).unwrap_or(0) * 2 + 1000;
+                // 글이 15% 넘게 늘거나, 글은 비슷한데(90% 이상) 사진이 더 있으면(BBC: Readability 가 사진 블록을 버림) 모은 쪽
+                let (cur, got) = (doc_len(&content) as f64, doc_len(&boxed) as f64);
+                let more = got >= cur * 1.15;
+                let pics = got >= cur * 0.9 && doc_imgs(&boxed) > doc_imgs(&content);
+                if got as usize <= cap && (more || pics) {
+                    content = format!("<div>{boxed}</div>");
+                }
+                break;
+            }
+            el = parent;
+            depth += 1;
+        }
+    }
+    // 본문 영역(itemprop·article)에 우리 글에 없는 긴 문단이 여럿 남으면 '일부만'
+    let area = ip.or_else(|| anchor.ancestors_it(None).find(|a| a.is_element() && tag(a) == "article"));
+    if let Some(area) = area {
+        let got: String = {
+            let d = Document::from(content.as_str());
+            let x = body_of(&d).map(|b| b.text().chars().filter(|c| !c.is_whitespace()).collect()).unwrap_or_default();
+            x
+        };
+        let ps: Vec<NodeRef> = long_p(&area).into_iter().filter(|p| !BAD.is_match(&label(&p.parent().unwrap_or(p.clone())))).collect();
+        let key = |p: &NodeRef| -> String { norm(&p.text()).chars().filter(|c| !c.is_whitespace()).take(30).collect() };
+        let miss: Vec<&NodeRef> = ps.iter().filter(|p| !got.contains(&key(p))).collect();
+        let all: usize = ps.iter().map(len_of).sum();
+        let gone: usize = miss.iter().map(|p| len_of(p)).sum();
+        partial = miss.len() >= 2 && gone as f64 > all as f64 * 0.25;
+    }
+    (content, partial)
+}
+
+// 손질을 마친 본문 HTML(뿌리 body 아래 전부 — 광고·관련 꼴까지 뺀 것)
+pub fn pruned_body(content: &str) -> String {
+    let d = Document::from(content);
+    let Some(body) = body_of(&d) else { return String::new() };
+    prune(&body, true);
+    body.inner_html().to_string()
+}
+
+// <br> 은 빈칸으로(글이 붙지 않게) 이은 글
+// (재귀 대신 스택 — 깊게 겹친 인라인 요소에서 스택이 넘치지 않게)
+fn tx(n: &NodeRef) -> String {
+    let mut out = String::new();
+    let mut stack = vec![n.clone()];
+    while let Some(c) = stack.pop() {
+        if c.is_text() {
+            out.push_str(&c.text());
+        } else if c.is_element() {
+            if tag(&c) == "br" {
+                out.push(' ');
+            } else {
+                stack.extend(c.children_it(true));
+            }
+        }
+    }
+    out
+}
+
+const INLINE: &[&str] = &["a", "b", "strong", "em", "i", "u", "span", "font", "small", "mark", "abbr", "cite", "code", "time", "q", "s", "del", "ins", "sub", "sup", "label"];
+const BLOCKISH: &[&str] = &["p", "div", "ul", "ol", "li", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "figure", "img", "picture", "table", "pre", "section", "article"];
+
+fn has_block(n: &NodeRef) -> bool {
+    n.descendants_it().any(|d| d.is_element() && BLOCKISH.contains(&tag(&d).as_str()))
+}
+
+// ③ 블록으로(맥 스크립트의 walk): 요소 사이 맨 글자(동아처럼 <br><br> 로 문단을 나눈 본문)도 문단으로 모은다
+pub fn walk(el: &NodeRef, abs: &dyn Fn(Option<String>) -> Option<String>, out: &mut Vec<Block>) {
+    let mut buf = String::new();
+    let mut brs = 0;
+    let flush = |buf: &mut String, brs: &mut i32, out: &mut Vec<Block>| {
+        let t = clean_text(buf);
+        if t.chars().count() > 1 {
+            out.push(Block::text(BlockKind::P, t));
+        }
+        buf.clear();
+        *brs = 0;
+    };
+    let first_img = |n: &NodeRef| -> Option<String> { Selection::from(n.clone()).select("img").nodes().first().and_then(|i| best_src(i, abs)) };
+    for n in el.children_it(false) {
+        if n.is_text() {
+            let s = n.text();
+            if !s.trim().is_empty() {
+                brs = 0;
+            }
+            buf.push_str(&s);
+            continue;
+        }
+        if !n.is_element() {
+            continue;
+        }
+        let tg = tag(&n);
+        if tg == "br" {
+            brs += 1;
+            if brs >= 2 {
+                flush(&mut buf, &mut brs, out);
+            } else {
+                buf.push(' ');
+            }
+            continue;
+        }
+        if INLINE.contains(&tg.as_str()) && !has_block(&n) {
+            buf.push_str(&tx(&n));
+            brs = 0;
+            continue;
+        }
+        flush(&mut buf, &mut brs, out);
+        // 글은 쓰는 태그만 만든다(겹친 div 마다 하위 전체를 훑으면 깊이²)
+        let t = if matches!(tg.as_str(), "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "p" | "li" | "blockquote" | "pre") { clean_text(&tx(&n)) } else { String::new() };
+        match tg.as_str() {
+            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
+                if !t.is_empty() {
+                    out.push(Block::text(BlockKind::H, t))
+                }
+            }
+            "p" => {
+                let src = first_img(&n);
+                if !t.is_empty() {
+                    out.push(Block::text(BlockKind::P, t))
+                }
+                if let Some(s) = src {
+                    out.push(Block::img(s))
+                }
+            }
+            "li" => {
+                if !t.is_empty() {
+                    out.push(Block::text(BlockKind::Li, t))
+                }
+            }
+            "blockquote" => {
+                if !t.is_empty() {
+                    out.push(Block::text(BlockKind::Quote, t))
+                }
+            }
+            "pre" => {
+                if !t.is_empty() {
+                    out.push(Block::text(BlockKind::Pre, n.text().to_string()))
+                }
+            }
+            "img" => {
+                if let Some(s) = best_src(&n, abs) {
+                    out.push(Block::img(s))
+                }
+            }
+            "picture" => {
+                if let Some(s) = first_img(&n) {
+                    out.push(Block::img(s))
+                }
+            }
+            "figure" => {
+                if let Some(s) = first_img(&n) {
+                    out.push(Block::img(s))
+                }
+                let caps = Selection::from(n.clone()).select("figcaption");
+                if let Some(cap) = caps.nodes().first() {
+                    let c = clean_text(&tx(cap));
+                    if !c.is_empty() {
+                        out.push(Block::text(BlockKind::Cap, c))
+                    }
+                }
+            }
+            _ => walk(&n, abs, out),
+        }
+    }
+    flush(&mut buf, &mut brs, out);
+}
+
+// 같은 글(30자 이상)·같은 사진이 또 나오면 뺀다(화면 크기별로 기사를 여러 벌 싣는 Politico, 부제·사진 설명 중복)
+pub fn dedupe(blocks: Vec<Block>) -> Vec<Block> {
+    let mut seen = HashSet::new();
+    blocks
+        .into_iter()
+        .filter(|b| {
+            let key = if b.kind == BlockKind::Img {
+                Some(format!("img {}", b.src.as_deref().unwrap_or("")))
+            } else {
+                let t = b.text.as_deref().unwrap_or("");
+                (t.chars().count() >= 30).then(|| format!("{:?} {t}", b.kind))
+            };
+            key.map(|k| seen.insert(k)).unwrap_or(true)
+        })
+        .collect()
+}
+
+// 기사 글은 거의 없고 목록(메뉴·많이 본 기사)만 많으면 본문이 아니다(사진뿐인 속보 등) — '글 거의 없음'
+pub fn only_lists(blocks: &[Block]) -> bool {
+    let sum = |kinds: &[BlockKind]| -> usize { blocks.iter().filter(|b| kinds.contains(&b.kind)).map(|b| b.text.as_deref().map(|t| t.chars().count()).unwrap_or(0)).sum() };
+    let prose = sum(&[BlockKind::P, BlockKind::Quote, BlockKind::H]);
+    let listed = sum(&[BlockKind::Li]);
+    prose < 150 && listed > prose * 2
+}
+
+// 사이트가 유료 기사라고 적었나: ld+json "isAccessibleForFree": false · 한경 articlePayment = "Y"(앞 1MB만 봄, 맥 paidFlag)
+pub fn paid_flag(html: &str) -> Option<bool> {
+    static FREE: Lazy<Regex> = Lazy::new(|| Regex::new(r#""isAccessibleForFree"\s*:\s*"?(true|false|True|False)"#).unwrap());
+    static PAY: Lazy<Regex> = Lazy::new(|| Regex::new(r#"articlePayment\s*=\s*["']Y["']"#).unwrap());
+    let mut end = html.len().min(1_000_000);
+    while !html.is_char_boundary(end) {
+        end -= 1;
+    }
+    let h = &html[..end];
+    if let Some(c) = FREE.captures(h) {
+        return Some(c[1].eq_ignore_ascii_case("false"));
+    }
+    PAY.is_match(h).then_some(true)
+}

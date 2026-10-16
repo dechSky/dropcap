@@ -21,6 +21,8 @@ public sealed record Article
     public string? Byline { get; init; }
     public string? SiteName { get; init; }
     public List<Block> Blocks { get; init; } = new();
+    public bool? Paid { get; init; }      // 사이트가 유료 기사라고 적음(ld+json isAccessibleForFree=false · 한경 articlePayment="Y")
+    public bool? Partial { get; init; }   // 본문 일부만 가져왔을 수 있음(본문 영역에 우리 글에 없는 긴 문단이 남음)
 
     // 본문으로 볼 만한가: 글 블록 1개 이상, 100자 이상
     // 짧은 글(소개글·단신)도 받는다(예전 '2문단·280자' 기준은 GeekNews 같은 짧은 글을 버렸다 — 맥과 같음)
@@ -42,6 +44,8 @@ public sealed record PreparedArticle
     public bool Summarizing { get; init; }
     public string Fallback { get; init; } = "";          // 본문을 못 추렸을 때 보여 줄 요약 번역
     public bool? Paywalled { get; init; }                 // 맛보기만 나오고 구독을 권함(유료벽 뒤, G-14)
+    public bool? Partial { get; init; }                   // 본문 일부만 가져왔을 수 있음(READER-CUT A②)
+    public DateTimeOffset? SavedAt { get; init; }         // 저장한 때(맛보기·일부만은 6시간 뒤 다시 받음)
 }
 
 // 본문 추출(Readability.js)을 실제로 돌리는 쪽 — 윈도우 앱은 WebView2 로 구현한다
@@ -74,7 +78,8 @@ public static class ArticleExtraction
             if (await fetch(link) is { } got)
             {
                 var html = SafeHttp.Decode(got.Data, got.Encoding ?? SniffCharset(got.Data));
-                if (await x.FromHtmlAsync(html, url) is { LooksLikeArticle: true } fast) return fast;
+                // 유료 표시는 추출 스크립트가 읽지만, 못 읽었으면 받은 HTML 에서 직접(맥과 같음)
+                if (await x.FromHtmlAsync(html, url) is { LooksLikeArticle: true } fast) return fast.Paid is null ? fast with { Paid = PaidFlag(html) } : fast;
                 richPage = VisibleTextLength(html) > 600; // 스크립트로 그리는 빈 껍데기는 보이는 글이 거의 없다
             }
         }
@@ -97,6 +102,16 @@ public static class ArticleExtraction
     public static bool IsBlockedHost(string host) { lock (blockedHosts) return blockedHosts.Contains(host.ToLowerInvariant()); }
 
     public static bool IsBlockedLink(string link) => Uri.TryCreate(link, UriKind.Absolute, out var u) && IsBlockedHost(u.Host);
+
+    // 사이트가 유료 기사라고 적었나: ld+json "isAccessibleForFree": false · 한경 articlePayment = "Y"(앞 1MB만 봄 — 맥 paidFlag)
+    public static bool? PaidFlag(string html)
+    {
+        var h = html.Length > 1_000_000 ? html[..1_000_000] : html;
+        var m = Regex.Match(h, @"""isAccessibleForFree""\s*:\s*""?(true|false|True|False)");
+        if (m.Success) return m.Groups[1].Value.Equals("false", StringComparison.OrdinalIgnoreCase);
+        if (Regex.IsMatch(h, @"articlePayment\s*=\s*[""']Y[""']")) return true;
+        return null;
+    }
 
     // 스크립트·스타일을 뺀 보이는 글자 수(대략)
     public static int VisibleTextLength(string html)
@@ -189,15 +204,37 @@ public sealed class ArticleService
 
     public void StopObserving(string link, Guid id) { lock (gate) if (listeners.TryGetValue(link, out var m)) m.Remove(id); }
 
+    // 출처의 유료 종류(맛보기 판정용). 앱에서는 PaywallBook — 시험은 바꿔 끼움(DB 를 만들지 않게 이미 만든 것만 봄)
+    public Func<NewsItem, PaywallKind?> KindOf { get; set; } = item => PaywallBook.Loaded?.Kind(item);
+
+    // 맛보기·일부만 기사는 6시간 뒤 다시 받는다(사이트가 풀거나 앱이 고쳐지면 다시 열 때 온전히). 그 밖은 그대로 오래 둔다(맥 isStale)
+    public static readonly TimeSpan CutCacheLife = TimeSpan.FromHours(6);
+    public static bool IsStale(PreparedArticle a) => IsStale(a, DateTimeOffset.UtcNow);
+    public static bool IsStale(PreparedArticle a, DateTimeOffset now)
+    {
+        if (a.Paywalled != true && a.Partial != true) return false;
+        // 미래 시각(시계 틀어짐·고친 파일)도 만료로 — 그대로 두면 영영 다시 받지 않는다(보안 점검 2 W10)
+        return a.SavedAt is not { } t || now - t > CutCacheLife || t > now + TimeSpan.FromMinutes(5);
+    }
+
+    // 읽기 창 '다시 받기': 기억·디스크의 것을 지우고 처음부터 다시 추린다
+    public Task<PreparedArticle> ReloadAsync(NewsItem item)
+    {
+        lock (gate) memory.Remove(item.Link);
+        try { File.Delete(FileFor(item.Link)); } catch { }
+        return PrepareAsync(item);
+    }
+
     public PreparedArticle? Cached(string link)
     {
-        lock (gate) if (memory.TryGetValue(link, out var m) && m.Stage == Stage.Done) return m; // 실패한 기사는 다음에 다시 시도
+        lock (gate) if (memory.TryGetValue(link, out var m) && m.Stage == Stage.Done && !IsStale(m)) return m; // 실패한 기사는 다음에 다시 시도
         var f = FileFor(link);
         try
         {
             if (!File.Exists(f)) return null;
             var a = Json.Decode<PreparedArticle>(File.ReadAllText(f));
             if (a is null || a.Stage != Stage.Done) return null;
+            if (IsStale(a)) { lock (gate) memory.Remove(link); File.Delete(f); return null; }
             lock (gate) memory[link] = a;
             File.SetLastWriteTimeUtc(f, DateTime.UtcNow); // 최근에 쓴 것을 오래 남김
             return a;
@@ -278,8 +315,13 @@ public sealed class ArticleService
             return a;
         }
         var artTitle = StripSiteName(FeedParser.NonEmpty(art.Title) ?? item.Title, item.SourceName, item.Title);
+        // 맛보기 판정(끝의 구독 권유 문구)을 본 뒤에 군더더기를 뺀다 — 번역 전에 빼서 번역 시간도 줄임(READER-CUT 2단계)
+        PaywallKind? kind = null;
+        try { kind = KindOf(item); } catch { }
+        var teaser = Paywall.IsTeaser(art.Blocks, art.Paid, kind);
+        art = art with { Blocks = BodyCleanup.DropJunk(art.Blocks) };
         var blocks = art.Blocks.ToList();
-        a = a with { OriginalTitle = artTitle, Blocks = blocks, Paywalled = Paywall.LooksBlocked(blocks) ? true : null };
+        a = a with { OriginalTitle = artTitle, Blocks = blocks, Paywalled = teaser ? true : null, Partial = art.Partial == true ? true : null };
         if (interactive) Record(item, failed: false, blocked: a.Paywalled == true);
         var texts = blocks.Select(b => b.Text).OfType<string>().ToList();
         var foreign = Translator.LooksForeign(FeedParser.Prefix(string.Join(" ", texts), 2000));
@@ -322,6 +364,7 @@ public sealed class ArticleService
             a = a with { Summary = await Summarizer.SummarizeAsync(artTitle, texts), Summarizing = false };
             Emit(item.Link, a);
         }
+        a = a with { SavedAt = DateTimeOffset.UtcNow };
         Save(item.Link, a);
         return a;
     }

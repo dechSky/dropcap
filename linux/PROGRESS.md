@@ -163,3 +163,23 @@
 - FEATURES '리' 칸: M-05 · M-08 · M-15 · M-16 · P-02.
 - 워크트리: `wt/linux-native` 는 main 에 이미 병합돼 있어 지우고 다시 만드는 대신 main 으로 fast-forward(같은 결과, 빌드 캐시 유지).
 
+
+## 2026-10-15 — 맥 읽기 창·번역 2단계 이식(linux-reader-port)
+
+근거: mac/READER-CUT.md '2단계 결과'·mac/TRANSLATE.md '2단계 반영', 맥 9c8acc7·f5c8d57·92d7373·2ca294c. 사용자 결정: 세 판 맞추기.
+
+- 본문 추출(새 `reader_extract.rs` — 웹 엔진 없는 Rust 판이 맥 추출 스크립트와 같은 순서, `extract_html`):
+  추리기 전 기자 소개·댓글 수·공유·단추 상자(페이지 글 30% 미만만)·기자 얼굴·각주 sup 번호 빼기 → Readability(500자 → 100자 → 본문 영역) →
+  고른 글의 첫 문단을 원문에서 찾아 B: `itemprop=articleBody` 가 따로 있고 그 밖을 골랐으면 articleBody(매경), A: 같은 꼴 형제 덩어리 모으기(글 15%↑ 또는 글 90%↑+사진 더 많음 — Ars·BBC), 본문 영역에 빠진 긴 문단이 2개·25% 넘으면 `partial` →
+  광고·관련·기자 꼴 빼기 → 블록(요소 사이 맨 글자·`<br><br>` 문단, `<br>` 빈칸, hide/toggle caption 글 빼기) → 같은 글(30자↑)·사진 한 번만 → 글 150자 미만에 목록이 2배 넘으면 '글 거의 없음'(연합 속보).
+  WebKit 빠른·느린 길 스크립트(`reader_webkit.rs SCRIPT`)는 맥 스크립트를 글자째 옮김. 유료 표시 `paid_flag`(ld+json isAccessibleForFree·한경 articlePayment)는 받은 HTML 에서 직접.
+- 유료 맛보기: `paywall::is_teaser`(문구 + paid·1,500자 미만 + 하드·2,500자 미만 + 끝 4블록 강한 문구, 한경 프리미엄9 포함). 출처 유료 표시는 `ArticleService::set_paywall_kind`(PaywallBook). 읽기 창 본문 위 맛보기 띠·본문 끝줄(맥 문구 그대로 — `paywall::TEASER_*`), 일부만 끝줄, 무료 보도 상자 제목 '다른 곳 보도로 전체를 읽을 수 있어요'. 맛보기·일부만은 `savedAt` 6시간 뒤 다시 받음(예전 기록도) + 도구 막대 ⟳ '다시 받기'(`forget_cached`).
+- 군더더기: `body_cleanup::junk`·`drop_junk`(맥 정규식·안전장치 그대로), 맛보기 판정 뒤·번역 전에 뺌, `analyze` 도 군더더기 포함(예전 저장 기사). 작은 그림 480px 미만은 본래 폭까지만(`image_fit`, ContentFit::ScaleDown).
+- 문단별 원문 펼치기: 번역 문단에 마우스를 올리면 왼쪽 여백 '원문' 단추(펼친 동안 늘), 오른쪽 클릭 '이 문단 원문 펼치기/접기', 번역문 아래 작게. J/K 로 바꾸면 접힘.
+- 번역 2단계: 글자 없는·주소만 블록 안 보냄(`looks_foreign`), 결과 다듬기 `polish`(제목 끝 마침표·이름 되돌림 표 11개), 묶음 밀림 대조 `looks_shifted` 뒤 문단별 재요청, 방식 바뀌면 캐시 비움(이미 있음). 기기 내 흘려 주기는 해당 없음(T-05 ⊘). 시험용 `Translator::with_google`.
+- 시험: 새 `reader_cut_tests` 15(맥 ReaderCutTests 꼴 — 맥 Fixtures/reader-cut 4종 그대로) · `translate_phase2_tests` 8.
+  - 고치기 전(같은 추출 시험 8개를 고치기 전 코드로): 5개 실패 — 실제 꼴(매경 끝 문단 없음)·articleBody 우선·연합 속보(메뉴가 본문)·Politico 세 벌·각주/br/사진 단추. 덩어리 모으기 2개·동아 맨 글자는 Rust Readability 가 이미 통과. 나머지(맛보기·군더더기·캐시·작은 그림·번역 규칙)는 함수가 없어 컴파일 실패(옛 `looks_foreign("16")` 은 참). 고친 뒤 모두 통과.
+  - 맥과 다른 점 하나: 매경 고정 HTML 에서 맥 Readability.js 는 본문+바로 뒤 'AI 종목 이야기' 상자를 함께 고르고(맥 시험의 BODYMID 표지가 상자 글에 붙어 있음), Rust Readability 는 상자만 골라 articleBody 규칙이 본문으로 바꾼다 → 리눅스 Rust 길은 상자 글이 섞이지 않음(시험이 본문 끝 문단·상자 없음을 봄). WebKit 길은 맥과 같음.
+  - 기존 시험 고침: `fast_path_extracts_without_scripts` 의 같은 글 세 문단 → 글을 다르게(같은 글은 한 번만 규칙), `free_reason` 문구.
+  - `cargo test --workspace` 전체 통과(288 · 1 무시), 리눅스 전 기능 형 검사 통과(경고 없음). 앱 창은 띄우지 않음 — 띠·끝줄·원문 단추 모양은 리눅스에서 확인 필요.
+- FEATURES '리' 칸: R-01 · R-03 · R-05 · R-15 · R-18 · R-21 · G-14 · G-15 · T-01 · T-02 · T-03.

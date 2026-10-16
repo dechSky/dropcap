@@ -31,12 +31,17 @@ enum ReadSweep {
         var blocks = 0
         var images = 0
         var paywalled = false
+        var partial = false         // 본문 일부만 가져왔을 수 있음(READER-CUT.md A)
         var reason = ""
         var cover: String?          // 읽기 창이 쓸 표지 주소
         var coverFrom = ""          // feed · og · none
         var coverSize: String?      // 가로×세로(픽셀)
         var coverNote: String?      // 기자 사진·로고로 보이는 까닭
+        var full: FullCheck?        // 본문 완전성(DROPCAP_TEST_READSWEEP_FULL · ReadFull.swift)
     }
+
+    @MainActor static var fullMode = false
+    @MainActor static var dumpDir: String?
 
     // 실패(또는 느림) 까닭을 사람이 읽는 말로
     static func reason(ok: Bool, trace t: ExtractTrace, paywalled: Bool) -> String {
@@ -96,6 +101,8 @@ enum ReadSweep {
         guard let dir = env["DROPCAP_TEST_READSWEEP"] else { return }
         let label = env["DROPCAP_TEST_READSWEEP_LABEL"] ?? "before"
         let per = Int(env["DROPCAP_TEST_READSWEEP_N"] ?? "2") ?? 2
+        fullMode = env["DROPCAP_TEST_READSWEEP_FULL"] != nil
+        dumpDir = env["DROPCAP_TEST_READSWEEP_DUMP"]
         let only = env["DROPCAP_TEST_READSWEEP_ONLY"].map { Set($0.split(separator: ",").map(String.init)) }
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(2))
@@ -110,8 +117,23 @@ enum ReadSweep {
             if let only { targets = targets.filter { only.contains($0.sourceId) } }
             NSLog("[읽기 점검] 기사 %d건 시작%@", targets.count, env["DROPCAP_TEST_READSWEEP_REPLAY"] == nil ? "" : " (앞 점검과 같은 기사)")
             var rows: [Row] = []
+            var lastHit: [String: Date] = [:]
+            if fullMode { // 원문을 한 번 더 띄우므로 같은 사이트를 잇달아 치지 않게: 출처마다 첫 기사들을 먼저, 그다음 둘째 기사들
+                var nth: [String: Int] = [:]
+                let ranked = targets.enumerated().map { e -> (Int, Int, Target) in
+                    let k = nth[e.element.sourceId, default: 0]; nth[e.element.sourceId] = k + 1
+                    return (k, e.offset, e.element)
+                }
+                targets = ranked.sorted { ($0.0, $0.1) < ($1.0, $1.1) }.map(\.2)
+            }
             for (i, t) in targets.enumerated() {
+                let host = URL(string: t.link)?.host ?? ""
+                if fullMode, let last = lastHit[host] { // 같은 사이트는 20초 띄움(NYT 확인 문제)
+                    let wait = 20 - Date().timeIntervalSince(last)
+                    if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
+                }
                 let row = await check(t)
+                lastHit[host] = Date()
                 rows.append(row)
                 markShared(&rows)
                 NSLog("[읽기 점검] %d/%d %@ %@ %.1f초 %@ %@", i + 1, targets.count, row.ok ? "ok" : "no", t.sourceName, row.seconds, row.trace.path, row.reason)
@@ -171,7 +193,14 @@ enum ReadSweep {
             row.chars = art.blocks.compactMap(\.text).joined().count
             row.blocks = art.blocks.filter { $0.text != nil }.count
             row.images = art.blocks.filter { $0.type == .img }.count
-            row.paywalled = Paywall.looksBlocked(art.blocks)
+            row.paywalled = Paywall.isTeaser(art.blocks, paid: art.paid, kind: Paywall.kind(sourceId: t.sourceId, link: t.link), ldBody: art.ldBody) // 읽기 창과 같은 판정
+            row.partial = art.partial == true
+        }
+        if fullMode, let u = URL(string: t.link) { row.full = await ReadFull().measure(u, ours: art?.blocks ?? []) }
+        // [로컬 진단] 추린 블록을 결과 폴더에 그대로 남김(기사 글이 들어가므로 저장소에 넣지 않는다)
+        if let dir = dumpDir, let art, let d = try? JSONEncoder().encode(art.blocks) {
+            try? d.write(to: URL(fileURLWithPath: dir).appendingPathComponent("blocks-\(abs(t.link.hashValue % 100000)).json"))
+            NSLog("[읽기 점검] 블록 %@ → blocks-%d.json", t.link, abs(t.link.hashValue % 100000))
         }
         row.reason = reason(ok: row.ok, trace: row.trace, paywalled: row.paywalled)
         // 읽기 창의 표지 찾기와 같은 순서(ReaderModel.findCover): 피드 사진 → 작거나 못 받으면 기사 머리 대표 사진(og:image)

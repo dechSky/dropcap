@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace Dropcap.Core;
 
@@ -47,13 +48,95 @@ public sealed class Translator
         cache[source] = translated;
     }
 
-    // T-01: 한글 비율 20% 미만이면 번역 대상
+    // T-01: 한글 비율 20% 미만이면 번역 대상. 글자가 하나도 없거나(숫자·기호뿐) 주소 하나뿐인 글은 번역할 것이 없다(맥 TRANSLATE.md 케이스 8)
     public static bool LooksForeign(string text)
     {
         var s = text.Where(c => !char.IsWhiteSpace(c)).ToArray();
-        if (s.Length == 0) return false;
+        if (s.Length == 0 || !s.Any(char.IsLetter)) return false;
+        if (s.Length == text.Trim().Length && UrlOnly.IsMatch(text.Trim())) return false;
         var hangul = s.Count(c => c >= '가' && c <= '힣');
         return (double)hangul / s.Length < 0.2;
+    }
+
+    private static readonly Regex UrlOnly = new(@"^(https?://|www\.)\S+$", RegexOptions.IgnoreCase);
+
+    // MARK: 다듬기(번역 결과 후처리 — 맥 Translator.polish 와 같은 규칙)
+
+    // 원문 끝에 마침표가 없으면(제목·소제목·목록) 번역 끝 마침표를 뗀다(케이스 3),
+    // 원문에 영문으로 있는 이름을 엔진이 한글로 음역·직역했으면 영문으로 되돌린다(케이스 2)
+    public static string Polish(string source, string translated)
+    {
+        var t = translated;
+        var src = source.Trim();
+        if (src.Length > 0 && !".。!?！？…:;\"”’)".Contains(src[^1]))
+        {
+            var tt = t.Trim();
+            if (tt.EndsWith('.') && !tt.EndsWith("..")) t = tt[..^1];
+        }
+        return RestoreNames(source, t);
+    }
+
+    // 엔진이 잘 음역·직역하는 이름(AI 뉴스에 자주 나오는 것). 긴 꼴부터 바꾼다. 원문에 그 영문 이름이 낱말로 있을 때만.
+    // PersonClash: 사람 이름 앞부분이 되기도 하는 이름 — 원문에서 그 이름 바로 뒤에 다른 대문자 낱말(제품 이름 아님)이 오면 건드리지 않는다
+    public sealed record NameRule(string Latin, string[] Variants, bool PersonClash = false);
+    public static readonly NameRule[] NameRules =
+    [
+        new("Claude Code", ["클로드 코드"]),
+        new("Claude Corps", ["클로드 군단", "클로드 코어스", "클로드 코프스", "클로드 코퍼스"]),
+        new("Claude", ["클로드", "클도"], PersonClash: true),
+        new("Anthropic", ["앤트로픽", "앤스로픽", "안트로픽", "인류학적"]),
+        new("OpenAI", ["오픈AI", "오픈에이아이", "오픈 AI"]),
+        new("ChatGPT", ["챗GPT", "챗지피티"]),
+        new("Gemini", ["제미니", "제미나이", "쌍둥이자리"]),
+        new("DeepMind", ["딥마인드"]),
+        new("Hugging Face", ["포옹하는 얼굴", "허깅 페이스", "허깅페이스"]),
+        new("Copilot", ["부조종사", "코파일럿"]),
+        new("Perplexity", ["당혹감", "퍼플렉시티"]),
+    ];
+    public static readonly HashSet<string> ProductWords = ["Code", "Corps", "Opus", "Sonnet", "Haiku", "Fable", "Mythos", "Design", "Science",
+                                                           "Security", "Cowork", "Enterprise", "Pro", "Max", "Team", "Ultra", "Flash", "Nano"];
+
+    public static string RestoreNames(string source, string translated)
+    {
+        var t = translated;
+        foreach (var r in NameRules)
+        {
+            if (!r.Variants.Any(t.Contains)) continue;
+            if (!Regex.IsMatch(source, "(?<![A-Za-z])" + Regex.Escape(r.Latin) + "(?![A-Za-z])")) continue;
+            if (r.PersonClash && FollowedByOtherName(source, r.Latin)) continue;
+            foreach (var v in r.Variants.OrderByDescending(v => v.Length)) t = t.Replace(v, r.Latin);
+        }
+        return t;
+    }
+
+    // 원문에서 name 바로 뒤에 제품 낱말이 아닌 대문자 낱말이 오는가(예: 사람 이름 'Claude Monet')
+    public static bool FollowedByOtherName(string source, string name) =>
+        Regex.Matches(source, "(?<![A-Za-z])" + Regex.Escape(name) + " ([A-Z][a-z]+)").Any(m => !ProductWords.Contains(m.Groups[1].Value));
+
+    // 묶음 대조(케이스 10): 문단 수는 맞아도 결과가 밀렸는지. 원문 문단에만 있는(앞뒤 원문에는 없는) 영문 낱말·숫자 —
+    // 번역에도 그대로 남는 것 — 가 제 짝 번역보다 이웃 짝 번역에 더 많이 보이는 문단이 하나라도 있으면 밀린 것으로 본다.
+    // 틀리게 의심하면 그 묶음을 문단별로 다시 받을 뿐이다(맥 점검 표본 85묶음: 오탐 1, 한 칸 밀림 84/85).
+    public static HashSet<string> Anchors(string s) =>
+        Regex.Matches(s, "[A-Za-z][A-Za-z0-9]{2,}|[0-9]{2,}").Select(m => m.Value.ToLowerInvariant()).ToHashSet();
+
+    public static bool LooksShifted(IReadOnlyList<string> sources, IReadOnlyList<string> outputs)
+    {
+        if (sources.Count != outputs.Count || sources.Count < 2) return false;
+        var src = sources.Select(Anchors).ToList();
+        var o = outputs.Select(Anchors).ToList();
+        var n = sources.Count;
+        for (var k = 0; k < n; k++)
+        {
+            var own = new HashSet<string>(src[k]);
+            if (k > 0) own.ExceptWith(src[k - 1]);
+            if (k + 1 < n) own.ExceptWith(src[k + 1]);
+            if (own.Count == 0) continue;
+            var mine = own.Count(o[k].Contains);
+            var next = k + 1 < n ? own.Count(o[k + 1].Contains) : 0;
+            var prev = k > 0 ? own.Count(o[k - 1].Contains) : 0;
+            if (Math.Max(next, prev) > mine) return true;
+        }
+        return false;
     }
 
     // 한국어 제목을 영어로(같은 소식 비교용). 실패하면 null.
@@ -103,23 +186,41 @@ public sealed class Translator
             batches[^1].Add(i);
             size += n + 2;
         }
+        // 묶음은 동시에 ParallelBatches 개까지, 문단별 다시 보내기는 번역 한 번에 RetryLimit 개까지(넘는 문단은 원문 그대로) —
+        // 표가 큰 기사 하나가 요청을 한꺼번에 수백 건 보내지 않게(보안 점검 2 X3)
+        using var gate = new SemaphoreSlim(ParallelBatches);
+        var retries = RetryLimit;
         var outs = await Task.WhenAll(batches.Where(b => b.Count > 0).Select(async batch =>
         {
-            var joined = string.Join("\n\n", batch.Select(i => texts[i].Replace("\n", " ")));
-            if (await Google(joined, "ko") is { } got)
+            await gate.WaitAsync();
+            try
             {
-                var parts = got.Split("\n\n").Select(p => p.Trim()).Where(p => p.Length > 0).ToList();
-                if (parts.Count == batch.Count) return batch.Zip(parts).ToList();
+                var sources = batch.Select(i => texts[i].Replace("\n", " ")).ToList();
+                if (await Google(string.Join("\n\n", sources), "ko") is { } got)
+                {
+                    var parts = got.Split("\n\n").Select(p => p.Trim()).Where(p => p.Length > 0).ToList();
+                    // 수는 맞아도 앞뒤 문단과 엇갈려 보이면(케이스 10) 문단별로 다시
+                    if (parts.Count == batch.Count && !LooksShifted(sources, parts)) return batch.Zip(parts).ToList();
+                }
+                var one = new List<(int, string)>();
+                foreach (var i in batch)
+                {
+                    if (Interlocked.Decrement(ref retries) < 0) break;
+                    if (await Google(texts[i], "ko") is { } t) one.Add((i, t));
+                }
+                return one;
             }
-            var one = new List<(int, string)>();
-            foreach (var i in batch) if (await Google(texts[i], "ko") is { } t) one.Add((i, t));
-            return one;
+            finally { gate.Release(); }
         }));
         foreach (var pairs in outs)
-            foreach (var (i, t) in pairs) { result[i] = t; Remember(texts[i], t); }
+            foreach (var (i, raw) in pairs) { var t = Polish(texts[i], raw); result[i] = t; Remember(texts[i], t); }
         LastEngine = EngineGoogle;
         return (result, true);
     }
+
+    // 구글 묶음 동시 개수 · 번역 한 번의 문단별 다시 보내기 상한
+    public const int ParallelBatches = 4;
+    public const int RetryLimit = 40;
 
     // 한 번에 보낼 수 있는 길이(구글 공개 엔드포인트). 이보다 긴 문단은 문장 단위로 나눠 보내고 이어 붙인다(T-08 · A-25: 예전엔 뒤가 잘렸다)
     public const int RequestLimit = 4500;

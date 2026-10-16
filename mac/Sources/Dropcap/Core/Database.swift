@@ -137,13 +137,17 @@ final class Database: @unchecked Sendable {
     }
 
     func upsert(_ item: NewsItem, cluster: String?, firstSeen: Date = Date()) {
-        guard let json = try? Self.encoder.encode(item) else { return }
+        guard let json = try? Self.itemEncoder.encode(item) else { return }
+        // 피드 본문이 빠진 사본(앱 상태·스크랩에서 온 것)으로 다시 넣어도 DB 에 둔 피드 본문은 지우지 않는다(ON CONFLICT 의 CASE)
         // 논문 피드(arXiv)는 날짜가 발표일 자정이라, 지면에는 받은 때를 기준으로 싣는다
         let when = item.itemKind == .paper ? firstSeen : item.date
         queue.sync {
             run("""
             INSERT INTO items(key,json,date,first_seen,category,source,tier,cluster,image) VALUES(?,?,?,?,?,?,?,?,?)
-            ON CONFLICT(key) DO UPDATE SET json=excluded.json, date=COALESCE(items.date, excluded.date),
+            ON CONFLICT(key) DO UPDATE SET
+              json=CASE WHEN json_extract(excluded.json,'$.feedBody') IS NULL AND json_extract(items.json,'$.feedBody') IS NOT NULL
+                        THEN json_set(excluded.json,'$.feedBody',json_extract(items.json,'$.feedBody')) ELSE excluded.json END,
+              date=COALESCE(items.date, excluded.date),
               category=excluded.category, cluster=COALESCE(excluded.cluster, items.cluster), image=COALESCE(excluded.image, items.image)
             """, [.text(item.key), .text(String(decoding: json, as: UTF8.self)), .real(when?.timeIntervalSince1970),
                   .real(firstSeen.timeIntervalSince1970), .text(item.category.rawValue), .text(item.sourceId), .text(item.tier),
@@ -470,5 +474,8 @@ final class Database: @unchecked Sendable {
     }
 
     static let encoder: JSONEncoder = { let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601; return e }()
-    static let decoder: JSONDecoder = { let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601; return d }()
+    // items 줄만: 피드 본문 전문(NewsItem.feedBody)까지 남긴다 — 다른 저장(스크랩 등)은 빼는 기본 인코더
+    static let itemEncoder: JSONEncoder = { let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601; e.userInfo[NewsItem.keepFeedBody] = true; return e }()
+    // 피드 본문 전문(feedBody)도 읽는다(items 줄에만 있음)
+    static let decoder: JSONDecoder = { let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601; d.userInfo[NewsItem.keepFeedBody] = true; return d }()
 }

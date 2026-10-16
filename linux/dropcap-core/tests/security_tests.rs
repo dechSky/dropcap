@@ -146,3 +146,76 @@ fn ollama_remote_models_are_skipped() {
     assert_eq!(dropcap_core::summarizer::pick_local(&tags, None).as_deref(), Some("qwen2.5:7b"));
     assert_eq!(dropcap_core::summarizer::pick_local(&tags, Some("mystery")), None);
 }
+
+// ── 보안 점검 2(2026-10-15) ──
+use dropcap_core::article::extract_html;
+use dropcap_core::reader_extract::{gather, pre_clean, rough_depth, MAX_PARSE_DEPTH};
+use std::time::{Duration, Instant};
+
+const LONG: &str = "This is a fairly long paragraph of article text that should exceed eighty characters easily, yes indeed.";
+fn long_ps(n: usize) -> String {
+    (0..n).map(|i| format!("<p>{i} {LONG}</p>")).collect()
+}
+// spawn_blocking 과 같은 2MB 스택의 스레드에서
+fn on_2mb<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    std::thread::Builder::new().stack_size(2 << 20).spawn(f).unwrap().join().unwrap()
+}
+
+// L11: 깊게 겹친 인라인·div 에서 재귀가 스택을 넘어 프로세스가 죽던 것(span 8,000겹: 고치기 전 abort)
+#[test]
+fn deep_nesting_does_not_overflow_the_stack() {
+    for n in [8000usize, 15000] {
+        let span = format!("<html><body><article>{}<p>{}x{}</p></article></body></html>", long_ps(10), "<span>".repeat(n), "</span>".repeat(n));
+        let a = on_2mb(move || extract_html(&span, "https://ex.com/a"));
+        assert!(a.is_some_and(|a| a.blocks.len() >= 10), "span {n}");
+    }
+    let div = format!("<html><body><article>{}{}{}</article></body></html>", "<div>".repeat(8000), long_ps(10), "</div>".repeat(8000));
+    assert!(on_2mb(move || extract_html(&div, "https://ex.com/a")).is_some(), "div 8000");
+}
+
+// html5ever 는 겹친 div 파싱이 깊이²라, 대략 센 깊이가 상한을 넘으면 파싱하지 않는다
+#[test]
+fn absurd_div_nesting_is_refused_quickly() {
+    assert!(rough_depth(&format!("<html><body>{}</body></html>", long_ps(50))) < 10);
+    // 닫지 않는 p·li·br·img, 주석·script 안의 '<' 는 세지 않는다
+    let page = format!("<div><ul>{}</ul><script>for(i=0;i<n;i++){{}}</script><!-- <div> -->{}</div>", "<li>x".repeat(50_000), "<p>y<br><img src=a>".repeat(50_000));
+    assert!(rough_depth(&page) <= 3, "{}", rough_depth(&page));
+    // 짝 없는 닫는 표지(</p>·</span>)로 깊이를 줄여 피하지 못한다
+    assert!(rough_depth(&"<div></p></span>".repeat(30_000)) >= 30_000);
+    assert_eq!(rough_depth("<script>a</script><style>b</style><div><div></div></div>"), 2);
+    let n = MAX_PARSE_DEPTH + 1000;
+    let deep = format!("<html><body>{}{}{}</body></html>", "<div>".repeat(n), long_ps(10), "</div>".repeat(n));
+    let t = Instant::now();
+    assert!(on_2mb(move || extract_html(&deep, "https://ex.com/a")).is_none());
+    assert!(t.elapsed() < Duration::from_secs(1));
+}
+
+// X1: 형제 상자 안에 본문 상자와 같은 class 가 N겹 — 겹마다 하위 전체를 복사해 N²(2,000겹 60초+)
+#[test]
+fn nested_core_class_is_gathered_once() {
+    let n = 2000;
+    let html = format!(
+        "<html><head><title>t</title></head><body><div id=w><div class=\"x\">{}</div><section class=\"y\">{}<p>{LONG}</p>{}</section></div></body></html>",
+        long_ps(8), "<div class=\"x\">t ".repeat(n), "</div>".repeat(n));
+    let t = Instant::now();
+    let a = on_2mb(move || extract_html(&html, "https://ex.com/a")).expect("본문");
+    assert!(t.elapsed() < Duration::from_secs(3), "{:?}", t.elapsed());
+    assert!(a.blocks.len() <= 20);
+    // gather 만(깊이 손질 없이)도 바깥 상자 한 벌만
+    let html = format!("<html><body><div id=w><div class=\"x\">{}</div><section class=\"y\">{}<p>{LONG}</p>{}</section></div></body></html>", long_ps(5), "<div class=\"x\">t ".repeat(n), "</div>".repeat(n));
+    let d = dom_query::Document::from(html.as_str());
+    let (c, _) = gather(&format!("<div>{}</div>", long_ps(5)), &d);
+    assert!(c.len() < html.len() * 2, "{} vs {}", c.len(), html.len());
+}
+
+// L12: 겹친 군더더기 상자마다 하위 글을 세던 것(N²) — 바깥 상자를 지우면 그 안은 건너뛴다
+#[test]
+fn nested_junk_boxes_are_cleaned_once() {
+    let html = format!("<html><body>{}{}z{}</body></html>", long_ps(2000), "<div class=\"author-box\">ab ".repeat(20000), "</div>".repeat(20000));
+    let d = dom_query::Document::from(html.as_str());
+    let t = Instant::now();
+    pre_clean(&d);
+    assert!(t.elapsed() < Duration::from_secs(2), "{:?}", t.elapsed());
+    assert_eq!(d.select(".author-box").length(), 0);
+    assert_eq!(d.select("p").length(), 2000);
+}

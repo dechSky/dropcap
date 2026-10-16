@@ -47,6 +47,7 @@ enum NavKey: Equatable {
         ("⌘[ · ⌘]", "매거진 이전·다음 지면"),
         ("J · K (읽기 창)", "같은 목록의 다음·이전 기사"),
         ("Esc (읽기 창)", "창 닫기"),
+        ("⌘,", "설정 열기 (매거진·읽기 창)"),
     ]
 }
 
@@ -64,16 +65,16 @@ struct SelectionRing: ViewModifier {
                         .strokeBorder(Color.accentColor, lineWidth: 2.5)
                         .shadow(color: Color.accentColor.opacity(0.45), radius: 6)
                         .allowsHitTesting(false)
-                        .transition(.opacity)
+                        .transition(Motion.fade)
                 }
             }
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: on)
+            .motion(Motion.enter(Motion.Duration.quick), value: on)
             .accessibilityAddTraits(on ? .isSelected : [])
     }
 }
 
 extension View {
-    func selectionRing(_ on: Bool, radius: CGFloat = 12) -> some View { modifier(SelectionRing(on: on, radius: radius)) }
+    func selectionRing(_ on: Bool, radius: CGFloat = Radius.card) -> some View { modifier(SelectionRing(on: on, radius: radius)) }
 }
 
 // 읽기 창에서 J/K 로 넘길 목록(연 곳의 순서). 매거진 지면이 카드들에게 내려 준다.

@@ -138,30 +138,30 @@ struct Wave: Shape {
 enum SectionIconLab {
     @MainActor static func render(to dir: String) {
         for dark in [false, true] {
-            let view = VStack(alignment: .leading, spacing: 26) {
+            let view = VStack(alignment: .leading, spacing: Space.xl) {
                 ForEach([SectionIcon.Style.drop, .dropSoft, .dropLine], id: \.self) { st in
-                    VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: Space.m) {
                         Text(["drop": "가-1 · 채움", "dropSoft": "가-2 · 은은한 채움", "dropLine": "가-3 · 선", "dropcap": "나 · 드롭캡", "lens": "다 · 렌즈"][st.rawValue] ?? "")
-                            .font(.app(15, .bold))
-                        HStack(alignment: .bottom, spacing: 18) {
+                            .font(.dsHeadline)
+                        HStack(alignment: .bottom, spacing: Space.l) {
                             ForEach(Sections.all, id: \.id) { s in
-                                VStack(spacing: 7) {
+                                VStack(spacing: Space.s) {
                                     SectionIcon(section: s, style: st, size: 48)
-                                    Text(s.name).font(.app(11, .medium)).foregroundStyle(.secondary)
+                                    Text(s.name).font(.dsCaption).foregroundStyle(.secondary)
                                 }
                             }
                         }
-                        HStack(spacing: 10) { // 작은 크기(칩) 미리보기
+                        HStack(spacing: Space.m) { // 작은 크기(칩) 미리보기
                             ForEach(Sections.all.prefix(6), id: \.id) { s in
-                                HStack(spacing: 5) { SectionIcon(section: s, style: st, size: 18); Text(s.name).font(.app(12, .semibold)) }
-                                    .padding(.horizontal, 9).padding(.vertical, 5)
+                                HStack(spacing: Space.xs) { SectionIcon(section: s, style: st, size: 18); Text(s.name).font(.dsBodyStrong) }
+                                    .padding(.horizontal, Space.s).padding(.vertical, Space.xs)
                                     .background(.primary.opacity(0.07), in: Capsule())
                             }
                         }
                     }
                 }
             }
-            .padding(30)
+            .padding(Space.xxl)
             .background(dark ? Color(white: 0.12) : Color(white: 0.97))
             .environment(\.colorScheme, dark ? .dark : .light)
             let r = ImageRenderer(content: view); r.scale = 2

@@ -437,21 +437,9 @@ impl ReaderWindow {
 
     // 누른 카드 자리에서 커져 나온다(R-14). GTK4 는 창 위치·크기를 앱이 움직일 수 없어
     // 0.38초 동안 창이 옅은 데서 또렷해지며 내용이 살짝 커지는 것으로 대신한다.
-    pub fn present(&self, from: Option<Origin>) {
-        let animate = from.map(|o| o.w > 10.0).unwrap_or(false) && motion::enabled();
-        if !animate {
-            self.win.present();
-            return;
-        }
-        self.win.set_opacity(0.2);
-        self.win.present();
-        let target = adw::CallbackAnimationTarget::new({
-            let win = self.win.clone();
-            move |v| win.set_opacity(v)
-        });
-        let a = adw::TimedAnimation::new(&self.win, 0.2, 1.0, 380, target);
-        a.set_easing(adw::Easing::EaseOutQuint);
-        adw::prelude::AnimationExt::play(&a);
+    // 모든 창이 같은 방식으로 열린다(motion::present · docs/DESIGN.md). 카드 자리 from 은 쓰지 않는다.
+    pub fn present(&self, _from: Option<Origin>) {
+        motion::present(&self.win);
     }
 
     pub fn closed(&self) {
@@ -780,7 +768,7 @@ impl ReaderWindow {
                 let body = self.article_body();
                 body.set_margin_top(24);
                 self.column.append(&body);
-                widgets::fade_in(&body, 300);
+                widgets::fade_in(&body, motion::STANDARD);
                 if paywalled || partial {
                     let n = self.cut_end_note(paywalled);
                     n.set_margin_top(6);
@@ -1661,6 +1649,7 @@ impl ReaderWindow {
         add("<Control>g", Box::new(|me| me.find_step(true)));
         add("<Control><Shift>g", Box::new(|me| me.find_step(false)));
         add("<Control>w", Box::new(|me| me.win.close()));
+        add("<Control>comma", Box::new(|_| crate::settings::open(None))); // 설정(맥 ⌘,)
         self.win.add_controller(sc);
         // 같은 목록의 다음·이전 기사(J/K), Esc 로 닫기 — 찾기 칸이 열려 있으면 쓰지 않음(H-05)
         let keys = gtk::EventControllerKey::new();

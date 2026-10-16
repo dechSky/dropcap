@@ -15,16 +15,16 @@ struct ImageActions: ViewModifier {
         content
             .overlay(alignment: .topTrailing) {
                 if let image, hover {
-                    HStack(spacing: 4) {
+                    HStack(spacing: Space.xs) {
                         tool("character.bubble", "사진 속 글자 번역") { ImageTranslateWindow.open(image, url: url, title: title) }
                         tool("doc.on.doc", "사진 복사") { ImageTools.copy(image) }
                         tool("square.and.arrow.down", "사진 저장…") { ImageTools.save(image, url: url) }
                     }
-                    .padding(8)
-                    .transition(.opacity)
+                    .padding(Space.s)
+                    .transition(Motion.fade)
                 }
             }
-            .onHover { h in withAnimation(.easeOut(duration: 0.15)) { hover = h } }
+            .onHover { h in withMotion(Motion.snap) { hover = h } }
             .contextMenu {
                 if let image {
                     Button("사진 속 글자 번역") { ImageTranslateWindow.open(image, url: url, title: title) }
@@ -42,10 +42,10 @@ struct ImageActions: ViewModifier {
     private func tool(_ symbol: String, _ help: String, _ action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.app(12, .semibold))
+                .font(.dsBodyStrong)
                 .frame(width: 28, height: 26)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(.primary.opacity(0.1), lineWidth: 0.5))
+                .chromeGlass(in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: Radius.control, style: .continuous).strokeBorder(.primary.opacity(0.1), lineWidth: 0.5))
         }
         .buttonStyle(.plain)
         .help(help)
@@ -179,11 +179,11 @@ struct ImageTranslateView: View {
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: Space.l) {
                     picture
                     if !model.lines.isEmpty { list }
                 }
-                .padding(20)
+                .padding(Space.xl)
             }
             Divider()
             bar
@@ -203,7 +203,7 @@ struct ImageTranslateView: View {
                     }
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
             .frame(maxWidth: .infinity)
     }
 
@@ -217,20 +217,20 @@ struct ImageTranslateView: View {
             .minimumScaleFactor(0.3)
             .lineLimit(2)
             .foregroundStyle(lum > 0.55 ? Color.black : Color.white)
-            .padding(.horizontal, 2)
+            .padding(.horizontal, Space.xxs)
             .frame(width: rect.width + 6, height: rect.height + 4, alignment: .leading)
-            .background(Color(nsColor: bg), in: RoundedRectangle(cornerRadius: 3))
+            .background(Color(nsColor: bg), in: RoundedRectangle(cornerRadius: Radius.xs))
             .position(x: rect.midX + 1, y: rect.midY)
             .textSelection(.enabled)
     }
 
     private var list: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("읽은 글자").font(.app(13, .semibold)).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: Space.s) {
+            Text("읽은 글자").font(.dsBodyStrong).foregroundStyle(.secondary)
             ForEach(model.lines) { l in
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: Space.xxs) {
                     Text(l.translated ?? l.text).font(.app(14))
-                    if l.translated != nil { Text(l.text).font(.app(12)).foregroundStyle(.secondary) }
+                    if l.translated != nil { Text(l.text).font(.dsCallout).foregroundStyle(.secondary) }
                 }
                 .textSelection(.enabled)
             }
@@ -238,7 +238,7 @@ struct ImageTranslateView: View {
     }
 
     private var bar: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: Space.m) {
             switch model.stage {
             case .reading: ProgressView().controlSize(.small); Text("사진 속 글자를 읽는 중…")
             case .translating: ProgressView().controlSize(.small); Text("번역하는 중…")
@@ -262,8 +262,8 @@ struct ImageTranslateView: View {
             Button("사진 복사") { ImageTools.copy(model.image) }
             Button("저장…") { ImageTools.save(model.image, url: model.url) }
         }
-        .font(.app(12.5))
-        .padding(.horizontal, 16).padding(.vertical, 10)
+        .font(.dsCallout)
+        .padding(.horizontal, Space.l).padding(.vertical, Space.m)
     }
 }
 
@@ -291,7 +291,7 @@ enum ImageTranslateWindow {
                 w?.contentViewController = nil
             }
         }
-        w.makeKeyAndOrderFront(nil)
+        WindowMotion.present(w)
         NSApp.activate(ignoringOtherApps: true)
     }
 }

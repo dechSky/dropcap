@@ -644,6 +644,7 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
                 var f = a.Str("folder");
                 return await platform.SaveTextFile($"{f}.md", book.Markdown(f));
             }
+            case "settings": platform.OpenSettings(); return null; // 옆 목록 맨 아래 '설정' 줄 · Ctrl+,
             case "close": platform.CloseWindow(Name); return null;
             default: throw new InvalidOperationException("모르는 명령 " + cmd);
         }

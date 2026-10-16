@@ -220,7 +220,7 @@ internal sealed class Shell : IAppUi
         if (settings.AppWindow.Presenter is OverlappedPresenter p) { p.IsResizable = false; p.IsMaximizable = false; }
         Center(settings);
         settings.Closed += () => settings = null;
-        settings.Window.Activate();
+        settings.Present();
     }
 
     // 관심 분야 고르기(G-03): 첫 실행에 자동으로, 설정 › 분야에서 다시 열기
@@ -231,7 +231,7 @@ internal sealed class Shell : IAppUi
         if (onboarding.AppWindow.Presenter is OverlappedPresenter p) { p.IsResizable = false; p.IsMaximizable = false; }
         Center(onboarding);
         onboarding.Closed += () => onboarding = null;
-        onboarding.Window.Activate();
+        onboarding.Present();
     }
 
     // M-01: 매거진은 여는 동안 작업 표시줄에 보인다(보통 창)
@@ -246,7 +246,7 @@ internal sealed class Shell : IAppUi
         magazine = new WebWindow(Bridge, "magazine", page is null ? "" : "page=" + Uri.EscapeDataString(page), "Dropcap", new SizeInt32(1180, 820));
         Center(magazine);
         magazine.Closed += () => magazine = null;
-        magazine.Window.Activate();
+        magazine.Present();
     }
 
     // 읽기 창(R 절). 영상·팟캐스트는 원래 앱·브라우저로(R-17). from: 누른 카드의 화면 위치(R-14)
@@ -270,8 +270,7 @@ internal sealed class Shell : IAppUi
             readers.Remove(entry);
             readerPage.Closed(entry.Key);   // 관찰을 끊고 말하기를 멈춤
         };
-        var target = new RectInt32(w.AppWindow.Position.X, w.AppWindow.Position.Y, w.AppWindow.Size.Width, w.AppWindow.Size.Height);
-        if (from is { } f) w.GrowFrom(f, target); else w.Window.Activate();
+        w.Present(); // 모든 창이 같은 방식으로 열린다(docs/DESIGN.md · 카드 자리 from 은 쓰지 않음)
     }
 
     // 읽기 창 J·K(H-05): 그 창에서 같은 목록의 다음·이전 기사로. 이미 열린 기사면 그 창을 앞으로

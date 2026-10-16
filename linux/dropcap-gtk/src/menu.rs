@@ -745,7 +745,7 @@ fn thumb(it: &NewsItem, w: i32, h: i32, radius: i32) -> gtk::DrawingArea {
             if surf.borrow().is_some() {
                 a2.set_visible(true);
                 a2.queue_draw();
-                widgets::fade_in(&a2, 250);
+                widgets::fade_in(&a2, crate::motion::SLOW);
             }
         });
     });
@@ -860,7 +860,7 @@ fn hero_card(it: &NewsItem, read: bool, seq: &[NewsItem]) -> gtk::Widget {
                 s.set_visible(true);
                 css(&t, "box { color: white; }");
                 o.set_size_request(HERO_W, HERO_H);
-                widgets::fade_in(&p, 250);
+                widgets::fade_in(&p, crate::motion::SLOW);
             });
         });
     }

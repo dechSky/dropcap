@@ -50,16 +50,16 @@ struct ReaderFindBar: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass").foregroundStyle(.secondary).font(.app(12))
+        HStack(spacing: Space.s) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary).font(.dsCallout)
             TextField("기사 안에서 찾기", text: $query)
-                .textFieldStyle(.plain).font(.app(13))
+                .textFieldStyle(.plain).font(.dsBody)
                 .focused($focused)
                 .onSubmit(next)
                 .onExitCommand(perform: close)
                 .frame(minWidth: 160)
             Text(query.isEmpty ? "" : count == 0 ? "없음" : "\(index + 1)/\(count)")
-                .font(.app(11.5)).monospacedDigit().foregroundStyle(count == 0 && !query.isEmpty ? Color.orange : .secondary)
+                .font(.dsCaption).monospacedDigit().foregroundStyle(count == 0 && !query.isEmpty ? Color.orange : .secondary)
                 .frame(minWidth: 40, alignment: .trailing)
             Button(action: prev) { Image(systemName: "chevron.up") }
                 .keyboardShortcut("g", modifiers: [.command, .shift]).help("이전 (⇧⌘G)").disabled(count == 0)
@@ -69,10 +69,10 @@ struct ReaderFindBar: View {
                 .help("찾기 닫기 (esc)")
         }
         .buttonStyle(.borderless)
-        .padding(.horizontal, 12).padding(.vertical, 7)
-        .background(.regularMaterial, in: Capsule())
+        .padding(.horizontal, Space.m).padding(.vertical, Space.s)
+        .chromeGlass(in: Capsule())
         .overlay(Capsule().strokeBorder(.primary.opacity(0.1), lineWidth: 0.5))
-        .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
+        .elevation(Elevation.card)
         .frame(maxWidth: 440)
         .onAppear { focused = true }
     }

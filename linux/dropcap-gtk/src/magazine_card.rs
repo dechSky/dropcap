@@ -273,7 +273,7 @@ impl ChipBar {
                 subrow.append(&b);
             }
             root.append(&subrow);
-            widgets::fade_in(&subrow, 180);
+            widgets::fade_in(&subrow, crate::motion::STANDARD);
         }
         ChipBar { root }
     }
@@ -408,8 +408,7 @@ pub fn stagger(w: &impl IsA<gtk::Widget>, order: usize) {
         return;
     }
     w.set_opacity(0.0);
-    let delay = (order as u64 * 50).min(400);
-    widgets::later(delay, move || widgets::fade_in(&w, 450));
+    widgets::later(crate::motion::stagger(order), move || widgets::fade_in(&w, crate::motion::SETTLE));
 }
 
 // 스크롤할 때 들어오며 또렷해짐(M-09): 보이는 칸 밖의 카드는 옅게, 들어오면 또렷하게

@@ -6,7 +6,7 @@ struct PaywallMark: View {
     @ObservedObject private var book = PaywallBook.shared
     var body: some View {
         if let k = book.kind(item) {
-            HStack(spacing: 2) {
+            HStack(spacing: Space.xxs) {
                 Image(systemName: k.symbol)
                 if let t = k.shortText { Text(t).font(.system(size: 9.5, weight: .semibold)).fixedSize() }
             }
@@ -30,25 +30,25 @@ struct FreeAlternativesBox: View {
     let reason: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "lock.fill").font(.app(11, .semibold))
-                Text(reason).font(.app(12.5, .semibold))
+        VStack(alignment: .leading, spacing: Space.m) {
+            HStack(spacing: Space.s) {
+                Image(systemName: "lock.fill").font(.dsChip)
+                Text(reason).font(.dsBodyStrong)
             }
             .foregroundStyle(.secondary)
             Text("같은 소식을 무료로 읽기: " + alternatives.map(\.sourceName).joined(separator: "·"))
-                .font(.app(13.5, .semibold))
-            VStack(alignment: .leading, spacing: 6) {
+                .font(.dsBodyStrong)
+            VStack(alignment: .leading, spacing: Space.s) {
                 ForEach(alternatives, id: \.key) { alt in
                     Button {
                         AppModel.shared.markOpened(alt)
                         ReaderController.open(alt)
                     } label: {
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Text(alt.sourceName).font(.app(12, .bold)).foregroundStyle(alt.accent)
-                            Text(alt.displayTitle).font(.app(13)).lineLimit(1)
+                        HStack(alignment: .firstTextBaseline, spacing: Space.s) {
+                            Text(alt.sourceName).font(.dsBodyStrong).foregroundStyle(alt.accent)
+                            Text(alt.displayTitle).font(.dsBody).lineLimit(1)
                             Spacer(minLength: 0)
-                            Image(systemName: "arrow.up.right").font(.app(10, .semibold)).foregroundStyle(.tertiary)
+                            Image(systemName: "arrow.up.right").font(.dsChip).foregroundStyle(.tertiary)
                         }
                         .contentShape(Rectangle())
                     }
@@ -56,12 +56,12 @@ struct FreeAlternativesBox: View {
                 }
             }
             Button("원문 그대로 열기") { ExternalLink.open(item.link) }
-                .buttonStyle(.link).font(.app(12))
+                .buttonStyle(.link).font(.dsCallout)
         }
-        .padding(14)
+        .padding(Space.l)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(.primary.opacity(0.08), lineWidth: 0.5))
+        .background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Radius.card, style: .continuous).strokeBorder(.primary.opacity(0.08), lineWidth: 0.5))
     }
 }
 
@@ -69,20 +69,20 @@ struct FreeAlternativesBox: View {
 struct TeaserBanner: View {
     let link: String
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            Image(systemName: "lock.fill").font(.app(14, .semibold)).foregroundStyle(.orange)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("구독자만 전체를 볼 수 있는 기사예요").font(.app(13.5, .semibold))
-                Text("아래는 사이트가 공개한 앞부분입니다.").font(.app(12.5)).foregroundStyle(.secondary)
+        HStack(alignment: .center, spacing: Space.m) {
+            Image(systemName: "lock.fill").font(.dsHeadline).foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: Space.xs) {
+                Text("구독자만 전체를 볼 수 있는 기사예요").font(.dsBodyStrong)
+                Text("아래는 사이트가 공개한 앞부분입니다.").font(.dsCallout).foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
             Button("원문 열기") { ExternalLink.open(link) }
                 .buttonStyle(.bordered).controlSize(.small)
         }
-        .padding(.horizontal, 14).padding(.vertical, 11)
+        .padding(.horizontal, Space.l).padding(.vertical, Space.m)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.orange.opacity(0.09), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.orange.opacity(0.28), lineWidth: 0.5))
+        .background(Color.orange.opacity(0.09), in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Radius.card, style: .continuous).strokeBorder(Color.orange.opacity(0.28), lineWidth: 0.5))
         .accessibilityElement(children: .combine)
     }
 }
@@ -93,14 +93,14 @@ struct CutEndNote: View {
     let link: String
     let reload: () -> Void
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: Space.s) {
             Text(teaser ? "— 여기까지가 공개된 부분입니다" : "본문 일부만 가져왔을 수 있어요")
             Text("·")
             Button(teaser ? "원문에서 이어 읽기" : "원문 열기") { ExternalLink.open(link) }.buttonStyle(.plain).foregroundStyle(.tint)
             Text("·")
             Button("다시 받기", action: reload).buttonStyle(.plain).foregroundStyle(.tint)
         }
-        .font(.app(12.5))
+        .font(.dsCallout)
         .foregroundStyle(.secondary)
         .frame(maxWidth: .infinity, alignment: .leading)
     }

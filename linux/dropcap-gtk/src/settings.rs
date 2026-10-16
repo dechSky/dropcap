@@ -19,11 +19,12 @@ thread_local! {
 
 // tab: "general" | "sections" | "sources" | "filters" | "scrapbook"
 pub fn open(tab: Option<&str>) {
-    let w = WINDOW.with(|c| c.borrow().clone()).unwrap_or_else(build);
+    let existing = WINDOW.with(|c| c.borrow().clone());
+    let w = existing.clone().unwrap_or_else(build);
     if let Some(t) = tab {
         w.set_visible_page_name(t);
     }
-    w.present();
+    if existing.is_some() { w.present() } else { crate::motion::present(&w) } // 새 창만 열기 움직임
     // 시험용(DROPCAP_TEST_SHOT_DIR): 세 쪽을 차례로 찍는다
     if ui().env.shot_dir.is_some() {
         crate::shots::shot_later(&w, "settings-general", 3000);

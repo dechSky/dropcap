@@ -69,7 +69,7 @@ impl ChipBar {
         let sub_box = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         let sub_scroll = gtk::ScrolledWindow::builder().vscrollbar_policy(gtk::PolicyType::Never).hscrollbar_policy(gtk::PolicyType::External).child(&sub_box).build();
         sub_scroll.set_propagate_natural_height(true);
-        let sub_row = gtk::Revealer::builder().transition_type(gtk::RevealerTransitionType::SlideDown).transition_duration(180).child(&sub_scroll).build();
+        let sub_row = gtk::Revealer::builder().transition_type(gtk::RevealerTransitionType::SlideDown).transition_duration(crate::motion::STANDARD).child(&sub_scroll).build();
         root.append(&sub_row);
         Rc::new(ChipBar { root, main, sub_row, sub_box, pick: Rc::new(RefCell::new(Pick::default())), on_change: Rc::new(RefCell::new(None)), small })
     }

@@ -28,7 +28,7 @@ struct SourceHealthBadge: View {
         Text(label)
             .font(.caption2.weight(.semibold))
             .foregroundStyle(color)
-            .padding(.horizontal, 5).padding(.vertical, 1)
+            .padding(.horizontal, Space.xs).padding(.vertical, 1)
             .background(Capsule().strokeBorder(color.opacity(0.5), lineWidth: 0.5))
             .help(help)
     }

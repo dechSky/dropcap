@@ -21,6 +21,29 @@
   --blue: #007aff; --purple: #af52de; --indigo: #5856d6; --green: #34c759; --red: #ff3b30; --gray: #8e8e93; --orange: #ff9500; --yellow: #ffcc00; --pink: #ff2d55; --teal: #30b0c7;
   --shadow: 0 6px 24px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.08);
   color-scheme: light dark;
+
+  /* 디자인 시스템 토큰(docs/DESIGN.md · 맥 UI/DesignSystem.swift 와 같은 이름·값). 화면 CSS 는 숫자 대신 이것만 쓴다. */
+  /* 움직임: 지속 3단 · 들어옴(감속)·나감(가속)·자리 안 바뀜 곡선 · 스프링 2개(SwiftUI spring 을 linear() 로 옮김, 튐 없음) */
+  --dur-quick: 0.15s; --dur-standard: 0.25s; --dur-slow: 0.4s;
+  --ease-enter: cubic-bezier(0.2, 0.9, 0.25, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --ease-change: cubic-bezier(0.42, 0, 0.58, 1);
+  --dur-snap: 0.3s;   --ease-snap: linear(0, 0.041, 0.138, 0.259, 0.386, 0.506, 0.614, 0.705, 0.781, 0.842, 0.889, 0.925, 0.952, 0.971, 0.984, 0.993, 0.999, 1.002, 1.004, 1.005, 1);
+  --dur-settle: 0.5s; --ease-settle: linear(0, 0.041, 0.137, 0.257, 0.382, 0.5, 0.606, 0.696, 0.771, 0.831, 0.879, 0.915, 0.942, 0.962, 0.977, 0.987, 0.994, 0.998, 1.001, 1.002, 1);
+  --stagger: 0.04s;  /* 차례로 깔림 한 칸(최대 0.3초) */
+  --rise: 8px;       /* rise·drop 전환 거리 */
+  /* 간격(4 배수) */
+  --sp-xxs: 2px; --sp-xs: 4px; --sp-s: 8px; --sp-m: 12px; --sp-l: 16px; --sp-xl: 24px; --sp-xxl: 32px; --sp-xxxl: 40px; --sp-page: 36px;
+  /* 모서리 */
+  --r-xs: 4px; --r-control: 8px; --r-card: 14px; --r-panel: 20px;
+  /* 글자 역할 */
+  --fs-hero: 38px; --fs-title: 32px; --fs-heading: 20px; --fs-subheading: 16px; --fs-headline: 15px;
+  --fs-body: 13px; --fs-callout: 12px; --fs-caption: 11px; --fs-chip: 11px; --fs-micro: 9.5px;
+  /* 높이(그림자) */
+  --el-low: 0 1px 4px rgba(0, 0, 0, 0.08);
+  --el-card: 0 4px 10px rgba(0, 0, 0, 0.12);
+  --el-raised: 0 10px 18px rgba(0, 0, 0, 0.20);
+  --el-floating: 0 14px 26px rgba(0, 0, 0, 0.28);
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -48,7 +71,7 @@ html.system-font { --font: 'Segoe UI Variable Text', 'Segoe UI', 'Malgun Gothic'
 html, body { margin: 0; padding: 0; height: 100%; }
 body {
   font-family: var(--font);
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--text);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
@@ -75,32 +98,39 @@ a { color: inherit; text-decoration: none; }
 
 /* 띄우는 메뉴(오른쪽 클릭·더 보기) — 화면마다 menu.js 의 popMenu() 로 */
 .pop {
-  position: fixed; z-index: 1000; min-width: 180px; padding: 5px; border-radius: 10px;
+  position: fixed; z-index: 1000; min-width: 180px; padding: var(--sp-xs); border-radius: var(--r-control);
   background: var(--bg-elev); box-shadow: var(--shadow); border: 0.5px solid var(--line);
-  font-size: 13px; animation: pop-in 0.12s ease-out;
+  font-size: var(--fs-body); animation: pop-in var(--dur-quick) var(--ease-enter);
 }
-.pop .mi { display: flex; align-items: center; gap: 8px; padding: 5px 10px; border-radius: 6px; white-space: nowrap; }
+.pop .mi { display: flex; align-items: center; gap: var(--sp-s); padding: var(--sp-xs) var(--sp-m); border-radius: var(--r-control); white-space: nowrap; }
 .pop .mi:hover { background: var(--accent); color: #fff; }
-.pop .mi.on::after { content: '✓'; margin-left: auto; padding-left: 16px; }
+.pop .mi.on::after { content: '✓'; margin-left: auto; padding-left: var(--sp-l); }
 .pop .mi.disabled { opacity: 0.4; pointer-events: none; }
-.pop .sep { height: 1px; background: var(--line); margin: 4px 6px; }
-.pop .hd { padding: 4px 10px 2px; font-size: 11px; color: var(--text-2); }
+.pop .sep { height: 1px; background: var(--line); margin: var(--sp-xs) var(--sp-s); }
+.pop .hd { padding: var(--sp-xs) var(--sp-m) var(--sp-xxs); font-size: var(--fs-caption); color: var(--text-2); }
 @keyframes pop-in { from { opacity: 0; transform: scale(0.97); } }
 
 /* 유료 기사 자물쇠(G-14, 맥 PaywallMark: 9pt semibold, 흐린 색) — ui.lock(it) */
 .pw { display: inline-flex; align-items: center; color: var(--text-2); font-size: 9px; flex: none; }
 .pw .ic { font-size: 9px; }
-.pw.teaser { color: var(--orange); gap: 2px; }
-.pw .pwt { font-size: 9.5px; font-weight: 600; white-space: nowrap; }
+.pw.teaser { color: var(--orange); gap: var(--sp-xxs); }
+.pw .pwt { font-size: var(--fs-micro); font-weight: 600; white-space: nowrap; }
 
 /* 키보드로 고른 줄·카드(H-03, 맥 SelectionRing): 강조색 2.5px 테두리 + 옅은 빛. 움직임 줄이기면 바로 */
 .kbsel { position: relative; }
 .kbsel::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
-  box-shadow: inset 0 0 0 2.5px var(--accent), 0 0 6px color-mix(in srgb, var(--accent) 45%, transparent); animation: kbsel-in .12s ease-out; }
+  box-shadow: inset 0 0 0 2.5px var(--accent), 0 0 6px color-mix(in srgb, var(--accent) 45%, transparent); animation: kbsel-in var(--dur-quick) var(--ease-enter); }
 @keyframes kbsel-in { from { opacity: 0; } }
 
 .reduce-motion *, .reduce-motion *::before, .reduce-motion *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+/* 시스템 '애니메이션 효과' 끔도 따른다(위 클래스는 앱 설정에서 붙임) */
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }
+/* 공용 전환(맥 Motion.fade·rise·drop·pop) */
+@keyframes ds-fade { from { opacity: 0; } }
+@keyframes ds-rise { from { opacity: 0; transform: translateY(var(--rise)); } }
+@keyframes ds-drop { from { opacity: 0; transform: translateY(calc(-1 * var(--rise))); } }
+@keyframes ds-pop { from { opacity: 0; transform: scale(0.96); } }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: var(--fill-2); border-radius: 5px; border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb { background: var(--fill-2); border-radius: var(--r-xs); border: 2px solid transparent; background-clip: padding-box; }
 ::-webkit-scrollbar-track { background: transparent; }

@@ -13,8 +13,9 @@ public class MagazinePageTests : IDisposable
         public List<string> Copied { get; } = new();
         public List<(string Name, string Text)> SavedFiles { get; } = new();
         public List<string> Closed { get; } = new();
+        public int SettingsOpened { get; private set; }
         public void OpenMagazine(string? page = null) { }
-        public void OpenSettings(string? tab = null) { }
+        public void OpenSettings(string? tab = null) => SettingsOpened++;
         public void OpenOnboarding() { }
         public void OpenReader(NewsItem item) => Readers.Add(item);
         public void CloseWindow(string page) => Closed.Add(page);
@@ -72,6 +73,15 @@ public class MagazinePageTests : IDisposable
 
     private Task<object?> Run(string cmd, object? args = null) =>
         page.Handle(cmd, args is null ? new JsonObject() : (JsonNode.Parse(JsonSerializer.Serialize(args)) as JsonObject)!);
+
+    // 옆 목록 맨 아래 '설정' 줄 · Ctrl+, → 설정 창(맥 MagazineView 의 '설정' 줄·⌘,)
+    [Fact]
+    public async Task SettingsOpensSettingsWindow()
+    {
+        Assert.Null(await Run("settings"));
+        Assert.Equal(1, platform.SettingsOpened);
+        Assert.Empty(platform.Closed); // 매거진 창은 그대로
+    }
 
     [Fact]
     public async Task TodayIssueShape()

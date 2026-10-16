@@ -12,7 +12,7 @@ if [[ -z "$BIN" ]]; then
 fi
 [[ -f "$BIN" ]] || { echo "실행 파일이 없습니다: $BIN"; exit 1; }
 fail=0
-for pat in DROPCAP_TEST_ E2ERunner E2EClickSweep E2EQuietUI ReaderSaveTestHooks ExtrasTestHooks ReadSweep PerfHarness SectionIconLab allowLocalForTests; do
+for pat in DROPCAP_TEST_ E2ERunner E2EClickSweep E2EQuietUI ReaderSaveTestHooks ExtrasTestHooks DesignTestHooks ReadSweep PerfHarness SectionIconLab allowLocalForTests; do
   n=$(strings -a "$BIN" | grep -c -- "$pat")
   if [[ "$n" -gt 0 ]]; then echo "남음: $pat ($n)"; fail=1; fi
 done

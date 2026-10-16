@@ -84,7 +84,10 @@
     const key = page.startsWith('story:') ? 'stories' : page;
     document.querySelectorAll('.side .nav').forEach((b) => b.classList.toggle('on', b.dataset.go === key));
   }
-  $('#side').addEventListener('click', (e) => { const b = e.target.closest('[data-go]'); if (b) go(b.dataset.go); });
+  $('#side').addEventListener('click', (e) => {
+    if (e.target.closest('[data-cmd="settings"]')) { bridge.send('settings'); return; } // 맨 아래 '설정' 줄: 지면이 아니라 설정 창
+    const b = e.target.closest('[data-go]'); if (b) go(b.dataset.go);
+  });
 
   // MARK: 지면 넘기기(M-19)
   function go(p, opts = {}) {
@@ -105,8 +108,8 @@
     if (old && !document.documentElement.classList.contains('reduce-motion')) {
       old.className = 'page ' + (forward ? 'out-fwd' : 'out-back');
       el.classList.add(forward ? 'in-fwd' : 'in-back');
-      setTimeout(() => old.remove(), 620);
-      setTimeout(() => el.classList.remove('in-fwd', 'in-back'), 620);
+      setTimeout(() => old.remove(), 500); // 들어옴 --dur-settle 뒤(base.css)
+      setTimeout(() => el.classList.remove('in-fwd', 'in-back'), 500);
     } else if (old) old.remove();
     load(true);
   }
@@ -155,7 +158,7 @@
     const play = it.kind === 'video' || it.kind === 'podcast' ? `<span class="play">${ic(it.kind === 'video' ? 'play' : 'wave')}</span>` : '';
     const rg = o.region ? `<div class="rg"><div><b>해외에서는</b><span>${esc(o.region.intl.join(' · '))}</span></div><div><b>국내에서는</b><span>${esc(o.region.kr.join(' · '))}</span></div></div>` : '';
     // 사진이 없으면 사진 자리를 만들지 않고 글만(맥 StoryCard)
-    return `<div class="cell" style="--d:${Math.min(i * 0.05, 0.4)}s" data-key="${esc(it.key)}">${extra}
+    return `<div class="cell" style="--d:${Math.min(i * 0.04, 0.3)}s" data-key="${esc(it.key)}">${extra}
       <button class="card${it.key === selected ? ' kbsel' : ''}" data-open="${esc(it.key)}" data-nav="${esc(it.key)}">
         ${it.image ? ph(it, play + kind) : ''}
         <div class="body">
@@ -438,7 +441,7 @@
   function storyCard(c, big, i) {
     const pic = c.photo ? bridge.img(c.photo) : '';
     const color = c.topic ? c.topic.light : '#8E8E93';
-    return `<button class="scard stag${big ? ' big' : ''}" style="--d:${Math.min(i * 0.05, 0.5)}s" data-story="${esc(c.id)}">
+    return `<button class="scard stag${big ? ' big' : ''}" style="--d:${Math.min(i * 0.04, 0.3)}s" data-story="${esc(c.id)}">
       ${pic ? `<div class="ph" style="--c:${esc(color)};--cat:${esc(color)}"><div class="pic"><img src="${esc(pic)}" alt="" draggable="false"></div></div>` : ''}
       <div class="tx">
         <div class="meta">${topicTag(c.topic)}<span class="n">${c.size}곳 보도</span>${c.fresh > 0 ? `<span class="new">새 보도 ${c.fresh}</span>` : ''}${c.following ? `<span class="fol" title="팔로우 중">${ic('bell.fill')}</span>` : ''}</div>
@@ -652,7 +655,7 @@
       <div class="chips">${v.folders.map((f) => `<button class="chip${f.name === v.folder ? ' on' : ''}" data-folder="${esc(f.name)}">${ic(f.name === v.folder ? 'folder.fill' : 'folder')}${esc(f.name)} ${f.count}</button>`).join('')}
         <button class="chip add" id="newFolder">${ic('plus')}새 폴더</button></div>
       ${empty ? `<div class="sb-empty">${ic('scissors')}<b>이 폴더는 비어 있습니다</b></div>` : ''}
-      ${v.groups.map((g, i) => `<div class="group stag" style="--d:${Math.min(i * 0.05, 0.4)}s">
+      ${v.groups.map((g, i) => `<div class="group stag" style="--d:${Math.min(i * 0.04, 0.3)}s">
         <button class="head" data-open="${esc(g.item.key)}">${g.item.image ? ph(g.item) : ''}<div><b>${esc(g.item.title)}</b><span>${esc(g.item.source)} · ${esc(g.item.time)}</span></div></button>
         ${g.scraps.map(scrapRow).join('')}</div>`).join('')}
     </div>`;
@@ -834,7 +837,7 @@
     else if (k === 'toggleRead') bridge.send('toggleRead', { key });
   });
 
-  // MARK: 단축키(M-20): Ctrl+1 오늘 · 2 이번 주 · 3 스토리 · 4 스크랩북 · F 검색 · R 지금 확인 · [ ] 지면 넘기기(H-04)
+  // MARK: 단축키(M-20): Ctrl+1 오늘 · 2 이번 주 · 3 스토리 · 4 스크랩북 · F 검색 · R 지금 확인 · [ ] 지면 넘기기(H-04) · , 설정
   document.addEventListener('keydown', (e) => {
     if (!e.ctrlKey || e.altKey || e.shiftKey || e.metaKey) return;
     // H-04: Ctrl+[ · Ctrl+] 옆 목록 순서대로 이전·다음 지면(끝이면 앱이 경고음)
@@ -847,6 +850,7 @@
     const to = { 1: 'today', 2: 'week', 3: 'stories', 4: 'scrapbook', f: 'search' }[k];
     if (to) { e.preventDefault(); if (to === 'search' && page === 'search') { const i = $('#sq', current); if (i) i.focus(); } else go(to); }
     else if (k === 'r') { e.preventDefault(); bridge.send('check'); }
+    else if (k === ',') { e.preventDefault(); bridge.send('settings'); }
   }, true);
 
   // 첫 지면: 주소 ?page=… (앱이 열 때 정함 — 묶음 알림이면 section:<id>), 없으면 오늘

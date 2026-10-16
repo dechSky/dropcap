@@ -56,6 +56,7 @@ pub const HELP: &[(&str, &str)] = &[
     ("Ctrl+[ · Ctrl+]", "매거진 이전·다음 지면"),
     ("J · K (읽기 창)", "같은 목록의 다음·이전 기사"),
     ("Esc (읽기 창)", "창 닫기"),
+    ("Ctrl+,", "설정 열기 (매거진·읽기 창)"),
 ];
 
 // 고른 소식에 키 동작을 한다
@@ -106,8 +107,8 @@ pub fn center(scroll: &gtk::ScrolledWindow, w: &gtk::Widget) {
         return;
     }
     let from = adj.value();
-    let a = adw::TimedAnimation::new(scroll, from, target, 180, adw::CallbackAnimationTarget::new(move |v| adj.set_value(v)));
-    a.set_easing(adw::Easing::EaseOutCubic);
+    let a = adw::TimedAnimation::new(scroll, from, target, crate::motion::STANDARD, adw::CallbackAnimationTarget::new(move |v| adj.set_value(v)));
+    a.set_easing(crate::motion::CHANGE);
     adw::prelude::AnimationExt::play(&a);
 }
 

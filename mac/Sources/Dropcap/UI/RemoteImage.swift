@@ -167,7 +167,7 @@ struct RemoteImage: View {
             guard let url else { return }
             if let img = await ImageLoader.shared.image(url), !Task.isCancelled {
                 image = img
-                withAnimation(.easeOut(duration: 0.5)) { shown = true }
+                withMotion(Motion.enter(Motion.Duration.slow)) { shown = true }
             }
         }
     }

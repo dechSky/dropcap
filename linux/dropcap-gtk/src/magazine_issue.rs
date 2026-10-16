@@ -168,7 +168,7 @@ impl IssuePage {
                 } else {
                     self.pending_new.set(true);
                     self.banner.set_visible(true);
-                    widgets::fade_in(&self.banner, 300);
+                    widgets::fade_in(&self.banner, crate::motion::STANDARD);
                 }
             }
             UiEvent::Images | UiEvent::Paywall => {
@@ -419,7 +419,7 @@ impl IssuePage {
                     if appeared && motion::enabled() {
                         cover.set_opacity(0.0);
                         let c2 = cover.clone();
-                        widgets::later(150, move || widgets::fade_in(&c2, 700));
+                        widgets::later(crate::motion::stagger(4), move || widgets::fade_in(&c2, crate::motion::SETTLE));
                     }
                     self.content.append(&cover);
                 }
@@ -558,7 +558,7 @@ impl IssuePage {
             v.append(&label(&dropcap_core::today_issue::next_issue_text(st.settings.digest_enabled, st.settings.digest_hour), 12.5, 400, &["dc-secondary"]));
             band.append(&v);
             holder.append(&band);
-            widgets::fade_in(&band, 300);
+            widgets::fade_in(&band, crate::motion::STANDARD);
         } else if !keys.is_empty() {
             let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
             let t = label(&format!("오늘 호 대표 기사 {read}/{}", keys.len()), 11.5, 500, &["dc-secondary", "numeric"]);
@@ -719,9 +719,9 @@ fn masthead(title_text: &str, kicker: &str, subtitle: &str, live: bool, appeared
             p.set(x);
             l2.queue_draw();
         });
-        let a = adw::TimedAnimation::new(&line, 0.0, 1.0, 900, target);
-        a.set_easing(adw::Easing::EaseOutCubic);
-        widgets::later(100, move || adw::prelude::AnimationExt::play(&a));
+        let a = adw::TimedAnimation::new(&line, 0.0, 1.0, crate::motion::SETTLE, target);
+        a.set_easing(crate::motion::ENTER);
+        widgets::later(crate::motion::stagger(3), move || adw::prelude::AnimationExt::play(&a));
     }
     v.append(&line);
     for (i, w) in [top.upcast::<gtk::Widget>(), title.upcast()].into_iter().enumerate() {

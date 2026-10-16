@@ -50,6 +50,7 @@ public sealed class SettingsPage(AppModel model, IPlatform platform, Scrapbook? 
         ("Ctrl+[ · Ctrl+]", "매거진 이전·다음 지면"),
         ("J · K (읽기 창)", "같은 목록의 다음·이전 기사"),
         ("Esc (읽기 창)", "창 닫기"),
+        ("Ctrl+,", "설정 열기 (매거진·읽기 창)"),
     ];
 
     // 쉼표·줄바꿈으로 나눠 앞뒤 빈칸을 지우고 빈 낱말은 버린다(맥 saveKeywords 와 같음)

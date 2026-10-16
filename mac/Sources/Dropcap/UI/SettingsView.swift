@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import Translation
 
@@ -163,10 +164,10 @@ struct SettingsView: View {
     }
 
     @ViewBuilder private func sourceRow(_ s: Source, removable: Bool) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: Space.m) {
             Monogram(letter: String(s.name.replacingOccurrences(of: "The ", with: "").prefix(1)).uppercased(), color: Color(hex: s.color), size: 22)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: Space.xxs) {
+                HStack(spacing: Space.s) {
                     Text(s.name)
                     if s.itemKind != .article { KindBadge(kind: s.itemKind) }
                     if s.aiOnly { Text("AI 글만").font(.caption).foregroundStyle(.secondary) }
@@ -196,10 +197,10 @@ struct SettingsView: View {
     }
 
     @ViewBuilder private func catalogRow(_ s: Source) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: Space.m) {
             Monogram(letter: String(s.name.prefix(1)).uppercased(), color: Color(hex: s.color), size: 22)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: Space.xxs) {
+                HStack(spacing: Space.s) {
                     Text(s.name)
                     if s.itemKind != .article { KindBadge(kind: s.itemKind) }
                 }
@@ -276,9 +277,9 @@ extension SettingsView {
     @ViewBuilder private func sectionRow(_ s: NewsSection) -> some View {
         let p = model.policy(s.id)
         let count = model.sourceCount(s.id)
-        HStack(spacing: 10) {
+        HStack(spacing: Space.m) {
             Image(systemName: s.symbol).foregroundStyle(.white).font(.system(size: 12, weight: .semibold))
-                .frame(width: 26, height: 26).background(s.tint.gradient, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .frame(width: 26, height: 26).background(s.tint.gradient, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
             VStack(alignment: .leading, spacing: 1) {
                 Text(s.name).font(.headline)
                 Text(s.isFlow ? "어느 분야든 크게 다룬 소식" : count.all > 0 ? "출처 \(count.on)/\(count.all)곳 켜짐" : "구독 탭에서 출처를 켜고 끕니다")
@@ -366,7 +367,7 @@ extension SettingsView {
 
     // 다른 앱이 먼저 쓰고 있어 등록하지 못한 전역 단축키는 그렇다고 알린다
     private func hotKeyLabel(_ text: String, _ key: HotKey.Key) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: Space.s) {
             if HotKey.unavailable.contains(key.rawValue) {
                 Label("다른 앱이 쓰는 중", systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(.orange)
             }
@@ -424,5 +425,21 @@ final class KeywordSaveTimer {
         let w = DispatchWorkItem { MainActor.assumeIsolated { f() } }
         work = w
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: w)
+    }
+}
+
+// 설정 창 열기: 상단바 창·매거진 옆 목록·⌘,(매거진·읽기 창) 이 모두 이 길로. 앱 메뉴가 없는 상단바 앱이라 ⌘, 는 창마다 따로 단다.
+// 연 창(매거진·읽기) 앞에 뜨고, 이미 열려 있으면 앞으로만 가져온다.
+@MainActor
+enum SettingsWindow {
+    static func open(_ openSettings: OpenSettingsAction) {
+        TestLog.write("[설정] 열기 요청")
+        NSApp.activate(ignoringOtherApps: true)
+        openSettings()
+        DispatchQueue.main.async { find()?.makeKeyAndOrderFront(nil) } // 이미 떠 있던 설정 창이 다른 창 뒤에 있으면 앞으로
+    }
+    static func find() -> NSWindow? {
+        NSApp.windows.first { $0.identifier?.rawValue == "com_apple_SwiftUI_Settings_window" }
+            ?? NSApp.windows.first { $0.toolbar?.items.contains { $0.label == "거르기" } == true }
     }
 }

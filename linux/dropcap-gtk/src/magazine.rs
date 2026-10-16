@@ -69,7 +69,7 @@ pub fn open() {
     }
     let first = initial_page();
     let m = build(first);
-    m.window.present();
+    crate::motion::present(&m.window);
     if let Some(dir) = ui().env.shot_dir.clone() {
         if ui().env.test_magazine {
             test_shots(&m, dir);
@@ -141,7 +141,7 @@ fn build(first: Page) -> Rc<Magazine> {
     let stack = gtk::Stack::new();
     stack.set_hexpand(true);
     stack.set_vexpand(true);
-    stack.set_transition_duration(520);
+    stack.set_transition_duration(crate::motion::SETTLE);
     stack.add_css_class("dc-mag-bg");
     let body = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     body.append(&side_scroll);
@@ -182,6 +182,11 @@ fn build(first: Page) -> Rc<Magazine> {
             }
         });
     }
+    m.sidebar.connect_row_activated(|_, row| {
+        if row.widget_name() == SETTINGS_ROW {
+            crate::settings::open(None);
+        }
+    });
     m.install_shortcuts();
     m.window.connect_close_request(|_| {
         MAG.with(|x| *x.borrow_mut() = None);
@@ -269,6 +274,14 @@ impl Magazine {
                 }
             }
         }
+        // 맨 아래 '설정' 줄: 지면이 아니라 설정 창을 연다(고를 수 없는 줄 — 고른 지면은 그대로, row-activated 에서 받음)
+        self.sidebar.append(&header(""));
+        add(self, "emblem-system-symbolic", "설정", None, Page::Today);
+        if let Some((r, _)) = self.rows.borrow_mut().pop() {
+            r.set_selectable(false);
+            r.set_widget_name(SETTINGS_ROW);
+            r.set_tooltip_text(Some("설정 열기 (Ctrl+,)"));
+        }
         let p = self.page.borrow().clone();
         self.select_row_for(&p);
         self.syncing.set(false);
@@ -343,10 +356,8 @@ impl Magazine {
         self.stack.add_named(&widget, Some(&name));
         self.stack.set_transition_type(if !motion::enabled() || dir == 0 {
             gtk::StackTransitionType::None
-        } else if dir > 0 {
-            gtk::StackTransitionType::RotateLeft
         } else {
-            gtk::StackTransitionType::RotateRight
+            gtk::StackTransitionType::Crossfade // 지면 넘김: 회전 없이(docs/DESIGN.md — 맥은 떠오름+흐려짐)
         });
         let old = self.stack.visible_child();
         self.stack.set_visible_child_name(&name);
@@ -361,7 +372,7 @@ impl Magazine {
         }
     }
 
-    // 단축키(M-20): Ctrl+1 오늘·Ctrl+2 이번 주·Ctrl+3 스토리·Ctrl+4 스크랩북·Ctrl+F 검색·Ctrl+R 지금 확인
+    // 단축키(M-20): Ctrl+1 오늘·Ctrl+2 이번 주·Ctrl+3 스토리·Ctrl+4 스크랩북·Ctrl+F 검색·Ctrl+R 지금 확인·Ctrl+, 설정
     fn install_shortcuts(self: &Rc<Self>) {
         let sc = gtk::ShortcutController::new();
         sc.set_scope(gtk::ShortcutScope::Managed);
@@ -384,6 +395,7 @@ impl Magazine {
             );
         }
         add("<Control>r", Rc::new(|| ui().core.check_now()));
+        add("<Control>comma", Rc::new(|| crate::settings::open(None)));
         // 지면 넘기기(H-04): 옆 목록 순서대로, 끝이면 경고음
         for (t, d) in [("<Control>bracketleft", -1), ("<Control>bracketright", 1)] {
             let weak = Rc::downgrade(self);
@@ -436,6 +448,8 @@ impl Magazine {
         }
     }
 }
+
+const SETTINGS_ROW: &str = "dc-settings-row"; // 옆 목록 맨 아래 '설정' 줄
 
 // 옆 목록에서 이 지면에 해당하는 칸(스토리 상세는 '스토리')
 fn sidebar_key(p: &Page) -> Page {
@@ -521,12 +535,12 @@ fn ensure_css() {
         r#"
 .dc-mag-bg { background-color: @view_bg_color; }
 .dc-side-head { font-size: 11px; font-weight: 700; opacity: 0.55; margin: 12px 8px 2px 8px; }
-.dc-magcard { border-radius: 16px; background-color: @view_bg_color; border: 1px solid alpha(@window_fg_color, 0.08);
-  box-shadow: 0 3px 6px alpha(black, 0.06); transition: box-shadow 250ms ease, transform 250ms ease; padding: 0; }
-.dc-magcard:hover { box-shadow: 0 10px 18px alpha(black, 0.18); transform: scale(1.025); }
-.dc-magcard .dc-magphoto { transition: transform 300ms ease; }
+.dc-magcard { border-radius: 14px; background-color: @view_bg_color; border: 1px solid alpha(@window_fg_color, 0.08);
+  box-shadow: 0 4px 10px alpha(black, 0.12); transition: box-shadow 300ms cubic-bezier(0.2, 0.9, 0.25, 1), transform 300ms cubic-bezier(0.2, 0.9, 0.25, 1); padding: 0; }
+.dc-magcard:hover { box-shadow: 0 10px 18px alpha(black, 0.20); transform: scale(1.025); }
+.dc-magcard .dc-magphoto { transition: transform 300ms cubic-bezier(0.2, 0.9, 0.25, 1); }
 .dc-magcard:hover .dc-magphoto { transform: scale(1.08); }
-.dc-cover { border-radius: 22px; box-shadow: 0 8px 16px alpha(black, 0.16); transition: box-shadow 300ms ease; }
+.dc-cover { border-radius: 20px; box-shadow: 0 10px 18px alpha(black, 0.20); transition: box-shadow 300ms cubic-bezier(0.2, 0.9, 0.25, 1); }
 .dc-cover:hover { box-shadow: 0 14px 26px alpha(black, 0.28); }
 .dc-cover-plain { background-color: alpha(@window_fg_color, 0.045); }
 .dc-pill { border-radius: 99px; padding: 7px 14px; font-weight: 600; }

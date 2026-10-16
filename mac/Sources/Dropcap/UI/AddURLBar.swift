@@ -9,8 +9,8 @@ struct AddURLBar: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: Space.xs) {
+            HStack(spacing: Space.s) {
                 Image(systemName: "link.badge.plus").foregroundStyle(.secondary).font(.app(compact ? 11 : 13))
                 TextField("주소로 추가… (기사 주소를 붙여 넣고 Return)", text: $text)
                     .textFieldStyle(.plain).font(.app(compact ? 12 : 14))
@@ -29,7 +29,7 @@ struct AddURLBar: View {
                 Label(m.text, systemImage: m.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                     .font(.app(compact ? 11 : 12)).foregroundStyle(m.ok ? Color.green : Color.orange)
                     .lineLimit(1).truncationMode(.middle)
-                    .transition(.opacity)
+                    .transition(Motion.fade)
             }
         }
     }
@@ -46,7 +46,7 @@ struct AddURLBar: View {
             case .failure(let f): message = (false, f.message)
             }
             try? await Task.sleep(for: .seconds(4))
-            if message?.text != nil { withAnimation { message = nil } }
+            if message?.text != nil { withMotion(Motion.exit()) { message = nil } }
         }
     }
 }

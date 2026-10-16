@@ -69,10 +69,10 @@ struct MenuView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .padding(.horizontal, 14).padding(.bottom, 8)
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary).font(.app(11))
-                TextField("제목·출처 검색", text: $query).textFieldStyle(.plain).font(.app(12))
+            .padding(.horizontal, Space.l).padding(.bottom, Space.s)
+            HStack(spacing: Space.s) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary).font(.dsCaption)
+                TextField("제목·출처 검색", text: $query).textFieldStyle(.plain).font(.dsCallout)
                     .onKeyPress(.downArrow) { listFocused = true; selected = selected ?? items.first?.key; return .handled } // 검색하다 ↓ 로 목록으로
                 if !query.isEmpty {
                     Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }.buttonStyle(.plain)
@@ -86,7 +86,7 @@ struct MenuView: View {
                     .pickerStyle(.inline)
                 } label: {
                     // 지금 정렬이 무엇인지 보이게(최신순이 아닐 때는 이름까지)
-                    HStack(spacing: 3) {
+                    HStack(spacing: Space.xs) {
                         Image(systemName: sortRaw == "important" ? "star" : sortRaw == "source" ? "building.2" : "arrow.up.arrow.down")
                         if let l = sortLabel { Text(l).lineLimit(1) }
                     }
@@ -95,13 +95,13 @@ struct MenuView: View {
                 }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("정렬")
             }
-            .padding(.horizontal, 9).padding(.vertical, 5)
-            .background(.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .padding(.horizontal, 14).padding(.bottom, 8)
+            .padding(.horizontal, Space.s).padding(.vertical, Space.xs)
+            .background(.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+            .padding(.horizontal, Space.l).padding(.bottom, Space.s)
             // 분야 칩(고른 분야). AI 를 누르면 그 안의 하위 칩이 한 줄 더
             SectionChipBar(section: $section, sub: $category, sections: model.chosenSections, compact: true)
-                .padding(.horizontal, 14).padding(.bottom, 8)
-            if tab == .saved { AddURLBar().padding(.horizontal, 14).padding(.bottom, 10) } // 피드에 없는 기사도 주소로 저장
+                .padding(.horizontal, Space.l).padding(.bottom, Space.s)
+            if tab == .saved { AddURLBar().padding(.horizontal, Space.l).padding(.bottom, Space.m) } // 피드에 없는 기사도 주소로 저장
             Divider().opacity(0.5)
             // 목록 칸 높이를 고정한다: 상단바 창은 내용이 줄어도 창 크기를 줄이지 않아 아래에 빈 칸이 남는다
             Group {
@@ -109,17 +109,17 @@ struct MenuView: View {
                     empty.frame(maxHeight: .infinity)
                 } else {
                     if snapshot {
-                        VStack(spacing: 2) { rows(items) }
-                            .padding(6).frame(height: Self.listHeight, alignment: .top).clipped()
+                        VStack(spacing: Space.xxs) { rows(items) }
+                            .padding(Space.s).frame(height: Self.listHeight, alignment: .top).clipped()
                     } else {
                         ScrollViewReader { proxy in
                             ScrollView {
-                                LazyVStack(spacing: 2) { rows(items) }
-                                    .padding(6)
+                                LazyVStack(spacing: Space.xxs) { rows(items) }
+                                    .padding(Space.s)
                             }
                             .onChange(of: selected) { _, k in
                                 guard let k else { return }
-                                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.15)) { proxy.scrollTo(k, anchor: .center) }
+                                withAnimation(reduceMotion ? nil : Motion.change(Motion.Duration.quick)) { proxy.scrollTo(k, anchor: .center) }
                             }
                         }
                     }
@@ -151,13 +151,13 @@ struct MenuView: View {
         ForEach(Array(list.enumerated()), id: \.element.key) { i, it in
             // 출처별일 때는 출처가 바뀌는 곳에 이름표
             if sortRaw == "source", i == 0 || list[i - 1].sourceName != it.sourceName {
-                HStack(spacing: 6) {
-                    Text(it.sourceName).font(.app(11, .bold))
-                    Text("\(list.filter { $0.sourceName == it.sourceName }.count)").font(.app(10.5)).foregroundStyle(.tertiary)
+                HStack(spacing: Space.s) {
+                    Text(it.sourceName).font(.dsChip)
+                    Text("\(list.filter { $0.sourceName == it.sourceName }.count)").font(.dsCaption).foregroundStyle(.tertiary)
                     Spacer()
                 }
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, 8).padding(.top, i == 0 ? 2 : 10).padding(.bottom, 2)
+                .padding(.horizontal, Space.s).padding(.top, i == 0 ? 2 : 10).padding(.bottom, Space.xxs)
             }
             if listStyle != "compact", sortRaw != "source", let label = MenuStyles.timeSection(it, prev: i > 0 ? list[i - 1] : nil), !(listStyle == "hero" && i == 0) {
                 MenuStyles.SectionLabel(text: label, first: i == 0 || (listStyle == "hero" && i == 1))
@@ -205,19 +205,19 @@ struct MenuView: View {
 
     private var header: some View {
         HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: Space.xxs) {
+                HStack(spacing: Space.s) {
                     Text("Dropcap").font(.app(16, .heavy)).tracking(-0.3)
                     if let why = model.autoQuietReason {
                         Label(why.label, systemImage: "person.2.wave.2").labelStyle(.iconOnly)
-                            .font(.app(11)).foregroundStyle(.indigo).help("\(why.label)이라 알림을 띄우지 않고 모아 둡니다")
+                            .font(.dsCaption).foregroundStyle(.indigo).help("\(why.label)이라 알림을 띄우지 않고 모아 둡니다")
                     } else if model.isQuietTime {
                         Label("방해 금지", systemImage: "moon.fill").labelStyle(.iconOnly)
-                            .font(.app(11)).foregroundStyle(.indigo).help("방해 금지 시간이라 알림을 띄우지 않습니다")
+                            .font(.dsCaption).foregroundStyle(.indigo).help("방해 금지 시간이라 알림을 띄우지 않습니다")
                     }
                 }
                 Text(model.checking ? "확인하는 중…" : "마지막 확인 \(AppModel.clock(model.state.lastCheck))")
-                    .font(.app(11)).foregroundStyle(.secondary).monospacedDigit()
+                    .font(.dsCaption).foregroundStyle(.secondary).monospacedDigit()
                     .lineLimit(1).fixedSize()
             }
             .layoutPriority(1)
@@ -231,7 +231,7 @@ struct MenuView: View {
                     Button("내일 아침 8시까지") { model.snooze(AppModel.tomorrowMorning()) }
                 }
             } label: {
-                Image(systemName: model.isSnoozed ? "bell.slash.fill" : "bell").font(.app(12))
+                Image(systemName: model.isSnoozed ? "bell.slash.fill" : "bell").font(.dsCallout)
                     .foregroundStyle(model.isSnoozed ? Color.orange : Color.secondary)
             }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
@@ -240,57 +240,56 @@ struct MenuView: View {
                 Task { await model.checkAll(manual: true) }
             } label: {
                 Image(systemName: "arrow.clockwise")
-                    .font(.app(12, .semibold))
+                    .font(.dsBodyStrong)
                     .rotationEffect(.degrees(model.checking ? 360 : 0))
-                    .animation(model.checking ? .linear(duration: 0.9).repeatForever(autoreverses: false) : .default, value: model.checking)
+                    .animation(model.checking ? Motion.loop(0.9) : Motion.exit(), value: model.checking)
             }
             .buttonStyle(.borderless)
             .disabled(model.checking)
             .help("지금 확인")
         }
-        .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 10)
+        .padding(.horizontal, Space.l).padding(.top, Space.l).padding(.bottom, Space.m)
     }
 
     private var empty: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: Space.s) {
             Image(systemName: tab == .saved ? "bookmark" : "newspaper").font(.app(26, .light)).foregroundStyle(.tertiary)
             Text(!query.isEmpty || category != nil || section != nil ? "맞는 소식이 없습니다" : tab == .saved ? "저장한 소식이 없습니다" : tab == .unread ? "모두 읽었습니다" : "아직 새 소식이 없습니다")
-                .font(.app(13, .medium))
+                .font(.dsBody)
             Text(tab == .saved ? "소식을 오른쪽 클릭해 '나중에 읽기'로 저장할 수 있어요" : "새 글이 올라오면 물방울이 떨어지듯 알려 드려요")
-                .font(.app(11.5)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                .font(.dsCaption).foregroundStyle(.secondary).multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 32)
+        .padding(.vertical, Space.xxl)
     }
 
     private var footer: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: Space.xs) {
             Button { MagazineController.open() } label: {
-                HStack(spacing: 6) {
+                HStack(spacing: Space.s) {
                     Image(systemName: "book.pages.fill")
-                    Text("매거진 열기").font(.app(12.5, .semibold))
-                    Text("⌥⌘M").font(.app(11)).foregroundStyle(.white.opacity(0.7))
+                    Text("매거진 열기").font(.dsBodyStrong)
+                    Text("⌥⌘M").font(.dsCaption).foregroundStyle(.white.opacity(0.7))
                 }
-                .padding(.horizontal, 11).padding(.vertical, 6)
-                .background(Color.accentColor.gradient, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .padding(.horizontal, Space.m).padding(.vertical, Space.s)
+                .background(Color.accentColor.gradient, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                 .foregroundStyle(.white)
             }
             .buttonStyle(.plain)
             Spacer()
             Button {
-                NSApp.activate(ignoringOtherApps: true)
-                openSettings()
-            } label: { Image(systemName: "gearshape").font(.app(13)) }
+                SettingsWindow.open(openSettings)
+            } label: { Image(systemName: "gearshape").font(.dsBody) }
             .buttonStyle(FooterButton()).help("설정")
             Menu {
                 Button("모두 읽음으로 표시") { model.markAllRead() }
                 Button("알림 미리 보기") { model.preview() }
                 Divider()
                 Button("Dropcap 종료") { NSApp.terminate(nil) }
-            } label: { Image(systemName: "ellipsis.circle").font(.app(13)) }
+            } label: { Image(systemName: "ellipsis.circle").font(.dsBody) }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("더 보기")
         }
-        .padding(.horizontal, 10).padding(.vertical, 8)
+        .padding(.horizontal, Space.m).padding(.vertical, Space.s)
     }
 }
 
@@ -303,17 +302,17 @@ private struct Row: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(alignment: .top, spacing: 10) {
+            HStack(alignment: .top, spacing: Space.m) {
                 Monogram(letter: item.initial, color: item.accent, size: 28)
                     .opacity(read ? 0.55 : 1)
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: Space.xs) {
                     Text(item.displayTitle)
                         .font(.system(size: 13, weight: read ? .regular : .semibold))
                         .foregroundStyle(read ? .secondary : .primary)
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
-                    HStack(spacing: 4) {
+                    HStack(spacing: Space.xs) {
                         if item.important == true { Image(systemName: "star.fill").foregroundStyle(.orange) }
                         else if let w = item.watch { Image(systemName: "eye").foregroundStyle(.teal).help("지켜볼 낱말: \(w)") }
                         Image(systemName: item.topicSymbol).foregroundStyle(item.topicColor)
@@ -324,16 +323,16 @@ private struct Row: View {
                         Text(RelativeTime.string(item.date))
                         if saved { Image(systemName: "bookmark.fill").foregroundStyle(item.accent) }
                     }
-                    .font(.app(11)).foregroundStyle(.secondary)
+                    .font(.dsCaption).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
                 RowThumb(item: item).opacity(read ? 0.6 : 1)
                 if !read {
-                    Circle().fill(item.accent).frame(width: 7, height: 7).padding(.top, 6)
+                    Circle().fill(item.accent).frame(width: 7, height: 7).padding(.top, Space.s)
                 }
             }
-            .padding(.horizontal, 10).padding(.vertical, 8)
-            .background(hover ? Color.primary.opacity(0.07) : .clear, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .padding(.horizontal, Space.m).padding(.vertical, Space.s)
+            .background(hover ? Color.primary.opacity(0.07) : .clear, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -360,7 +359,7 @@ struct RowThumb: View {
                     .contentShape(Rectangle())
                     .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(.primary.opacity(0.08), lineWidth: 0.5))
-                    .transition(.opacity)
+                    .transition(Motion.fade)
             } else if placeholder {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .fill(LinearGradient(colors: [item.accent.opacity(0.35), item.topicColor.opacity(0.18)], startPoint: .topLeading, endPoint: .bottomTrailing))
@@ -373,7 +372,7 @@ struct RowThumb: View {
         .task(id: item.key) {
             let url = [item.image, Magazine.shared.storedImage(item.key)].compactMap { $0 }.first { !ImageKey.isJunk($0) }
             guard let url, let img = await ImageLoader.shared.image(url), !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.25)) { image = img }
+            withMotion(Motion.enter(Motion.Duration.slow)) { image = img }
         }
     }
 }
@@ -388,9 +387,9 @@ private struct FooterButton: ButtonStyle {
         var body: some View {
             configuration.label
                 .labelStyle(.titleAndIcon)
-                .font(.app(12))
-                .padding(.horizontal, 8).padding(.vertical, 5)
-                .background(Color.primary.opacity(configuration.isPressed ? 0.12 : hover ? 0.07 : 0), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .font(.dsCallout)
+                .padding(.horizontal, Space.s).padding(.vertical, Space.xs)
+                .background(Color.primary.opacity(configuration.isPressed ? 0.12 : hover ? 0.07 : 0), in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                 .onHover { hover = $0 }
         }
     }

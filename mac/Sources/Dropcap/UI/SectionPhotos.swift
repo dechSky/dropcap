@@ -24,7 +24,7 @@ final class SectionPhotos: ObservableObject {
                     var got = await SectionPhoto.pick(bySection[id] ?? [])
                     if got == nil { got = await SectionPhoto.pick(await Self.feedItems(id)) }
                     guard let img = got?.image else { return }
-                    withAnimation(.easeOut(duration: 0.35)) { self.images[id] = img }
+                    withMotion(Motion.enter(Motion.Duration.slow)) { self.images[id] = img }
                 }
             }
         }
@@ -72,14 +72,14 @@ struct SectionGlassCard: View {
             ZStack(alignment: .topLeading) {
                 if let photo {
                     Image(nsImage: photo).resizable().aspectRatio(contentMode: .fill).frame(width: g.size.width, height: g.size.height)
-                        .blur(radius: 10).saturation(1.2).transition(.opacity)
+                        .blur(radius: 10).saturation(1.2).transition(Motion.fade)
                         .allowsHitTesting(false) // '채우기' 사진은 띠 밖으로 크게 넘친다. 잘려 보여도 클릭 영역은 남아 위 표지 단추를 막았다
                 } else { t }
                 LinearGradient(colors: [t.opacity(0.88), SectionCardLab.shift(t, hue: 0.05, bri: -0.2).opacity(0.6)], startPoint: .topLeading, endPoint: .bottomTrailing)
-                RoundedRectangle(cornerRadius: 10, style: .continuous).fill(.white.opacity(0.1))
-                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                RoundedRectangle(cornerRadius: Radius.control, style: .continuous).fill(.white.opacity(0.1))
+                    .overlay(RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
                         .strokeBorder(LinearGradient(colors: [.white.opacity(0.6), .white.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1))
-                    .padding(8)
+                    .padding(Space.s)
                 if let photo {
                     SectionCardLab.tilted(photo, frame: true)
                         .scaleEffect(height / 130)
@@ -87,27 +87,27 @@ struct SectionGlassCard: View {
                         .rotationEffect(.degrees(hover ? 2 : 0))
                         .allowsHitTesting(false)
                 }
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: Space.xxs) {
                     Text(SectionCardLab.english(section.id)).font(.system(size: 9, weight: .semibold, design: .monospaced)).tracking(1.4).opacity(0.85)
                     Text(section.name).font(.app(19, .heavy))
-                    if let subtitle { Text(subtitle).font(.app(11)).opacity(0.85).lineLimit(2).frame(maxWidth: g.size.width * (g.size.width > 400 ? 0.7 : 0.55), alignment: .leading).padding(.top, 2) }
+                    if let subtitle { Text(subtitle).font(.dsCaption).opacity(0.85).lineLimit(2).frame(maxWidth: g.size.width * (g.size.width > 400 ? 0.7 : 0.55), alignment: .leading).padding(.top, Space.xxs) }
                 }
-                .foregroundStyle(.white).shadow(color: .black.opacity(0.2), radius: 2, y: 1).padding(16)
+                .foregroundStyle(.white).shadow(color: .black.opacity(0.2), radius: 2, y: 1).padding(Space.l)
             }
             .frame(width: g.size.width, height: g.size.height).clipped()
         }
         .frame(height: height)
-        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous)) // 클릭은 보이는 띠 안에서만
+        .contentShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous)) // 클릭은 보이는 띠 안에서만
         .overlay(alignment: .bottomLeading) {
             if showsCheck { Image(systemName: selected ? "checkmark.circle.fill" : "circle").font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(.white.opacity(selected ? 1 : 0.75)).shadow(color: .black.opacity(0.3), radius: 2).padding(14) }
+                .foregroundStyle(.white.opacity(selected ? 1 : 0.75)).shadow(color: .black.opacity(0.3), radius: 2).padding(Space.l) }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(.white.opacity(selected ? 0.95 : 0), lineWidth: 2.5))
+        .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Radius.card, style: .continuous).strokeBorder(.white.opacity(selected ? 0.95 : 0), lineWidth: 2.5))
         .shadow(color: t.opacity(selected ? 0.5 : 0.28), radius: selected ? 12 : 7, y: 4)
         .scaleEffect(hover ? 1.015 : 1)
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: hover)
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: selected)
+        .motion(Motion.snap, value: hover)
+        .motion(Motion.snap, value: selected)
         .onHover { hover = $0 }
     }
 }

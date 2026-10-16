@@ -21,11 +21,11 @@ enum MenuStyles {
         let text: String
         var first = false
         var body: some View {
-            HStack(spacing: 8) {
-                Text(text).font(.app(11, .bold)).foregroundStyle(.secondary)
+            HStack(spacing: Space.s) {
+                Text(text).font(.dsChip).foregroundStyle(.secondary)
                 Rectangle().fill(.primary.opacity(0.08)).frame(height: 1)
             }
-            .padding(.horizontal, 8).padding(.top, first ? 4 : 12).padding(.bottom, 4)
+            .padding(.horizontal, Space.s).padding(.top, first ? 4 : 12).padding(.bottom, Space.xs)
         }
     }
 
@@ -39,16 +39,16 @@ enum MenuStyles {
         @State private var hover = false
         var body: some View {
             Button(action: action) {
-                HStack(alignment: .center, spacing: 11) {
+                HStack(alignment: .center, spacing: Space.m) {
                     RowThumb(item: item, width: compact ? 54 : 64, height: compact ? 54 : 64, radius: 10, placeholder: true)
                         .opacity(read ? 0.65 : 1)
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: Space.xs) {
                         Text(item.displayTitle)
                             .font(.app(13, read ? .regular : .semibold))
                             .foregroundStyle(read ? .secondary : .primary)
                             .lineLimit(2).multilineTextAlignment(.leading)
                             .fixedSize(horizontal: false, vertical: true)
-                        HStack(spacing: 5) {
+                        HStack(spacing: Space.xs) {
                             Text(item.sourceName).fontWeight(.semibold)
                             PaywallMark(item: item)
                             Text(item.topicLabel).foregroundStyle(item.topicColor)
@@ -56,18 +56,18 @@ enum MenuStyles {
                             Text(RelativeTime.string(item.date)).foregroundStyle(.tertiary)
                             if saved { Image(systemName: "bookmark.fill").foregroundStyle(item.accent) }
                         }
-                        .font(.app(10.5)).foregroundStyle(.secondary).lineLimit(1)
+                        .font(.dsCaption).foregroundStyle(.secondary).lineLimit(1)
                     }
                     Spacer(minLength: 0)
                     if !read { Circle().fill(item.accent).frame(width: 6, height: 6) }
                 }
-                .padding(8)
-                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.primary.opacity(hover ? 0.08 : 0.035)))
+                .padding(Space.s)
+                .background(RoundedRectangle(cornerRadius: Radius.card, style: .continuous).fill(.primary.opacity(hover ? 0.08 : 0.035)))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .onHover { hover = $0 }
-            .padding(.vertical, 2)
+            .padding(.vertical, Space.xxs)
         }
     }
 
@@ -82,32 +82,32 @@ enum MenuStyles {
                 ZStack(alignment: .bottomLeading) {
                     RowThumb(item: item, width: 346, height: 168, radius: 14, placeholder: true)
                     LinearGradient(colors: [.clear, .black.opacity(0.72)], startPoint: .center, endPoint: .bottom)
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    VStack(alignment: .leading, spacing: 5) {
-                        HStack(spacing: 6) {
-                            Text(item.topicLabel).font(.app(10.5, .bold))
-                                .padding(.horizontal, 7).padding(.vertical, 2)
+                        .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+                    VStack(alignment: .leading, spacing: Space.xs) {
+                        HStack(spacing: Space.s) {
+                            Text(item.topicLabel).font(.dsChip)
+                                .padding(.horizontal, Space.s).padding(.vertical, Space.xxs)
                                 .background(item.topicColor.opacity(0.85), in: Capsule())
                             if let x = item.extraTopic {
-                                Text(Sections.name(x)).font(.app(10.5, .bold))
-                                    .padding(.horizontal, 7).padding(.vertical, 2)
+                                Text(Sections.name(x)).font(.dsChip)
+                                    .padding(.horizontal, Space.s).padding(.vertical, Space.xxs)
                                     .background((Sections.byID(x)?.tint ?? .gray).opacity(0.85), in: Capsule())
                             }
-                            Text("\(item.sourceName) · \(RelativeTime.string(item.date))").font(.app(11, .medium)).opacity(0.85)
+                            Text("\(item.sourceName) · \(RelativeTime.string(item.date))").font(.dsCaption).opacity(0.85)
                             PaywallMark(item: item)
                         }
-                        Text(item.displayTitle).font(.app(15.5, .bold)).lineLimit(2).multilineTextAlignment(.leading)
+                        Text(item.displayTitle).font(.dsHeadline).lineLimit(2).multilineTextAlignment(.leading)
                     }
                     .foregroundStyle(.white)
-                    .padding(13)
+                    .padding(Space.m)
                 }
                 .frame(width: 346, height: 168)
                 .scaleEffect(hover ? 1.01 : 1)
-                .shadow(color: .black.opacity(hover ? 0.25 : 0.12), radius: hover ? 10 : 5, y: 3)
+                .elevation(hover ? Elevation.card : Elevation.low)
             }
             .buttonStyle(.plain)
-            .onHover { h in withAnimation(.easeOut(duration: 0.15)) { hover = h } }
-            .padding(.vertical, 4)
+            .onHover { h in withMotion(Motion.snap) { hover = h } }
+            .padding(.vertical, Space.xs)
         }
     }
 
@@ -120,33 +120,33 @@ enum MenuStyles {
         @State private var hover = false
         var body: some View {
             Button(action: action) {
-                HStack(alignment: .top, spacing: 10) {
+                HStack(alignment: .top, spacing: Space.m) {
                     VStack(spacing: 0) {
                         Text(item.date.map { MenuStyles.hhmm.string(from: $0) } ?? "")
-                            .font(.app(10.5, .semibold)).monospacedDigit()
+                            .font(.dsChip).monospacedDigit()
                             .foregroundStyle(read ? .tertiary : .secondary)
-                        Circle().fill(read ? Color.secondary.opacity(0.4) : item.accent).frame(width: 7, height: 7).padding(.top, 5)
-                        if !last { Rectangle().fill(.primary.opacity(0.1)).frame(width: 1).frame(maxHeight: .infinity).padding(.top, 3) }
+                        Circle().fill(read ? Color.secondary.opacity(0.4) : item.accent).frame(width: 7, height: 7).padding(.top, Space.xs)
+                        if !last { Rectangle().fill(.primary.opacity(0.1)).frame(width: 1).frame(maxHeight: .infinity).padding(.top, Space.xs) }
                     }
                     .frame(width: 38)
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: Space.xs) {
                         Text(item.displayTitle)
                             .font(.app(13, read ? .regular : .semibold))
                             .foregroundStyle(read ? .secondary : .primary)
                             .lineLimit(3).multilineTextAlignment(.leading)
                             .fixedSize(horizontal: false, vertical: true)
-                        HStack(spacing: 5) {
+                        HStack(spacing: Space.xs) {
                             Image(systemName: item.topicSymbol).foregroundStyle(item.topicColor)
                             Text(item.sourceName)
                             PaywallMark(item: item)
                         }
-                        .font(.app(10.5)).foregroundStyle(.secondary)
+                        .font(.dsCaption).foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 0)
-                    RowThumb(item: item, width: 52, height: 52, radius: 9).padding(.top, 2)
+                    RowThumb(item: item, width: 52, height: 52, radius: 9).padding(.top, Space.xxs)
                 }
-                .padding(.horizontal, 8).padding(.top, 6).padding(.bottom, 10)
-                .background(hover ? Color.primary.opacity(0.06) : .clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .padding(.horizontal, Space.s).padding(.top, Space.s).padding(.bottom, Space.m)
+                .background(hover ? Color.primary.opacity(0.06) : .clear, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)

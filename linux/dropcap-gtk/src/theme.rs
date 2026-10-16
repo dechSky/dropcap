@@ -53,6 +53,7 @@ pub fn is_dark() -> bool {
 }
 
 // 맥 SwiftUI 기본 색에 맞춘 이름 있는 색(라이트, 다크)
+// 모서리·간격·글자 크기는 디자인 시스템 토큰 값(docs/DESIGN.md: 모서리 4·8·14·20, 간격 4 배수, 칩 11)
 pub fn css() -> String {
     let f = family();
     format!(
@@ -63,21 +64,21 @@ pub fn css() -> String {
 .dc-secondary {{ opacity: 0.62; }}
 .dc-tertiary {{ opacity: 0.45; }}
 .dc-read {{ opacity: 0.55; }}
-.dc-chip {{ border-radius: 99px; padding: 1px 7px; font-size: 10.5px; font-weight: 600; }}
+.dc-chip {{ border-radius: 99px; padding: 2px 8px; font-size: 11px; font-weight: 600; }}
 .dc-card {{ border-radius: 14px; background-color: alpha(@window_fg_color, 0.04); }}
 .dc-card:hover {{ background-color: alpha(@window_fg_color, 0.07); }}
-.dc-row {{ border-radius: 10px; padding: 7px 9px; }}
+.dc-row {{ border-radius: 8px; padding: 8px 8px; }}
 .dc-row:hover {{ background-color: alpha(@window_fg_color, 0.06); }}
 .dc-unread-dot {{ min-width: 7px; min-height: 7px; border-radius: 99px; background-color: @accent_bg_color; }}
-.dc-accent-button {{ background-color: @accent_bg_color; color: @accent_fg_color; border-radius: 9px; font-weight: 600; }}
+.dc-accent-button {{ background-color: @accent_bg_color; color: @accent_fg_color; border-radius: 8px; font-weight: 600; }}
 .dc-scrapped {{ border-left: 3px solid #F5C518; padding-left: 9px; background-color: alpha(#F5C518, 0.10); }}
 .dc-reader-body {{ line-height: 1.6; }}
-.dc-skeleton {{ border-radius: 6px; background-color: alpha(@window_fg_color, 0.08); }}
+.dc-skeleton {{ border-radius: 8px; background-color: alpha(@window_fg_color, 0.08); }}
 .dc-toast {{ border-radius: 20px; }}
 .dc-masthead-logo {{ font-weight: 900; letter-spacing: -1px; }}
-.dc-glass {{ background-color: alpha(@window_bg_color, 0.78); border-radius: 18px; border: 1px solid alpha(@window_fg_color, 0.10); }}
+.dc-glass {{ background-color: alpha(@window_bg_color, 0.78); border-radius: 20px; border: 1px solid alpha(@window_fg_color, 0.10); }}
 .dc-selected {{ outline: 2.5px solid @accent_color; outline-offset: -2px; box-shadow: 0 0 6px alpha(@accent_color, 0.45); }}
-.dc-free-box {{ padding: 14px; border-radius: 12px; background-color: alpha(@window_fg_color, 0.045); border: 0.5px solid alpha(@window_fg_color, 0.08); }}
+.dc-free-box {{ padding: 16px; border-radius: 14px; background-color: alpha(@window_fg_color, 0.045); border: 0.5px solid alpha(@window_fg_color, 0.08); }}
 .dc-brief-box {{ padding: 16px; border-radius: 14px; background-color: alpha(@window_fg_color, 0.04); border: 0.5px solid alpha(@window_fg_color, 0.08); }}
 .dc-done-band {{ padding: 12px 16px; border-radius: 14px; background-color: alpha(#34C759, 0.09); border: 0.5px solid alpha(#34C759, 0.25); }}
 .dc-progress trough {{ min-height: 4px; border-radius: 99px; }}

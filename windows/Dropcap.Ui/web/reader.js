@@ -542,6 +542,7 @@
     const inFind = e.target === fq;
     const k = (e.key || '').toLowerCase();
     const other = typing(e.target) && !inFind;
+    if (e.ctrlKey && !e.altKey && !e.shiftKey && k === ',') { e.preventDefault(); e.stopPropagation(); send('settings'); return; } // 설정(맥 ⌘,)
     if (e.ctrlKey && !e.altKey && !e.shiftKey && k === 'f') {
       if (other || document.querySelector('.photo-veil')) return;
       e.preventDefault(); e.stopPropagation(); openFind(); return;

@@ -27,31 +27,31 @@ struct WeeklyQuotes: View {
     var body: some View {
         let list = Self.pick(book.scraps, now: now)
         if Self.isSundayEvening(now), !list.isEmpty {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: Space.l) {
                 HStack(alignment: .firstTextBaseline) {
-                    Label("이번 주 모은 문장", systemImage: "text.quote").font(.display(20, .bold))
+                    Label("이번 주 모은 문장", systemImage: "text.quote").font(.dsHeading)
                     Spacer()
-                    Text("\(list.count)개 · 지난 7일").font(.app(12)).foregroundStyle(.secondary)
+                    Text("\(list.count)개 · 지난 7일").font(.dsCallout).foregroundStyle(.secondary)
                 }
                 ForEach(list) { s in
-                    VStack(alignment: .leading, spacing: 5) {
+                    VStack(alignment: .leading, spacing: Space.xs) {
                         Text("“\(s.quote ?? "")”").font(.app(14.5)).lineSpacing(4).lineLimit(5)
                             .textSelection(.enabled)
-                        HStack(spacing: 6) {
-                            Text(s.item.sourceName).font(.app(11.5, .semibold)).foregroundStyle(s.item.accent)
-                            Text(s.item.displayTitle).font(.app(11.5)).foregroundStyle(.secondary).lineLimit(1)
+                        HStack(spacing: Space.s) {
+                            Text(s.item.sourceName).font(.dsChip).foregroundStyle(s.item.accent)
+                            Text(s.item.displayTitle).font(.dsCaption).foregroundStyle(.secondary).lineLimit(1)
                         }
                     }
-                    .padding(.leading, 12)
+                    .padding(.leading, Space.m)
                     .overlay(alignment: .leading) { Capsule().fill(s.item.accent.opacity(0.55)).frame(width: 3) }
                     .contentShape(Rectangle())
                     .onTapGesture(count: 2) { ReaderController.open(s.item) }
                 }
             }
-            .padding(18)
+            .padding(Space.l)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.yellow.opacity(0.07), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.yellow.opacity(0.25), lineWidth: 0.5))
+            .background(Color.yellow.opacity(0.07), in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Radius.card, style: .continuous).strokeBorder(Color.yellow.opacity(0.25), lineWidth: 0.5))
         }
     }
 }

@@ -82,7 +82,8 @@ public class ReaderCatchupTests : IDisposable
         public void Share(NewsItem item) { }
         public void CopyText(string text) { }
         public void OpenMagazine(string? page = null) { }
-        public void OpenSettings(string? tab = null) { }
+        public int SettingsOpened { get; private set; }
+        public void OpenSettings(string? tab = null) => SettingsOpened++;
         public void OpenOnboarding() { }
         public void Quit() { }
         public Task<bool> SaveTextFile(string suggestedName, string text) => Task.FromResult(true);
@@ -321,6 +322,8 @@ public class ReaderCatchupTests : IDisposable
         await Run("step", Nyt.Key, new { dir = 1 });
         Assert.Equal(2, platform.Beeps);
 
+        await Run("settings", Ft.Key);                                        // Ctrl+, → 설정 창
+        Assert.Equal(1, platform.SettingsOpened);
         await Run("close", Ft.Key);                                           // Esc → 창 닫기
         Assert.Equal(["reader:" + Ft.Key], platform.Closed);
         page.Closed(Ft.Key);

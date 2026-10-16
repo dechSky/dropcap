@@ -200,7 +200,7 @@ impl RemoteImage {
             }
             if let Some(t) = tex {
                 pic.set_paintable(Some(&t));
-                fade_in(&pic, 500);
+                fade_in(&pic, crate::motion::SLOW);
             }
         });
     }
@@ -222,7 +222,7 @@ pub fn fade_in(w: &impl IsA<gtk::Widget>, ms: u32) {
         move |v| w.set_opacity(v)
     });
     let a = adw::TimedAnimation::new(&w, 0.0, 1.0, ms, target);
-    a.set_easing(adw::Easing::EaseOutCubic);
+    a.set_easing(crate::motion::ENTER);
     adw::prelude::AnimationExt::play(&a);
 }
 

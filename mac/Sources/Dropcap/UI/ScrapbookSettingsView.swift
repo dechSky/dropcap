@@ -13,7 +13,7 @@ struct ScrapbookSettingsView: View {
                     get: { export.enabled },
                     set: { on in if on && export.folder == nil { export.chooseFolder() } else { export.enabled = on } }))
                 LabeledContent("폴더") {
-                    HStack(spacing: 8) {
+                    HStack(spacing: Space.s) {
                         Text(export.folder.map { ($0.path as NSString).abbreviatingWithTildeInPath } ?? export.savedPath.map { "\(($0 as NSString).abbreviatingWithTildeInPath) (찾지 못함)" } ?? "고르지 않음")
                             .foregroundStyle(export.folder == nil ? .secondary : .primary)
                             .lineLimit(1).truncationMode(.middle)

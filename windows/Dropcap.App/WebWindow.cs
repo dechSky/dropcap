@@ -152,10 +152,16 @@ internal sealed class WebWindow
         SetWindowLongPtr(Hwnd, GWL_EXSTYLE, (ex | WS_EX_TOOLWINDOW) & ~(nint)WS_EX_APPWINDOW);
     }
 
-    // R-14: 누른 카드 자리에서 창이 커져 나온다(0.38초, 맥과 같은 곡선 0.2,0.9,0.25,1)
-    public void GrowFrom(RectInt32 from, RectInt32 to)
+    // 창 열기(docs/DESIGN.md · 맥 WindowMotion 과 같은 규칙): 제자리에서 0.96 → 1 로 살짝 커지며 내용이 나타난다(0.25초, 들어옴 곡선).
+    // 모든 앱 창(읽기·매거진·분야 고르기·설정)이 이것으로 열린다. 시스템 '애니메이션 효과'가 꺼져 있으면 그냥 나타난다.
+    // WinUI 창 자체는 투명도를 바꿀 수 없어 창 틀은 바로 보이고 내용(WebView)만 0 → 1 로 흐려졌다가 또렷해진다.
+    public void Present()
     {
-        if (Platform.AnimationsOff() || from.Width < 10) { AppWindow.MoveAndResize(to); Window.Activate(); return; }
+        var to = new RectInt32(AppWindow.Position.X, AppWindow.Position.Y, AppWindow.Size.Width, AppWindow.Size.Height);
+        if (Platform.AnimationsOff()) { Window.Activate(); return; }
+        int dw = (int)Math.Round(to.Width * (1 - Motion.StartScale) / 2), dh = (int)Math.Round(to.Height * (1 - Motion.StartScale) / 2);
+        var from = new RectInt32(to.X + dw, to.Y + dh, to.Width - 2 * dw, to.Height - 2 * dh);
+        View.Opacity = 0;
         AppWindow.MoveAndResize(from);
         Window.Activate();
         var t0 = DateTime.UtcNow;
@@ -163,22 +169,13 @@ internal sealed class WebWindow
         timer.Interval = TimeSpan.FromMilliseconds(10);
         timer.Tick += (tm, _) =>
         {
-            var k = Math.Min(1, (DateTime.UtcNow - t0).TotalSeconds / 0.38);
-            var e = Bezier(0.2, 0.9, 0.25, 1, k);
+            var k = Math.Min(1, (DateTime.UtcNow - t0).TotalSeconds / Motion.Standard);
+            var e = Motion.Enter(k);
             int L(int a, int b) => (int)Math.Round(a + (b - a) * e);
             AppWindow.MoveAndResize(new RectInt32(L(from.X, to.X), L(from.Y, to.Y), L(from.Width, to.Width), L(from.Height, to.Height)));
-            if (k >= 1) tm.Stop();
+            View.Opacity = e;
+            if (k >= 1) { View.Opacity = 1; tm.Stop(); }
         };
         timer.Start();
-    }
-
-    // CSS cubic-bezier 와 같은 곡선(x 로 t 를 찾아 y)
-    private static double Bezier(double x1, double y1, double x2, double y2, double x)
-    {
-        double Bx(double t) => 3 * (1 - t) * (1 - t) * t * x1 + 3 * (1 - t) * t * t * x2 + t * t * t;
-        double By(double t) => 3 * (1 - t) * (1 - t) * t * y1 + 3 * (1 - t) * t * t * y2 + t * t * t;
-        double lo = 0, hi = 1;
-        for (var i = 0; i < 30; i++) { var m = (lo + hi) / 2; if (Bx(m) < x) lo = m; else hi = m; }
-        return By((lo + hi) / 2);
     }
 }

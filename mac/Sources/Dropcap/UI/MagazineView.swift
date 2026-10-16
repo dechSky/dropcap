@@ -13,6 +13,7 @@ struct MagazineView: View {
     @ObservedObject private var mag = Magazine.shared
     @ObservedObject private var app = AppModel.shared
     @ObservedObject private var book = Scrapbook.shared
+    @Environment(\.openSettings) private var openSettings
     @State private var page: Page = MagazineController.pendingPage ?? (TestEnv.get("MAG_PAGE") == "scrapbook" ? .scrapbook
         : TestEnv.get("MAG_PAGE") == "stories" ? .stories
         : TestEnv.get("STORY").map { .story($0) }
@@ -55,13 +56,22 @@ struct MagazineView: View {
                     }
                 }
             }
+            // 맨 아래 '설정' 줄: 지면이 아니라 설정 창(⌘, 와 같은 길). 목록 바닥에 고정 — 지난 호가 길어도 늘 보인다.
+            // 목록 안의 줄(고르는 줄·단추 줄 모두)로 두면 눌러도 아무 일이 없었다(클릭 순회 '설정 열기')
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                Button { SettingsWindow.open(openSettings) } label: {
+                    Label("설정", systemImage: "gearshape").frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).padding(.horizontal, 18).padding(.vertical, 8)
+                .help("설정 열기 (⌘,)")
+            }
             .navigationSplitViewColumnWidth(min: 190, ideal: 210)
         } detail: {
             ZStack(alignment: .top) {
                 Color(nsColor: .textBackgroundColor).ignoresSafeArea()
                 detail
                     .id(page)
-                    .transition(.pageTurn(forward: turn >= 0))
+                    .transition(Motion.page)
                 // 제목줄이 투명이라 스크롤한 본문이 머리에 비쳐 겹쳐 보였다 → 머리 자리에 바탕색(맨 위에선 그대로 보임)
                 TitlebarBackdrop(fill: Color(nsColor: .textBackgroundColor), separator: scrolled)
             }
@@ -81,6 +91,7 @@ struct MagazineView: View {
                 Button("") { Task { await AppModel.shared.checkAll(manual: false) } }.keyboardShortcut("r", modifiers: .command)
                 Button("") { flip(-1) }.keyboardShortcut("[", modifiers: .command) // 이전 지면
                 Button("") { flip(1) }.keyboardShortcut("]", modifiers: .command)  // 다음 지면
+                Button("") { SettingsWindow.open(openSettings) }.keyboardShortcut(",", modifiers: .command) // 앱 메뉴가 없어 창에서 듣는다
             }
             .opacity(0).allowsHitTesting(false)
         }
@@ -117,7 +128,7 @@ struct MagazineView: View {
         TestLog.write("[매거진] 지면 이동 \(p)")
         guard p != page else { return }
         turn = order(p) >= order(page) ? 1 : -1
-        withAnimation(.spring(response: 0.62, dampingFraction: 0.9)) { page = p }
+        withMotion(Motion.settle) { page = p }
     }
 
     private func order(_ p: Page) -> Int {
@@ -132,28 +143,6 @@ struct MagazineView: View {
         case .search: return 7
         case .issue(let i): return 100 + (mag.archive.firstIndex(of: i) ?? 0)
         }
-    }
-}
-
-// MARK: - 책장 넘김
-private struct PageTurn: ViewModifier {
-    let angle: Double
-    let opacity: Double
-    let leading: Bool
-    func body(content: Content) -> some View {
-        content
-            .rotation3DEffect(.degrees(angle), axis: (x: 0, y: 1, z: 0), anchor: leading ? .leading : .trailing, perspective: 0.45)
-            .opacity(opacity)
-    }
-}
-
-extension AnyTransition {
-    static func pageTurn(forward: Bool) -> AnyTransition {
-        .asymmetric(
-            insertion: .modifier(active: PageTurn(angle: forward ? 28 : -28, opacity: 0, leading: !forward),
-                                 identity: PageTurn(angle: 0, opacity: 1, leading: !forward)),
-            removal: .modifier(active: PageTurn(angle: forward ? -70 : 70, opacity: 0, leading: forward),
-                               identity: PageTurn(angle: 0, opacity: 1, leading: forward)))
     }
 }
 
@@ -275,7 +264,7 @@ struct IssueView: View {
             case .fixed(let i): r = await mag.resolve(i)
             }
             guard gen == buildGen else { return }
-            withAnimation(animated) { data = r }
+            withMotion(animated) { data = r }
             seenRevision = rev
             built = true
             IssueCache.put(source, r, revision: rev)
@@ -293,45 +282,45 @@ struct IssueView: View {
                     Color.clear.frame(height: 0).id("top").reportsScrolledPastTop(in: "issueScroll")
                     if let d = data {
                         Masthead(title: headTitle(d), kicker: kicker(d), subtitle: subtitle(d), live: !isFixed, appeared: appeared)
-                            .padding(.horizontal, 36).padding(.top, 28).padding(.bottom, 22)
+                            .padding(.horizontal, Space.page).padding(.top, Space.xl).padding(.bottom, Space.xl)
                             .overlay(alignment: .bottomTrailing) {
                                 Picker("정렬", selection: $sortRaw) {
                                     ForEach(MagSort.allCases, id: \.rawValue) { Label($0.label, systemImage: $0.symbol).tag($0.rawValue) }
                                 }
                                 .pickerStyle(.menu).fixedSize()
-                                .padding(.trailing, 36).padding(.bottom, 34)
+                                .padding(.trailing, Space.page).padding(.bottom, Space.xxl)
                                 .help("지면 안의 기사 순서")
                             }
                         if source == .today, focus == nil {
                             TodayProgressView(keys: TodayIssue.keys(cover: d.cover?.item.key, sections: d.sections, chosen: AppModel.shared.chosenSections)) {
                                 todayDone = true
                             }
-                            .padding(.horizontal, 36).padding(.top, -8).padding(.bottom, 18)
+                            .padding(.horizontal, Space.page).padding(.top, -8).padding(.bottom, Space.l)
                         }
                         let chips = d.sections.compactMap { $0.section.section }
                         let counts = Dictionary(d.sections.compactMap { s in s.section.section.map { ($0, s.items.count) } }, uniquingKeysWith: +)
                         if let id = sectionID {
                             // 분야 지면: '전체'·다른 분야 칩 없이, AI 면 그 안의 하위 칩만
-                            if id == Sections.ai { AISubChips(sub: $sub, items: [d.cover?.item].compactMap { $0 } + d.sections.flatMap(\.items)).padding(.horizontal, 36).padding(.bottom, 18) }
-                            if let b = AppModel.shared.brief(id) { EveningBriefBox(brief: b).padding(.horizontal, 36).padding(.bottom, 18) }
+                            if id == Sections.ai { AISubChips(sub: $sub, items: [d.cover?.item].compactMap { $0 } + d.sections.flatMap(\.items)).padding(.horizontal, Space.page).padding(.bottom, Space.l) }
+                            if let b = AppModel.shared.brief(id) { EveningBriefBox(brief: b).padding(.horizontal, Space.page).padding(.bottom, Space.l) }
                         } else if source == .today, chips.count > 1 {
                             // 오늘 호의 분야 칩은 왼쪽 목록의 분야 지면으로 간다(칩과 목록 선택이 늘 같게)
                             SectionChipBar(section: Binding(get: { nil }, set: { id in
                                                if let id { NotificationCenter.default.post(name: .magazineGo, object: MagazineView.Page.section(id)) }
                                            }), sub: .constant(nil), sections: chips) // 건수는 가는 곳(분야 지면)과 달라 달지 않는다
-                                .padding(.horizontal, 36).padding(.bottom, 18)
+                                .padding(.horizontal, Space.page).padding(.bottom, Space.l)
                         } else if chips.count > 1 || focus != nil {
                             SectionChipBar(section: $focus, sub: $sub, sections: chips, counts: counts)
-                                .padding(.horizontal, 36).padding(.bottom, 18)
+                                .padding(.horizontal, Space.page).padding(.bottom, Space.l)
                         }
                         if let c = shownCover(d) {
                             CoverStory(stored: c, issue: d.issue, onStory: onStory)
-                                .padding(.horizontal, 28)
+                                .padding(.horizontal, Space.xl)
                                 .opacity(appeared ? 1 : 0)
                                 .offset(y: appeared ? 0 : 24)
-                                .animation(.spring(response: 0.7, dampingFraction: 0.85).delay(0.15), value: appeared)
+                                .motion(Motion.settle.delay(Motion.stagger(4)), value: appeared)
                         } else if shown(d).isEmpty {
-                            EmptyIssue(live: !isFixed, preparing: mag.preparing).padding(.horizontal, 36)
+                            EmptyIssue(live: !isFixed, preparing: mag.preparing).padding(.horizontal, Space.page)
                         }
                         ForEach(Array(shown(d).enumerated()), id: \.element.section.id) { si, sec in
                             // 분야 지면은 머리가 이미 분야 이름이므로 유리 띠를 다시 달지 않는다
@@ -340,10 +329,10 @@ struct IssueView: View {
                                 .padding(.top, si == 0 && shownCover(d) == nil ? 6 : 38)
                         }
                         Text("기사 저작권은 각 언론사·기업에 있습니다. 제목·요약·사진은 원문으로 이어 주기 위한 것입니다.")
-                            .font(.app(11)).foregroundStyle(.tertiary)
-                            .padding(.horizontal, 36).padding(.vertical, 40)
+                            .font(.dsCaption).foregroundStyle(.tertiary)
+                            .padding(.horizontal, Space.page).padding(.vertical, Space.xxxl)
                     } else {
-                        IssueBuilding(source: source, preparing: mag.preparing).padding(.horizontal, 36)
+                        IssueBuilding(source: source, preparing: mag.preparing).padding(.horizontal, Space.page)
                     }
                 }
             }
@@ -357,34 +346,34 @@ struct IssueView: View {
             .onKeyPress(phases: .down) { handle($0) }
             .onChange(of: selected) { _, k in
                 guard let k else { return }
-                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { proxy.scrollTo(k, anchor: .center) }
+                withAnimation(reduceMotion ? nil : Motion.change()) { proxy.scrollTo(k, anchor: .center) }
             }
             // 보는 동안 새 소식이 오면 지면을 갈아엎지 않고 위에 알림만 띄운다
             .overlay(alignment: .top) {
                 if newCount > 0 {
                     Button {
-                        build(animated: .spring(response: 0.5, dampingFraction: 0.85)) { withAnimation { proxy.scrollTo("top") } }
+                        build(animated: Motion.settle) { withMotion(Motion.change()) { proxy.scrollTo("top") } }
                     } label: {
                         Label("새 소식이 들어왔어요 · 새로 보기", systemImage: "arrow.up")
-                            .font(.app(12.5, .semibold))
-                            .padding(.horizontal, 14).padding(.vertical, 8)
-                            .background(.regularMaterial, in: Capsule())
+                            .font(.dsBodyStrong)
+                            .padding(.horizontal, Space.l).padding(.vertical, Space.s)
+                            .chromeGlass(in: Capsule())
                             .overlay(Capsule().strokeBorder(.primary.opacity(0.1), lineWidth: 0.5))
-                            .shadow(color: .black.opacity(0.15), radius: 10, y: 4)
+                            .elevation(Elevation.card)
                     }
                     .buttonStyle(.plain)
-                    .padding(.top, 14)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .padding(.top, Space.l)
+                    .transition(Motion.drop)
                 }
             }
-            .animation(.spring(response: 0.45, dampingFraction: 0.8), value: newCount > 0)
+            .motion(Motion.snap, value: newCount > 0)
         }
         .onAppear { build(); appeared = true; keyFocus = true }
         // 빈 지면이면 알림 없이 바로 채운다(처음 켰을 때)
         .onChange(of: mag.revision) { _, _ in
             // 지면이 비었거나 표지가 아직 없으면 알림 없이 바로 채운다(처음 켰을 때 등)
             if !isFixed, data?.cover == nil || (data?.issue.count ?? 0) == 0 || mag.preparing {
-                build(animated: .easeOut(duration: 0.4))
+                build(animated: Motion.settle)
             }
         }
         .onChange(of: mag.imageRevision) { _, _ in
@@ -394,7 +383,7 @@ struct IssueView: View {
         }
         .onChange(of: mag.layoutRevision) { _, _ in build() } // 출처 숨기기·분야 바꾸기는 바로 반영
         .onChange(of: mag.preparing) { _, now in
-            if !now, !isFixed { build(animated: .easeOut(duration: 0.4)) } // 첫 호가 다 엮이면 바로 보여 준다
+            if !now, !isFixed { build(animated: Motion.settle) } // 첫 호가 다 엮이면 바로 보여 준다
         }
     }
 }
@@ -406,7 +395,7 @@ private struct AISubChips: View {
     var body: some View {
         let counts = Dictionary(grouping: items, by: \.category).mapValues(\.count)
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 5) {
+            HStack(spacing: Space.xs) {
                 ForEach(NewsCategory.allCases.filter { (counts[$0] ?? 0) > 0 }) { c in // '기타'까지 — 칩 숫자의 합이 실린 수와 같게
                     SectionChip(label: c.label, symbol: c.symbol, color: c.color, on: sub == c, count: counts[c]) {
                         sub = sub == c ? nil : c
@@ -426,39 +415,39 @@ private struct Masthead: View {
     let appeared: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: Space.s) {
+            HStack(spacing: Space.s) {
                 // 로고: 잡지 첫 글자를 크게 키우는 '드롭캡'처럼 D 를 크게
                 HStack(alignment: .firstTextBaseline, spacing: 0) {
                     Text("D").font(.system(size: 22, weight: .black, design: .serif))
                     Text("ROPCAP").font(.system(size: 13, weight: .heavy, design: .serif)).tracking(2.2)
                 }
                 .foregroundStyle(.primary)
-                Text("매거진").font(.app(11.5, .medium)).foregroundStyle(.secondary)
-                if let kicker { Text("· " + kicker).font(.app(11.5, .medium)).foregroundStyle(.secondary) }
+                Text("매거진").font(.dsCaption).foregroundStyle(.secondary)
+                if let kicker { Text("· " + kicker).font(.dsCaption).foregroundStyle(.secondary) }
                 if live {
-                    Text("발행 중").font(.app(10.5, .bold)).foregroundStyle(.white)
-                        .padding(.horizontal, 7).padding(.vertical, 2)
+                    Text("발행 중").font(.dsChip).foregroundStyle(.white)
+                        .padding(.horizontal, Space.s).padding(.vertical, Space.xxs)
                         .background(Color.red.gradient, in: Capsule())
                         .symbolEffect(.pulse)
                 }
             }
             .foregroundStyle(.secondary)
             .opacity(appeared ? 1 : 0).offset(y: appeared ? 0 : 8)
-            .animation(.easeOut(duration: 0.5), value: appeared)
+            .motion(Motion.settle, value: appeared)
             Text(title)
-                .font(.display(38, .bold))
+                .font(.dsHero)
                 .tracking(-0.6)
                 .opacity(appeared ? 1 : 0).offset(y: appeared ? 0 : 14)
-                .animation(.spring(response: 0.6, dampingFraction: 0.85).delay(0.06), value: appeared)
+                .motion(Motion.settle.delay(Motion.stagger(1)), value: appeared)
             Text(subtitle)
-                .font(.app(13)).foregroundStyle(.secondary)
+                .font(.dsBody).foregroundStyle(.secondary)
                 .opacity(appeared ? 1 : 0)
-                .animation(.easeOut(duration: 0.5).delay(0.12), value: appeared)
+                .motion(Motion.settle.delay(Motion.stagger(2)), value: appeared)
             Rectangle().fill(.primary.opacity(0.85)).frame(height: 2)
                 .scaleEffect(x: appeared ? 1 : 0, anchor: .leading)
-                .animation(.spring(response: 0.9, dampingFraction: 0.9).delay(0.1), value: appeared)
-                .padding(.top, 10)
+                .motion(Motion.settle.delay(Motion.stagger(3)), value: appeared)
+                .padding(.top, Space.m)
         }
     }
 }
@@ -479,19 +468,19 @@ struct IssueBuilding: View {
     static func message(preparing: Bool) -> String { preparing ? "첫 호를 엮는 중…" : "지면을 엮는 중…" }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(Self.title(source)).font(.display(30, .bold)).padding(.top, 28)
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: Space.l) {
+            Text(Self.title(source)).font(.dsTitle).padding(.top, Space.xl)
+            HStack(spacing: Space.s) {
                 ProgressView().controlSize(.small)
-                Text(Self.message(preparing: preparing)).font(.app(13)).foregroundStyle(.secondary)
+                Text(Self.message(preparing: preparing)).font(.dsBody).foregroundStyle(.secondary)
             }
             .accessibilityElement(children: .combine)
             ForEach(0..<3, id: \.self) { i in // 카드 뼈대
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
                     .fill(.primary.opacity(0.05))
                     .frame(height: i == 0 ? 220 : 96)
             }
-            .padding(.top, 10)
+            .padding(.top, Space.m)
             .accessibilityHidden(true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -520,15 +509,15 @@ private struct EmptyIssue: View {
     let live: Bool
     var preparing = false
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: Space.s) {
             if preparing {
                 ProgressView().controlSize(.small)
-                Text("첫 호를 엮는 중…").font(.display(20, .semibold))
-                Text("구독한 출처에서 최근 사흘 소식을 모으고 번역하고 있어요. 잠시면 됩니다.").font(.app(13)).foregroundStyle(.secondary)
+                Text("첫 호를 엮는 중…").font(.dsHeading)
+                Text("구독한 출처에서 최근 사흘 소식을 모으고 번역하고 있어요. 잠시면 됩니다.").font(.dsBody).foregroundStyle(.secondary)
             } else {
                 Image(systemName: "newspaper").font(.app(34, .light)).foregroundStyle(.tertiary)
-                Text(live ? "아직 이번 호에 실을 소식이 없습니다" : "이 호에는 소식이 없습니다").font(.display(20, .semibold))
-                Text("새 소식이 들어오는 대로 지면이 채워집니다.").font(.app(13)).foregroundStyle(.secondary)
+                Text(live ? "아직 이번 호에 실을 소식이 없습니다" : "이 호에는 소식이 없습니다").font(.dsHeading)
+                Text("새 소식이 들어오는 대로 지면이 채워집니다.").font(.dsBody).foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 60)
@@ -570,22 +559,22 @@ private struct CoverStory: View {
             .buttonStyle(.plain)
             .overlay(alignment: .bottomLeading) {
                 if let c = storyID {
-                    HStack(spacing: 10) {
+                    HStack(spacing: Space.m) {
                         readPill.hidden() // 자리만 맞춘다(누르면 아래 카드 단추로)
                         Button { onStory(c) } label: { storyPill(c) }.buttonStyle(.plain)
                     }
-                    .padding(30)
+                    .padding(Space.xxl)
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: Radius.panel, style: .continuous))
             .onContinuousHover { phase in
                 switch phase { case .active: NSCursor.pointingHand.set(); case .ended: NSCursor.arrow.set() }
             }
-            .shadow(color: .black.opacity(hover ? 0.28 : 0.16), radius: hover ? 26 : 16, y: hover ? 14 : 8)
+            .elevation(hover ? Elevation.floating : Elevation.raised)
             .scaleEffect(hover ? 1.006 : 1)
-            .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hover)
+            .motion(Motion.snap, value: hover)
             .onHover { hover = $0 }
-            .selectionRing(selectedCard == item.key, radius: 22)
+            .selectionRing(selectedCard == item.key, radius: Radius.panel)
             .id(item.key)
             .background(ScreenFrame(frame: $frame))
             .onAppear {
@@ -607,53 +596,53 @@ private struct CoverStory: View {
                 LinearGradient(stops: [.init(color: .clear, location: 0.25), .init(color: .black.opacity(0.82), location: 1)],
                                startPoint: .top, endPoint: .bottom)
             } else {
-                RoundedRectangle(cornerRadius: 22, style: .continuous).fill(.primary.opacity(0.045))
+                RoundedRectangle(cornerRadius: Radius.panel, style: .continuous).fill(.primary.opacity(0.045))
             }
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: Space.m) {
+                HStack(spacing: Space.s) {
                     Text("표지").font(.app(11, .heavy)).tracking(1.5)
-                        .padding(.horizontal, 7).padding(.vertical, 3)
-                        .background(ink, in: RoundedRectangle(cornerRadius: 4))
+                        .padding(.horizontal, Space.s).padding(.vertical, Space.xs)
+                        .background(ink, in: RoundedRectangle(cornerRadius: Radius.xs))
                         .foregroundStyle(hasPhoto ? Color.black : Color(nsColor: .textBackgroundColor))
-                    Label(item.topicLabel, systemImage: item.topicSymbol).font(.app(12, .semibold))
-                    Text("\(item.sourceName) · \(RelativeTime.string(item.date))").font(.app(12))
+                    Label(item.topicLabel, systemImage: item.topicSymbol).font(.dsBodyStrong)
+                    Text("\(item.sourceName) · \(RelativeTime.string(item.date))").font(.dsCallout)
                     PaywallMark(item: item)
                 }
                 .foregroundStyle(ink.opacity(0.9))
                 Text(item.displayTitle)
-                    .font(.display(34, .bold))
+                    .font(.dsTitle)
                     .foregroundStyle(ink)
                     .lineLimit(3)
                     .multilineTextAlignment(.leading)
                     .shadow(color: .black.opacity(hasPhoto ? 0.3 : 0), radius: 8, y: 2)
                 if item.titleKo != nil, item.titleKo != item.title {
-                    Text(item.title).font(.app(13)).foregroundStyle(ink.opacity(0.7)).lineLimit(1)
+                    Text(item.title).font(.dsBody).foregroundStyle(ink.opacity(0.7)).lineLimit(1)
                 }
-                HStack(spacing: 10) {
+                HStack(spacing: Space.m) {
                     readPill
                     if let c = storyID { storyPill(c).hidden() } // 실제 단추는 위에 겹친다
                 }
-                .padding(.top, 4)
+                .padding(.top, Space.xs)
             }
-            .padding(30)
+            .padding(Space.xxl)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: hasPhoto ? 400 : nil)
-        .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: Radius.panel, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
     }
 
     private var readPill: some View {
-        Label("기사 읽기", systemImage: "book").font(.app(13, .semibold))
-            .padding(.horizontal, 14).padding(.vertical, 8)
+        Label("기사 읽기", systemImage: "book").font(.dsBodyStrong)
+            .padding(.horizontal, Space.l).padding(.vertical, Space.s)
             .background(ink, in: Capsule()).foregroundStyle(hasPhoto ? Color.black : Color(nsColor: .textBackgroundColor))
     }
 
     private func storyPill(_ c: String) -> some View {
         Label("여러 시각 \(Magazine.shared.cluster(c)?.size ?? 2)곳", systemImage: "rectangle.split.3x1")
-            .font(.app(13, .semibold))
-            .padding(.horizontal, 14).padding(.vertical, 8)
+            .font(.dsBodyStrong)
+            .padding(.horizontal, Space.l).padding(.vertical, Space.s)
             .background(ink.opacity(0.12), in: Capsule()).foregroundStyle(ink)
             .overlay(Capsule().strokeBorder(ink.opacity(0.35), lineWidth: 0.5))
     }
@@ -673,32 +662,32 @@ private struct SectionBlock: View {
     @ObservedObject private var photos = SectionPhotos.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: Space.l) {
             if !header {
                 EmptyView()
             } else if let ns = Sections.byID(section.section), section.kind == nil {
                 // 분야 지면: 분야 고르기와 같은 유리 띠(오늘의 사진 · 기사 수 · 첫 기사 제목)
                 SectionGlassCard(section: ns, photo: photos.images[ns.id], subtitle: "\(items.count)건 · " + (items.first?.displayTitle ?? ""), height: 92, showsCheck: false)
-                    .padding(.horizontal, 28)
+                    .padding(.horizontal, Space.xl)
                     .onAppear { photos.load() }
             } else {
-                HStack(spacing: 8) {
+                HStack(spacing: Space.s) {
                     Image(systemName: section.symbol).foregroundStyle(section.color)
-                    Text(section.label).font(.display(20, .bold))
-                    Text("\(items.count)").font(.app(13, .semibold)).foregroundStyle(.secondary)
-                    Rectangle().fill(.primary.opacity(0.12)).frame(height: 1).padding(.leading, 6)
+                    Text(section.label).font(.dsHeading)
+                    Text("\(items.count)").font(.dsBodyStrong).foregroundStyle(.secondary)
+                    Rectangle().fill(.primary.opacity(0.12)).frame(height: 1).padding(.leading, Space.s)
                 }
-                .padding(.horizontal, 36)
+                .padding(.horizontal, Space.page)
             }
             BalancedGrid(count: items.count) { cols in
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 200, maximum: 360), spacing: 18), count: cols), alignment: .leading, spacing: 22) {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 200, maximum: 360), spacing: Space.l), count: cols), alignment: .leading, spacing: Space.xl) {
                     ForEach(Array(items.enumerated()), id: \.element.key) { i, it in
                         StoryCard(item: it, issue: issue, order: i, onStory: onStory, clusterID: clusters[it.key],
                                   storyItems: clusters[it.key].flatMap { regions[$0] } ?? [])
                     }
                 }
             }
-            .padding(.horizontal, 28)
+            .padding(.horizontal, Space.xl)
         }
     }
 }
@@ -744,40 +733,40 @@ struct StoryCard: View {
                         }
                     }
                     .overlay(alignment: .topLeading) {
-                        if item.itemKind != .article { KindBadge(kind: item.itemKind).background(.thinMaterial, in: RoundedRectangle(cornerRadius: 5)).padding(8) }
+                        if item.itemKind != .article { KindBadge(kind: item.itemKind).chromeGlass(in: RoundedRectangle(cornerRadius: Radius.xs)).padding(Space.s) }
                     }
                 }
-                VStack(alignment: .leading, spacing: 7) {
-                    HStack(spacing: 6) {
-                        if item.important == true { Image(systemName: "star.fill").foregroundStyle(.orange).font(.app(10)) }
-                        Text(item.sourceName).font(.app(11.5, .semibold))
+                VStack(alignment: .leading, spacing: Space.s) {
+                    HStack(spacing: Space.s) {
+                        if item.important == true { Image(systemName: "star.fill").foregroundStyle(.orange).font(.dsCaption) }
+                        Text(item.sourceName).font(.dsChip)
                         PaywallMark(item: item)
-                        if let r = item.related, !r.isEmpty { Text("외 \(r.count)곳").font(.app(11)).foregroundStyle(.secondary) }
+                        if let r = item.related, !r.isEmpty { Text("외 \(r.count)곳").font(.dsCaption).foregroundStyle(.secondary) }
                         Spacer(minLength: 0)
-                        Text(RelativeTime.string(item.date)).font(.app(11)).foregroundStyle(.tertiary)
+                        Text(RelativeTime.string(item.date)).font(.dsCaption).foregroundStyle(.tertiary)
                     }
                     Text(item.displayTitle)
-                        .font(.display(15, .semibold))
+                        .font(.dsSubheading)
                         .lineLimit(3)
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
                     if !storyItems.isEmpty { RegionSplit(items: storyItems, compact: true) }
                     if AppModel.shared.isRead(item) {
-                        Label("읽음", systemImage: "checkmark").font(.app(10.5)).foregroundStyle(.tertiary)
+                        Label("읽음", systemImage: "checkmark").font(.dsCaption).foregroundStyle(.tertiary)
                     }
                 }
-                .padding(14)
+                .padding(Space.l)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(.background)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(.primary.opacity(0.08), lineWidth: 0.5))
-            .shadow(color: .black.opacity(hover ? 0.18 : 0.06), radius: hover ? 18 : 6, y: hover ? 10 : 3)
+            .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Radius.card, style: .continuous).strokeBorder(.primary.opacity(0.08), lineWidth: 0.5))
+            .elevation(hover ? Elevation.raised : Elevation.card)
             .scaleEffect(hover ? 1.025 : 1)
-            .contentShape(RoundedRectangle(cornerRadius: 16))
+            .contentShape(RoundedRectangle(cornerRadius: Radius.card))
         }
         .buttonStyle(.plain)
-        .selectionRing(selectedCard == item.key, radius: 16)
+        .selectionRing(selectedCard == item.key, radius: Radius.card)
         .id(item.key)
         .onContinuousHover { phase in
             switch phase {
@@ -787,8 +776,8 @@ struct StoryCard: View {
                 tilt = .zero
             }
         }
-        .onHover { h in withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { hover = h } }
-        .animation(.interactiveSpring(response: 0.3, dampingFraction: 0.8), value: tilt)
+        .onHover { h in withMotion(Motion.snap) { hover = h } }
+        .motion(Motion.snap, value: tilt)
         .contextMenu {
             Button(AppModel.shared.isSaved(item) ? "저장 취소" : "나중에 읽기") { AppModel.shared.toggleSaved(item) }
             if let c = clusterID, let onStory {
@@ -802,9 +791,9 @@ struct StoryCard: View {
         .opacity(shown ? 1 : 0)
         .offset(y: shown ? 0 : 18)
         .onAppear {
-            withAnimation(.spring(response: 0.55, dampingFraction: 0.86).delay(min(Double(order) * 0.05, 0.4))) { shown = true }
+            withMotion(Motion.settle.delay(Motion.stagger(order))) { shown = true }
         }
-        .scrollTransition(.animated(.easeOut(duration: 0.3))) { content, phase in
+        .scrollTransition(.animated(Motion.enter())) { content, phase in
             content.opacity(phase.isIdentity ? 1 : 0.4).scaleEffect(phase.isIdentity ? 1 : 0.97)
         }
     }
@@ -841,11 +830,11 @@ struct StoriesView: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 14) {
-                Text("스토리").font(.display(34, .bold)).padding(.top, 28)
+            LazyVStack(alignment: .leading, spacing: Space.l) {
+                Text("스토리").font(.dsTitle).padding(.top, Space.xl)
                 Text("여러 곳이 함께 다룬 소식을 한 줄기로 묶었습니다. 팔로우하면 새 보도가 붙을 때 알려 드립니다.").foregroundStyle(.secondary)
                 if loaded, groups.live.isEmpty && groups.past.isEmpty {
-                    Text("아직 여러 곳이 함께 다룬 소식이 없습니다. 출처를 더 구독하면 스토리가 늘어납니다.").foregroundStyle(.secondary).padding(.vertical, 40)
+                    Text("아직 여러 곳이 함께 다룬 소식이 없습니다. 출처를 더 구독하면 스토리가 늘어납니다.").foregroundStyle(.secondary).padding(.vertical, Space.xxxl)
                 }
                 if !groups.live.isEmpty {
                     sectionTitle("지금 커지는 스토리", "최근 24시간")
@@ -860,18 +849,18 @@ struct StoriesView: View {
                     }
                 }
             }
-            .padding(.horizontal, 36).padding(.bottom, 40)
+            .padding(.horizontal, Space.page).padding(.bottom, Space.xxxl)
             .frame(maxWidth: 820, alignment: .leading)
         }
         .task(id: "\(mag.revision)-\(mag.layoutRevision)") { groups = await mag.storyCards(); loaded = true }
     }
 
     private func sectionTitle(_ t: String, _ sub: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(t).font(.app(15, .bold))
-            Text(sub).font(.app(12)).foregroundStyle(.tertiary)
+        HStack(alignment: .firstTextBaseline, spacing: Space.s) {
+            Text(t).font(.dsHeadline)
+            Text(sub).font(.dsCallout).foregroundStyle(.tertiary)
         }
-        .padding(.top, 14)
+        .padding(.top, Space.l)
     }
 }
 
@@ -891,26 +880,26 @@ private struct StoryListCard: View {
         let sources = Array(NSOrderedSet(array: items.map(\.sourceName)).array as? [String] ?? []).prefix(6)
         let fresh = app.unseenReports(cluster)
         Button(action: onOpen) {
-            HStack(alignment: .top, spacing: 16) {
+            HStack(alignment: .top, spacing: Space.l) {
                 if let photo {
                     RemoteImage(url: photo, category: lead?.category ?? .other, accent: lead?.accent ?? .accentColor)
                         .frame(width: big ? 210 : 120, height: big ? 140 : 80)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
                 }
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: Space.s) {
+                    HStack(spacing: Space.s) {
                         // 분야는 묶인 보도들의 다수결(대표 기사 하나의 AI 하위 분류를 그대로 쓰면 IT 소식이 'AI·모델·제품'이 됐다)
                         if let t = topic {
                             let ns = Sections.byID(t.section)
                             Label(t.category.map { "AI·" + $0.label } ?? Sections.name(t.section), systemImage: t.category?.symbol ?? ns?.symbol ?? "circle")
-                                .font(.app(11.5, .semibold)).foregroundStyle(t.category?.color ?? ns?.tint ?? .gray)
+                                .font(.dsChip).foregroundStyle(t.category?.color ?? ns?.tint ?? .gray)
                         }
-                        Text("\(cluster.size)곳 보도").font(.app(11.5, .semibold)).foregroundStyle(.secondary)
+                        Text("\(cluster.size)곳 보도").font(.dsChip).foregroundStyle(.secondary)
                         if fresh > 0 {
-                            Text("새 보도 \(fresh)").font(.app(10.5, .bold)).foregroundStyle(.white)
-                                .padding(.horizontal, 6).padding(.vertical, 2).background(Color.red, in: Capsule())
+                            Text("새 보도 \(fresh)").font(.dsChip).foregroundStyle(.white)
+                                .padding(.horizontal, Space.s).padding(.vertical, Space.xxs).background(Color.red, in: Capsule())
                         }
-                        if app.isFollowing(cluster.id) { Image(systemName: "bell.fill").font(.app(10.5)).foregroundStyle(.orange).help("팔로우 중") }
+                        if app.isFollowing(cluster.id) { Image(systemName: "bell.fill").font(.dsCaption).foregroundStyle(.orange).help("팔로우 중") }
                     }
                     Text(cluster.title).font(.display(big ? 21 : 16, .semibold)).multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
@@ -918,18 +907,18 @@ private struct StoryListCard: View {
                         ForEach(Array(sources.enumerated()), id: \.offset) { _, name in
                             let it = items.first { $0.sourceName == name }
                             Monogram(letter: it?.initial ?? String(name.prefix(1)), color: it?.accent ?? .gray, size: 20)
-                                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: .textBackgroundColor), lineWidth: 1.5))
+                                .overlay(RoundedRectangle(cornerRadius: Radius.control).strokeBorder(Color(nsColor: .textBackgroundColor), lineWidth: 1.5))
                                 .help(name)
                         }
-                        Text("  \(sources.joined(separator: " · "))").font(.app(11.5)).foregroundStyle(.secondary).lineLimit(1)
+                        Text("  \(sources.joined(separator: " · "))").font(.dsCaption).foregroundStyle(.secondary).lineLimit(1)
                     }
                     Text("첫 보도 \(RelativeTime.string(cluster.first)) · 최근 \(RelativeTime.string(cluster.last))")
-                        .font(.app(11.5)).foregroundStyle(.tertiary)
+                        .font(.dsCaption).foregroundStyle(.tertiary)
                 }
                 Spacer(minLength: 0)
             }
-            .padding(14)
-            .background(.primary.opacity(hover ? 0.07 : 0.04), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .padding(Space.l)
+            .background(.primary.opacity(hover ? 0.07 : 0.04), in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -952,40 +941,40 @@ struct StoryView: View {
         let following = app.isFollowing(clusterID)
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                Button(action: back) { Label("스토리", systemImage: "chevron.left") }.buttonStyle(.borderless).padding(.top, 24)
-                Text(cluster?.title ?? "스토리").font(.display(30, .bold)).padding(.top, 10)
-                HStack(spacing: 10) {
+                Button(action: back) { Label("스토리", systemImage: "chevron.left") }.buttonStyle(.borderless).padding(.top, Space.xl)
+                Text(cluster?.title ?? "스토리").font(.dsTitle).padding(.top, Space.m)
+                HStack(spacing: Space.m) {
                     Text("\(items.count)곳 보도 · \(Self.span(items))").foregroundStyle(.secondary)
                     Spacer()
                     Button {
                         app.setFollowing(clusterID, !following, size: items.count)
                     } label: {
                         Label(following ? "팔로우 중" : "이 스토리 팔로우", systemImage: following ? "bell.fill" : "bell")
-                            .font(.app(12.5, .semibold))
+                            .font(.dsBodyStrong)
                     }
                     .buttonStyle(.bordered).tint(following ? .orange : .accentColor)
                     .help("새 보도가 이 스토리에 붙으면 알림")
                 }
-                .padding(.top, 6).padding(.bottom, 22)
+                .padding(.top, Space.s).padding(.bottom, Space.xl)
                 if digest != nil || digesting {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label("한눈에", systemImage: "text.alignleft").font(.app(12.5, .bold)).foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: Space.s) {
+                        Label("한눈에", systemImage: "text.alignleft").font(.dsBodyStrong).foregroundStyle(.secondary)
                         if let digest {
                             ForEach(Array(digest.enumerated()), id: \.offset) { _, l in
-                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                HStack(alignment: .firstTextBaseline, spacing: Space.s) {
                                     Circle().fill(.secondary).frame(width: 4, height: 4).offset(y: -3)
                                     Text(l).font(.app(15)).lineSpacing(4).fixedSize(horizontal: false, vertical: true)
                                 }
                             }
-                            Text("여러 보도를 이 Mac 의 Apple Intelligence 로 합쳐 요약했습니다.").font(.app(11)).foregroundStyle(.tertiary)
+                            Text("여러 보도를 이 Mac 의 Apple Intelligence 로 합쳐 요약했습니다.").font(.dsCaption).foregroundStyle(.tertiary)
                         } else {
-                            HStack(spacing: 8) { ProgressView().controlSize(.small); Text("여러 보도를 합쳐 요약하는 중…").font(.app(13)).foregroundStyle(.secondary) }
+                            HStack(spacing: Space.s) { ProgressView().controlSize(.small); Text("여러 보도를 합쳐 요약하는 중…").font(.dsBody).foregroundStyle(.secondary) }
                         }
                     }
-                    .padding(16)
+                    .padding(Space.l)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .padding(.bottom, 26)
+                    .background(.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+                    .padding(.bottom, Space.xl)
                 }
                 // 같은 이야기를 해외와 국내가 어떻게 다뤘나(둘 다 있을 때만)
                 RegionSplit(items: items) { it in AppModel.shared.markOpened(it); ReaderController.open(it) }
@@ -993,21 +982,21 @@ struct StoryView: View {
                     Rectangle().fill(.primary.opacity(0.15)).frame(width: 2)
                         .frame(maxHeight: .infinity)
                         .scaleEffect(x: 1, y: progress, anchor: .top)
-                        .padding(.leading, 9)
-                    VStack(alignment: .leading, spacing: 18) {
+                        .padding(.leading, Space.s)
+                    VStack(alignment: .leading, spacing: Space.l) {
                         ForEach(Array(items.enumerated()), id: \.element.key) { i, it in
                             if let gap = Self.gap(items, i) {
-                                Text(gap).font(.app(11, .semibold)).foregroundStyle(.tertiary).padding(.leading, 36).padding(.top, -6)
+                                Text(gap).font(.dsChip).foregroundStyle(.tertiary).padding(.leading, Space.page).padding(.top, -6)
                             }
                             TimelineRow(item: it, first: i == 0)
                                 .opacity(progress >= CGFloat(i + 1) / CGFloat(max(items.count, 1)) * 0.9 ? 1 : 0)
                                 .offset(x: progress >= CGFloat(i + 1) / CGFloat(max(items.count, 1)) * 0.9 ? 0 : 12)
-                                .animation(.spring(response: 0.5, dampingFraction: 0.85), value: progress)
+                                .motion(Motion.settle, value: progress)
                         }
                     }
                 }
             }
-            .padding(.horizontal, 36).padding(.bottom, 40)
+            .padding(.horizontal, Space.page).padding(.bottom, Space.xxxl)
             .frame(maxWidth: 820, alignment: .leading)
         }
         .onAppear {
@@ -1018,7 +1007,7 @@ struct StoryView: View {
             guard Summarizer.available, let c = cluster else { return }
             digesting = true
             let d = await Magazine.shared.storyDigest(c)
-            withAnimation(.easeOut(duration: 0.3)) { digest = d; digesting = false }
+            withMotion(Motion.enter()) { digest = d; digesting = false }
         }
     }
 
@@ -1045,41 +1034,41 @@ private struct TimelineRow: View {
     @State private var frame: CGRect = .zero
 
     var body: some View {
-        HStack(alignment: .top, spacing: 16) {
+        HStack(alignment: .top, spacing: Space.l) {
             Circle().fill(first ? item.accent : Color(nsColor: .textBackgroundColor))
                 .overlay(Circle().strokeBorder(item.accent, lineWidth: 2))
                 .frame(width: 20, height: 20)
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: Space.s) {
+                HStack(spacing: Space.s) {
                     Monogram(letter: item.initial, color: item.accent, size: 18)
-                    Text(item.sourceName).font(.app(12.5, .semibold))
-                    Text(Resources.tierLabel(item.tier)).font(.app(11)).foregroundStyle(.secondary)
+                    Text(item.sourceName).font(.dsBodyStrong)
+                    Text(Resources.tierLabel(item.tier)).font(.dsCaption).foregroundStyle(.secondary)
                     PaywallMark(item: item)
                     Text("· " + (item.date?.formatted(.dateTime.locale(Locale(identifier: "ko_KR")).hour().minute()) ?? ""))
-                        .font(.app(11.5)).foregroundStyle(.secondary)
-                    if first { Text("첫 보도").font(.app(10.5, .bold)).foregroundStyle(item.accent) }
+                        .font(.dsCaption).foregroundStyle(.secondary)
+                    if first { Text("첫 보도").font(.dsChip).foregroundStyle(item.accent) }
                 }
                 Button {
                     AppModel.shared.markOpened(item)
                     ReaderController.open(item, from: frame)
                 } label: {
-                    HStack(alignment: .top, spacing: 12) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(item.displayTitle).font(.display(16, .semibold))
+                    HStack(alignment: .top, spacing: Space.m) {
+                        VStack(alignment: .leading, spacing: Space.s) {
+                            Text(item.displayTitle).font(.dsSubheading)
                                 .multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
                             if let lede = Self.lede(item) {
-                                Text(lede).font(.app(13)).foregroundStyle(.secondary).lineLimit(2)
+                                Text(lede).font(.dsBody).foregroundStyle(.secondary).lineLimit(2)
                                     .multilineTextAlignment(.leading)
                             }
                         }
                         Spacer(minLength: 0)
                         if item.image != nil && !ImageKey.isJunk(item.image) {
                             RemoteImage(url: item.image, category: item.category, accent: item.accent)
-                                .frame(width: 92, height: 62).clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                                .frame(width: 92, height: 62).clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                         }
                     }
-                    .padding(14)
-                    .background(.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .padding(Space.l)
+                    .background(.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -1102,31 +1091,31 @@ struct SavedView: View {
     @ObservedObject private var app = AppModel.shared
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .firstTextBaseline, spacing: 10) { // 왼쪽 목록 '저장 N' 과 같은 수
-                    Text("저장").font(.display(34, .bold))
-                    Text("\(app.state.saved.count)건").font(.app(15, .semibold)).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: Space.l) {
+                HStack(alignment: .firstTextBaseline, spacing: Space.m) { // 왼쪽 목록 '저장 N' 과 같은 수
+                    Text("저장").font(.dsTitle)
+                    Text("\(app.state.saved.count)건").font(.dsHeadline).foregroundStyle(.secondary)
                 }
-                .padding(.top, 28)
+                .padding(.top, Space.xl)
                 Text("저장한 기사는 번역까지 이 Mac 에 보관돼 인터넷 없이도 읽을 수 있습니다.").foregroundStyle(.secondary)
                 AddURLBar(compact: false).frame(maxWidth: 560)
                 if app.state.saved.isEmpty {
-                    Text("아직 저장한 기사가 없습니다. 카드를 오른쪽 클릭해 '나중에 읽기'로 저장하세요.").foregroundStyle(.secondary).padding(.vertical, 40)
+                    Text("아직 저장한 기사가 없습니다. 카드를 오른쪽 클릭해 '나중에 읽기'로 저장하세요.").foregroundStyle(.secondary).padding(.vertical, Space.xxxl)
                 }
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 230, maximum: 360), spacing: 18)], alignment: .leading, spacing: 22) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 230, maximum: 360), spacing: Space.l)], alignment: .leading, spacing: Space.xl) {
                     ForEach(Array(app.state.saved.enumerated()), id: \.element.key) { i, it in
                         StoryCard(item: it, order: i)
                             .overlay(alignment: .topTrailing) {
                                 if ArticleService.shared.cached(it.link) != nil {
-                                    Label("보관됨", systemImage: "arrow.down.circle.fill").font(.app(10.5, .semibold))
-                                        .padding(.horizontal, 7).padding(.vertical, 3)
-                                        .background(.thinMaterial, in: Capsule()).padding(10)
+                                    Label("보관됨", systemImage: "arrow.down.circle.fill").font(.dsChip)
+                                        .padding(.horizontal, Space.s).padding(.vertical, Space.xs)
+                                        .chromeGlass(in: Capsule()).padding(Space.m)
                                 }
                             }
                     }
                 }
             }
-            .padding(.horizontal, 32).padding(.bottom, 40)
+            .padding(.horizontal, Space.xxl).padding(.bottom, Space.xxxl)
         }
     }
 }
@@ -1139,8 +1128,8 @@ struct SearchView: View {
     private func remember(_ t: String) { recentRaw = Magazine.rememberSearch(t, in: recent).joined(separator: "\n") }
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("검색").font(.display(34, .bold)).padding(.top, 28)
+            VStack(alignment: .leading, spacing: Space.l) {
+                Text("검색").font(.dsTitle).padding(.top, Space.xl)
                 HStack {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                     TextField("모든 기록에서 제목·출처·요약 검색", text: $q).textFieldStyle(.plain).font(.app(15))
@@ -1151,17 +1140,17 @@ struct SearchView: View {
                             if !Task.isCancelled { let r = await Magazine.shared.search(q); if !Task.isCancelled { results = r } }
                         }
                 }
-                .padding(12)
-                .background(.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .padding(Space.m)
+                .background(.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
                 .onReceive(NotificationCenter.default.publisher(for: .magazineSearch)) { n in if let w = n.object as? String { q = w } }
                 .onDisappear { MagazineController.pendingSearch = nil; if !results.isEmpty { remember(q) } }
                 if !q.isEmpty { Text("\(results.count)건").foregroundStyle(.secondary) }
                 if q.isEmpty { emptyState }
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 230, maximum: 360), spacing: 18)], alignment: .leading, spacing: 22) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 230, maximum: 360), spacing: Space.l)], alignment: .leading, spacing: Space.xl) {
                     ForEach(Array(results.enumerated()), id: \.element.key) { i, it in StoryCard(item: it, order: i) }
                 }
             }
-            .padding(.horizontal, 32).padding(.bottom, 40)
+            .padding(.horizontal, Space.xxl).padding(.bottom, Space.xxxl)
         }
     }
 }
@@ -1170,27 +1159,27 @@ extension SearchView {
     // 빈 검색 화면: 지켜볼 낱말·최근 검색어를 눌러 바로 찾기, 무엇을 찾는지 안내
     @ViewBuilder var emptyState: some View {
         let watch = AppModel.shared.state.settings.watchKeywords
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: Space.l) {
             if !watch.isEmpty { chipRow("지켜볼 낱말", watch, symbol: "eye") }
             if !recent.isEmpty {
                 chipRow("최근 검색", recent, symbol: "clock.arrow.circlepath")
-                Button("최근 검색 지우기") { recentRaw = "" }.buttonStyle(.link).font(.app(12))
+                Button("최근 검색 지우기") { recentRaw = "" }.buttonStyle(.link).font(.dsCallout)
             }
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: Space.xs) {
                 Text("이 Mac 에 모인 모든 기사(지난 호 포함)의 제목·출처·요약에서 찾습니다.")
                 Text("회사·인물 이름이나 출처 이름(예: 연합뉴스)으로도 찾을 수 있습니다. ⌘F 로 언제든 이 화면을 엽니다.")
                 if watch.isEmpty { Text("설정 › 거르기의 '지켜볼 낱말'을 넣으면 여기서 바로 누를 수 있습니다.") }
             }
-            .font(.app(13)).foregroundStyle(.secondary)
+            .font(.dsBody).foregroundStyle(.secondary)
         }
-        .padding(.top, 6)
+        .padding(.top, Space.s)
     }
 
     private func chipRow(_ title: String, _ words: [String], symbol: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label(title, systemImage: symbol).font(.app(12.5, .semibold)).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: Space.s) {
+            Label(title, systemImage: symbol).font(.dsBodyStrong).foregroundStyle(.secondary)
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
+                HStack(spacing: Space.s) {
                     ForEach(words, id: \.self) { w in
                         SectionChip(label: w, symbol: symbol, color: .accentColor, on: false) { q = w }
                     }
@@ -1206,7 +1195,7 @@ private struct Stagger: ViewModifier {
     @State private var on = false
     func body(content: Content) -> some View {
         content.opacity(on ? 1 : 0).offset(y: on ? 0 : 14)
-            .onAppear { withAnimation(.spring(response: 0.5, dampingFraction: 0.85).delay(min(Double(index) * 0.05, 0.5))) { on = true } }
+            .onAppear { withMotion(Motion.settle.delay(Motion.stagger(index))) { on = true } }
     }
 }
 
@@ -1255,7 +1244,7 @@ enum MagazineController {
             }
         }
         NSApp.activate(ignoringOtherApps: true)
-        w.makeKeyAndOrderFront(nil)
+        WindowMotion.present(w)
         pendingPage = nil
     }
 }
@@ -1329,10 +1318,10 @@ struct ScrapbookView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: Space.l) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text("스크랩북").font(.display(34, .bold))
-                    Text("모두 \(book.scraps.count)개").font(.app(15, .semibold)).foregroundStyle(.secondary) // 왼쪽 목록 '스크랩북 N' 과 같은 수(폴더별은 아래 칩)
+                    Text("스크랩북").font(.dsTitle)
+                    Text("모두 \(book.scraps.count)개").font(.dsHeadline).foregroundStyle(.secondary) // 왼쪽 목록 '스크랩북 N' 과 같은 수(폴더별은 아래 칩)
                     Spacer()
                     Button { book.copyMarkdown(collection: folder); copied = true
                         Task { try? await Task.sleep(for: .seconds(1.5)); copied = false }
@@ -1341,20 +1330,20 @@ struct ScrapbookView: View {
                     Button { book.saveMarkdown(collection: folder) } label: { Label("파일로 저장", systemImage: "square.and.arrow.down") }
                         .disabled(list.isEmpty)
                 }
-                .padding(.top, 28)
+                .padding(.top, Space.xl)
                 Text("읽기 창에서 문단에 마우스를 올려 ✂︎ 를 누르거나, 도구막대의 스크랩으로 기사를 모아 두세요. 폴더째 Markdown 으로 내보낼 수 있습니다.")
-                    .font(.app(13)).foregroundStyle(.secondary)
+                    .font(.dsBody).foregroundStyle(.secondary)
                 WeeklyQuotes()
 
                 // 폴더 칩
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: Space.s) {
                         ForEach(book.collections, id: \.self) { c in
                             let n = book.scraps.filter { $0.collection == c }.count
-                            Button { withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { folder = c } } label: {
+                            Button { withMotion(Motion.snap) { folder = c } } label: {
                                 Label("\(c) \(n)", systemImage: c == folder ? "folder.fill" : "folder")
                                     .font(.app(12.5, c == folder ? .semibold : .regular))
-                                    .padding(.horizontal, 11).padding(.vertical, 6)
+                                    .padding(.horizontal, Space.m).padding(.vertical, Space.s)
                                     .background(c == folder ? Color.accentColor.opacity(0.16) : Color.primary.opacity(0.05), in: Capsule())
                                     .foregroundStyle(c == folder ? Color.accentColor : Color.primary)
                             }
@@ -1363,17 +1352,17 @@ struct ScrapbookView: View {
                                 Button("이름 바꾸기") { folder = c; newName = c; renaming = true }
                             }
                         }
-                        Button { creating = true } label: { Label("새 폴더", systemImage: "plus").font(.app(12.5)) }
+                        Button { creating = true } label: { Label("새 폴더", systemImage: "plus").font(.dsCallout) }
                             .buttonStyle(.borderless)
                     }
                 }
 
                 if groups.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: Space.s) {
                         Image(systemName: "scissors").font(.app(30, .light)).foregroundStyle(.tertiary)
-                        Text("이 폴더는 비어 있습니다").font(.display(18, .semibold))
+                        Text("이 폴더는 비어 있습니다").font(.dsSubheading)
                     }
-                    .padding(.vertical, 40)
+                    .padding(.vertical, Space.xxxl)
                 }
 
                 ForEach(Array(groups.enumerated()), id: \.element.item.key) { i, g in
@@ -1381,7 +1370,7 @@ struct ScrapbookView: View {
                         .modifier(StaggerIn(index: i))
                 }
             }
-            .padding(.horizontal, 36).padding(.bottom, 40)
+            .padding(.horizontal, Space.page).padding(.bottom, Space.xxxl)
             .frame(maxWidth: 860, alignment: .leading)
         }
         .onChange(of: book.scraps.count) { _, _ in
@@ -1407,19 +1396,19 @@ private struct ScrapGroupCard: View {
     @State private var frame: CGRect = .zero
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: Space.m) {
             Button {
                 AppModel.shared.markOpened(item)
                 ReaderController.open(item, from: frame)
             } label: {
-                HStack(alignment: .top, spacing: 12) {
+                HStack(alignment: .top, spacing: Space.m) {
                     if item.image != nil && !ImageKey.isJunk(item.image) {
                         RemoteImage(url: item.image, category: item.category, accent: item.accent)
-                            .frame(width: 84, height: 56).clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                            .frame(width: 84, height: 56).clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                     }
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(item.displayTitle).font(.display(16, .semibold)).multilineTextAlignment(.leading)
-                        Text("\(item.sourceName) · \(RelativeTime.string(item.date))").font(.app(12)).foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: Space.xs) {
+                        Text(item.displayTitle).font(.dsSubheading).multilineTextAlignment(.leading)
+                        Text("\(item.sourceName) · \(RelativeTime.string(item.date))").font(.dsCallout).foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 0)
                 }
@@ -1430,9 +1419,9 @@ private struct ScrapGroupCard: View {
 
             ForEach(scraps) { s in ScrapRow(scrap: s) }
         }
-        .padding(18)
-        .background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(.primary.opacity(0.07), lineWidth: 0.5))
+        .padding(Space.l)
+        .background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Radius.card, style: .continuous).strokeBorder(.primary.opacity(0.07), lineWidth: 0.5))
     }
 }
 
@@ -1443,23 +1432,23 @@ private struct ScrapRow: View {
     @FocusState private var editing: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: Space.s) {
             if let q = scrap.quote {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: Space.s) {
                     Text(q).font(.app(14.5)).lineSpacing(5).textSelection(.enabled)
                     if let o = scrap.quoteOriginal, o != q {
-                        Text(o).font(.app(12.5)).foregroundStyle(.secondary).lineSpacing(3).textSelection(.enabled)
+                        Text(o).font(.dsCallout).foregroundStyle(.secondary).lineSpacing(3).textSelection(.enabled)
                     }
                 }
-                .padding(.leading, 14)
+                .padding(.leading, Space.l)
                 .overlay(alignment: .leading) { RoundedRectangle(cornerRadius: 2).fill(Color.yellow.opacity(0.7)).frame(width: 3) }
             } else {
-                Label("기사 전체를 스크랩", systemImage: "doc.text").font(.app(12)).foregroundStyle(.secondary)
+                Label("기사 전체를 스크랩", systemImage: "doc.text").font(.dsCallout).foregroundStyle(.secondary)
             }
-            HStack(spacing: 8) {
-                Image(systemName: "pencil").font(.app(11)).foregroundStyle(.tertiary)
+            HStack(spacing: Space.s) {
+                Image(systemName: "pencil").font(.dsCaption).foregroundStyle(.tertiary)
                 TextField("메모 남기기", text: $memo, axis: .vertical)
-                    .textFieldStyle(.plain).font(.app(13))
+                    .textFieldStyle(.plain).font(.dsBody)
                     .focused($editing)
                     .onSubmit { saveMemo() }
                     .onChange(of: editing) { _, now in if !now { saveMemo() } }
@@ -1474,13 +1463,13 @@ private struct ScrapRow: View {
                         Button("‘\(c)’로 옮기기") { var n = scrap; n.collection = c; n.memo = memo; Scrapbook.shared.update(n) }
                     }
                     Divider()
-                    Button("스크랩 지우기", role: .destructive) { withAnimation { Scrapbook.shared.remove(scrap) } }
+                    Button("스크랩 지우기", role: .destructive) { withMotion(Motion.snap) { Scrapbook.shared.remove(scrap) } }
                 } label: { Image(systemName: "ellipsis.circle").foregroundStyle(.secondary) }
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                     .opacity(hover ? 1 : 0.4)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, Space.xs)
         .onHover { hover = $0 }
     }
 
@@ -1497,7 +1486,7 @@ private struct StaggerIn: ViewModifier {
     @State private var on = false
     func body(content: Content) -> some View {
         content.opacity(on ? 1 : 0).offset(y: on ? 0 : 12)
-            .onAppear { withAnimation(.spring(response: 0.5, dampingFraction: 0.86).delay(min(Double(index) * 0.05, 0.4))) { on = true } }
+            .onAppear { withMotion(Motion.settle.delay(Motion.stagger(index))) { on = true } }
     }
 }
 

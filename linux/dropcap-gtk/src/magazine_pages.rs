@@ -380,7 +380,7 @@ fn fill_story(body: &gtk::Box, id: &str, cluster: Option<Cluster>, items: Vec<Ne
                             inner.append(&r);
                         }
                         inner.append(&label("여러 보도를 이 컴퓨터의 Ollama 로 합쳐 요약했습니다.", 11.0, 400, &["dc-tertiary"]));
-                        widgets::fade_in(&digest_box, 300);
+                        widgets::fade_in(&digest_box, crate::motion::STANDARD);
                     }
                     None => digest_box.set_visible(false),
                 }
@@ -440,7 +440,7 @@ fn fill_story(body: &gtk::Box, id: &str, cluster: Option<Cluster>, items: Vec<Ne
             l2.queue_draw();
             for (i, r) in rw.iter().enumerate() {
                 if x >= (i as f64 + 1.0) / n * 0.9 && r.opacity() == 0.0 {
-                    widgets::fade_in(r, 350);
+                    widgets::fade_in(r, crate::motion::SETTLE);
                 }
             }
         });

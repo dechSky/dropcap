@@ -15,7 +15,7 @@ struct TitlebarBackdrop: View {
                 Spacer(minLength: 0)
             }
             .ignoresSafeArea(edges: .top)
-            .animation(.easeOut(duration: 0.15), value: separator)
+            .motion(Motion.enter(Motion.Duration.quick), value: separator)
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)

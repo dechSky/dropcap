@@ -125,7 +125,7 @@
   function toast(text) {
     const t = document.createElement('div');
     t.textContent = text;
-    t.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--bg-elev);box-shadow:var(--shadow);padding:8px 14px;border-radius:9px;font-size:12.5px;z-index:2000;transition:opacity .3s';
+    t.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--bg-elev);box-shadow:var(--shadow);padding:8px 14px;border-radius:9px;font-size:12.5px;z-index:2000;transition:opacity var(--dur-quick) var(--ease-exit)';
     document.body.appendChild(t);
     setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, 1600);
   }

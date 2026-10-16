@@ -67,7 +67,7 @@ enum E2EClickPhase {
         // 읽기 창
         if want("reader") { await reader(r, sw) }
         // 설정
-        if want("settings") { await settings(r, sw) }
+        if want("settings") { await settingsPaths(r, sw); await settings(r, sw) }
         // 물방울
         if want("toast") { await toasts(r, sw) }
         sw.save()
@@ -209,6 +209,101 @@ enum E2EClickPhase {
                 }
             }
             NSApp.windows.filter { $0.isVisible && $0.title == it.sourceName }.forEach { $0.close() }
+        }
+    }
+
+    // MARK: 설정 여는 길(매거진 옆 목록 '설정' 줄 · 매거진·읽기 창 ⌘,): 설정 창이 뜨고 그 창보다 앞에 있어야 통과.
+    // 이미 열린 설정 창이 뒤에 있을 때 다시 열면 앞으로 오는지도 본다.
+    static func settingsPaths(_ r: E2ERun, _ sw: E2EClickSweep) async {
+        let screen = "설정 열기"
+        func front(of w: NSWindow) -> Bool {
+            guard let s = SettingsWindow.find(), s.isVisible,
+                  let si = NSApp.orderedWindows.firstIndex(of: s), let wi = NSApp.orderedWindows.firstIndex(of: w) else { return false }
+            return si < wi
+        }
+        func record(_ label: String, _ role: String, _ w: NSWindow?, _ how: () async -> Void) async {
+            guard let w else { sw.append(.init(screen: screen, config: "기본", label: label, role: role, result: "실패", effect: "창을 찾지 못함", hit: "-", at: "-")); return }
+            await how()
+            await r.until(4) { front(of: w) }
+            let ok = front(of: w)
+            sw.append(.init(screen: screen, config: "기본", label: label, role: role, result: ok ? "통과" : "실패",
+                            effect: ok ? "설정 창이 '\(w.title)' 창 앞에 뜸" : (SettingsWindow.find()?.isVisible == true ? "설정 창이 뒤에 있음" : "설정 창이 안 뜸"),
+                            hit: "-", at: "-"))
+        }
+        // ⌘,: 앱 메뉴가 없어 창의 단축키 처리(performKeyEquivalent)로 받는다. 조용한 모드는 창에 바로, 실제 모드는 이벤트 대기열로
+        func cmdComma(_ w: NSWindow) {
+            guard let e = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: ProcessInfo.processInfo.systemUptime,
+                                           windowNumber: w.windowNumber, context: nil, characters: ",", charactersIgnoringModifiers: ",",
+                                           isARepeat: false, keyCode: 43) else { return }
+            if sw.quiet { _ = w.performKeyEquivalent(with: e) } else { NSApp.activate(ignoringOtherApps: true); w.makeKeyAndOrderFront(nil); NSApp.postEvent(e, atStart: false) }
+        }
+        func closeSettings() async { SettingsWindow.find()?.close(); await r.sleep(0.5) }
+
+        await closeSettings()
+        if magWindow() == nil { MagazineController.open(); await r.sleep(4) }
+        MagazineController.open(page: .today); await r.sleep(0.8)
+        // 옆 목록 바닥 '설정' 줄(단추): 누른다 — 손쉬운 사용 누름과 창 직접 클릭(실제 클릭 길) 둘 다. 지면은 그대로여야 함
+        func tables(_ v: NSView) -> [NSTableView] { ((v as? NSTableView).map { [$0] } ?? []) + v.subviews.flatMap(tables) }
+        func selectedLabel(_ w: NSWindow) -> String {
+            guard let t = tables(w.contentView ?? NSView()).first, t.selectedRow >= 0 else { return "(없음)" }
+            t.scrollRowToVisible(t.selectedRow)
+            return sw.targets(w).first { $0.table === t && $0.row == t.selectedRow }?.label ?? "(없음)"
+        }
+        func settingsButton(_ w: NSWindow) async -> E2EClickSweep.Target? {
+            for t in tables(w.contentView ?? NSView()) where t.numberOfRows > 0 { t.scrollRowToVisible(t.numberOfRows - 1) }
+            await r.sleep(0.4)
+            // 손쉬운 사용 나무는 늦게 생긴다 — 단추가 나올 때까지 몇 번. 끝내 없으면 그 줄(AXRow)
+            var side: [E2EClickSweep.Target] = []
+            for _ in 0..<4 {
+                side = sw.targets(w).filter { $0.frame.minX < w.frame.minX + 260 }
+                if let b = side.first(where: { $0.role == "AXButton" && $0.label == "설정" }) { return b }
+                await r.sleep(1)
+            }
+            return side.first { $0.role == "AXRow" && $0.label.contains("설정") }
+        }
+        // 단추면 손쉬운 사용 누름, 줄이면 그 자리 창 직접 클릭(실제 클릭 길)
+        func push(_ w: NSWindow, _ b: E2EClickSweep.Target) async {
+            if b.role == "AXButton" { _ = await sw.press(w, b) } else { sw.directClick(w, NSPoint(x: b.frame.midX, y: b.frame.midY)) }
+        }
+        if let w = magWindow() {
+            if let b = await settingsButton(w) {
+                await record("옆 목록 '설정' 줄(누름 · \(b.role))", b.role, w) { await push(w, b) }
+                await closeSettings()
+                if let b2 = await settingsButton(w) {
+                    await record("옆 목록 '설정' 줄(직접 클릭)", "AXButton", w) { sw.directClick(w, NSPoint(x: b2.frame.midX, y: b2.frame.midY)) }
+                }
+                // 이미 열린 설정 창을 매거진 뒤로 보낸 뒤 다시 누르면 앞으로
+                SettingsWindow.find()?.order(.below, relativeTo: w.windowNumber); await r.sleep(0.4)
+                if let b3 = await settingsButton(w) {
+                    await record("옆 목록 '설정' 줄(이미 열림·뒤에 있음)", b3.role, w) { await push(w, b3) }
+                }
+                // 비교: 고르는 줄('이번 주')을 같은 방법으로 누르면 지면이 바뀌는가(조용한 모드의 옆 목록 누름이 SwiftUI 선택까지 가는지)
+                await closeSettings()
+                if let wk = sw.targets(w).first(where: { $0.role == "AXRow" && $0.label.contains("이번 주") }) {
+                    _ = await sw.press(w, wk); await r.sleep(1)
+                    let a = selectedLabel(w)
+                    sw.directClick(w, NSPoint(x: wk.frame.midX, y: wk.frame.midY)); await r.sleep(1)
+                    r.note("[클릭] 비교: '이번 주' 줄 누름 뒤 고른 줄 '\(a)' · 직접 클릭 뒤 '\(selectedLabel(w))'")
+                    MagazineController.open(page: .today); await r.sleep(0.8)
+                }
+                let sel = selectedLabel(w)
+                sw.append(.init(screen: screen, config: "기본", label: "'설정' 줄 누른 뒤 지면", role: "AXButton", result: sel.contains("오늘") ? "통과" : "실패",
+                                effect: "옆 목록에서 고른 줄 '\(sel)'", hit: "-", at: "-"))
+            } else {
+                sw.append(.init(screen: screen, config: "기본", label: "옆 목록 '설정' 줄", role: "AXButton", result: "실패", effect: "단추를 찾지 못함", hit: "-", at: "-"))
+            }
+        }
+        await closeSettings()
+        await record("매거진 ⌘,", "키", magWindow()) { if let w = magWindow() { cmdComma(w) } }
+        await closeSettings()
+        magWindow()?.close(); await r.sleep(0.5)
+        // 읽기 창 ⌘,
+        if let it = r.model.visibleRecent.first(where: { !$0.itemKind.opensExternally }) {
+            let win: () -> NSWindow? = { NSApp.windows.first { $0.isVisible && $0.title == it.sourceName } }
+            if win() == nil { ReaderController.open(it, sequence: []); await r.sleep(4) }
+            await record("읽기 창 ⌘,", "키", win()) { if let w = win() { cmdComma(w) } }
+            await closeSettings()
+            win()?.close()
         }
     }
 

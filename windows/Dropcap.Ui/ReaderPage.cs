@@ -464,6 +464,7 @@ public sealed class ReaderPage : IPage
                 platform.ReplaceReader(key, next);
                 return new { moved = true };
             }
+            case "settings": platform.OpenSettings(); return null; // Ctrl+,
             case "close": platform.CloseWindow($"{Name}:{key}"); return null;
             default: throw new InvalidOperationException("모르는 명령 " + cmd);
         }

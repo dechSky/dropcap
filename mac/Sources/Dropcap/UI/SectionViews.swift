@@ -11,9 +11,9 @@ struct SectionChipBar: View {
     var compact = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: Space.s) {
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 5) {
+                HStack(spacing: Space.xs) {
                     SectionChip(label: "전체", symbol: "square.grid.2x2", color: .accentColor, on: section == nil, compact: compact) {
                         section = nil; sub = nil
                     }
@@ -30,7 +30,7 @@ struct SectionChipBar: View {
             }
             if section == Sections.ai {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 4) {
+                    HStack(spacing: Space.xs) {
                         ForEach(NewsCategory.allCases.filter { $0 != .other }) { c in
                             SectionChip(label: c.label, symbol: c.symbol, color: c.color, on: sub == c, compact: true, small: true) {
                                 sub = sub == c ? nil : c
@@ -38,10 +38,10 @@ struct SectionChipBar: View {
                         }
                     }
                 }
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .transition(Motion.drop)
             }
         }
-        .animation(.easeOut(duration: 0.18), value: section)
+        .motion(Motion.enter(), value: section)
     }
 }
 
@@ -58,10 +58,10 @@ struct SectionChip: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 4) {
+            HStack(spacing: Space.xs) {
                 Image(systemName: symbol).font(.app(small ? 9.5 : 10.5, .semibold))
                 Text(label).font(.app(small ? 11 : (compact ? 11.5 : 12.5), on ? .semibold : .medium)).lineLimit(1)
-                if let count, count > 0 { Text("\(count)").font(.app(10.5, .semibold)).opacity(0.7).monospacedDigit() }
+                if let count, count > 0 { Text("\(count)").font(.dsChip).opacity(0.7).monospacedDigit() }
             }
             .padding(.horizontal, small ? 7 : 9).padding(.vertical, small ? 3 : 4.5)
             .foregroundStyle(on ? Color.white : color)
@@ -104,39 +104,39 @@ struct RegionSplit: View {
         let split = Magazine.splitByRegion(items)
         if !split.intl.isEmpty && !split.kr.isEmpty {
             if compact {
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: Space.xs) {
                     line("해외에서는", split.intl)
                     line("국내에서는", split.kr)
                 }
             } else {
-                HStack(alignment: .top, spacing: 14) {
+                HStack(alignment: .top, spacing: Space.l) {
                     column("해외에서는", "globe", split.intl)
                     column("국내에서는", "house", split.kr)
                 }
-                .padding(.bottom, 26)
+                .padding(.bottom, Space.xl)
             }
         }
     }
 
     private func line(_ title: String, _ list: [NewsItem]) -> some View {
-        HStack(spacing: 5) {
-            Text(title).font(.app(10.5, .bold)).foregroundStyle(.secondary)
+        HStack(spacing: Space.xs) {
+            Text(title).font(.dsChip).foregroundStyle(.secondary)
             Text(Array(NSOrderedSet(array: list.map(\.sourceName))).compactMap { $0 as? String }.prefix(3).joined(separator: " · "))
-                .font(.app(10.5)).foregroundStyle(.tertiary).lineLimit(1)
+                .font(.dsCaption).foregroundStyle(.tertiary).lineLimit(1)
         }
     }
 
     private func column(_ title: String, _ symbol: String, _ list: [NewsItem]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("\(title) \(list.count)곳", systemImage: symbol).font(.app(12.5, .bold)).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: Space.s) {
+            Label("\(title) \(list.count)곳", systemImage: symbol).font(.dsBodyStrong).foregroundStyle(.secondary)
             ForEach(list, id: \.key) { it in
                 Button { onOpen?(it) } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(it.sourceName).font(.app(11, .semibold)).foregroundStyle(it.accent)
-                        Text(it.displayTitle).font(.app(13)).multilineTextAlignment(.leading).lineLimit(3)
+                    VStack(alignment: .leading, spacing: Space.xxs) {
+                        Text(it.sourceName).font(.dsChip).foregroundStyle(it.accent)
+                        Text(it.displayTitle).font(.dsBody).multilineTextAlignment(.leading).lineLimit(3)
                             .fixedSize(horizontal: false, vertical: true)
                         if it.titleKo != nil, it.titleKo != it.title {
-                            Text(it.title).font(.app(11)).foregroundStyle(.tertiary).lineLimit(1)
+                            Text(it.title).font(.dsCaption).foregroundStyle(.tertiary).lineLimit(1)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -145,9 +145,9 @@ struct RegionSplit: View {
                 .buttonStyle(.plain)
             }
         }
-        .padding(14)
+        .padding(Space.l)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
     }
 }
 
@@ -170,35 +170,35 @@ struct OnboardingView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: Space.s) {
                 HStack(alignment: .firstTextBaseline, spacing: 0) {
                     Text("D").font(.system(size: 30, weight: .black, design: .serif))
                     Text("ROPCAP").font(.system(size: 17, weight: .heavy, design: .serif)).tracking(2.4)
                 }
-                Text("어떤 소식을 받아 볼까요?").font(.display(28, .bold))
+                Text("어떤 소식을 받아 볼까요?").font(.dsTitle)
                 Text("고른 분야의 언론사 피드가 켜지고, 매거진 지면도 그 분야로 엮입니다. 알림은 처음엔 고른 분야 중 두 개만 바로 오고, 나머지는 정한 시각에 한 방울로 모아 옵니다.")
-                    .font(.app(13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    .font(.dsBody).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
-            .padding(.horizontal, 30).padding(.top, 26).padding(.bottom, 18)
+            .padding(.horizontal, Space.xxl).padding(.top, Space.xl).padding(.bottom, Space.l)
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: Space.l) {
                     if let top = Sections.byID(Sections.top) {
                         Toggle(isOn: Binding(get: { picked.contains(top.id) }, set: { if $0 { picked.insert(top.id) } else { picked.remove(top.id) } })) {
-                            HStack(spacing: 10) {
-                                Image(systemName: top.symbol).foregroundStyle(top.tint).font(.app(15, .semibold))
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(top.name).font(.app(14, .semibold))
-                                    Text("어느 분야든 여러 곳이 함께 크게 다룬 소식만 골라 알려 드려요").font(.app(12)).foregroundStyle(.secondary)
+                            HStack(spacing: Space.m) {
+                                Image(systemName: top.symbol).foregroundStyle(top.tint).font(.dsHeadline)
+                                VStack(alignment: .leading, spacing: Space.xxs) {
+                                    Text(top.name).font(.dsHeadline)
+                                    Text("어느 분야든 여러 곳이 함께 크게 다룬 소식만 골라 알려 드려요").font(.dsCallout).foregroundStyle(.secondary)
                                 }
                             }
                         }
                         .toggleStyle(.switch)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(14)
-                        .background(top.tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .padding(Space.l)
+                        .background(top.tint.opacity(0.08), in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
                     }
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 180, maximum: 260), spacing: 14)], spacing: 14) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 180, maximum: 260), spacing: Space.l)], spacing: Space.l) {
                         ForEach(cards) { s in
                             SectionCard(section: s, on: picked.contains(s.id)) {
                                 if picked.contains(s.id) { picked.remove(s.id) } else { picked.insert(s.id) }
@@ -206,19 +206,19 @@ struct OnboardingView: View {
                         }
                     }
                     if !showMore, Sections.pickable.contains(where: \.isMore) {
-                        Button { withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { showMore = true } } label: {
-                            Label("더 보기", systemImage: "chevron.down").font(.app(12.5, .semibold))
+                        Button { withMotion(Motion.snap) { showMore = true } } label: {
+                            Label("더 보기", systemImage: "chevron.down").font(.dsBodyStrong)
                         }
                         .buttonStyle(.borderless)
                     }
                 }
-                .padding(.horizontal, 30).padding(.bottom, 16)
+                .padding(.horizontal, Space.xxl).padding(.bottom, Space.l)
             }
 
             Divider()
             HStack {
                 Text(count == 0 ? "분야를 하나 이상 골라 주세요" : "\(count)개 분야 · 설정 › 분야에서 언제든 바꿀 수 있어요")
-                    .font(.app(12)).foregroundStyle(.secondary)
+                    .font(.dsCallout).foregroundStyle(.secondary)
                 Spacer()
                 Button(app.state.sectionsChosen == nil ? "시작하기" : "저장") {
                     app.chooseSections(Array(picked))
@@ -228,7 +228,7 @@ struct OnboardingView: View {
                 .buttonStyle(.borderedProminent).controlSize(.large)
                 .disabled(count == 0)
             }
-            .padding(.horizontal, 30).padding(.vertical, 14)
+            .padding(.horizontal, Space.xxl).padding(.vertical, Space.l)
         }
         .frame(width: 680, height: 680)
         .background(Color(nsColor: .windowBackgroundColor))
@@ -273,7 +273,7 @@ enum OnboardingController {
             MainActor.assumeIsolated { window = nil }
         }
         NSApp.activate(ignoringOtherApps: true)
-        w.makeKeyAndOrderFront(nil)
+        WindowMotion.present(w)
     }
 
     static func close() { window?.close() }

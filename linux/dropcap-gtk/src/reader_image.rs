@@ -23,7 +23,7 @@ pub fn article_image(url: &str) -> gtk::Widget {
     stack.set_margin_top(6);
     stack.set_margin_bottom(18);
     stack.set_transition_type(gtk::StackTransitionType::Crossfade);
-    stack.set_transition_duration(if motion::enabled() { 300 } else { 0 });
+    stack.set_transition_duration(if motion::enabled() { motion::SLOW } else { 0 });
     let ph = gtk::Box::new(gtk::Orientation::Vertical, 0);
     ph.set_height_request(180);
     style(&ph, "border-radius: 12px; background-color: alpha(@window_fg_color, 0.05);");
@@ -138,7 +138,8 @@ fn fade(w: &gtk::Box, to: f64) {
         let w = w.clone();
         move |v| w.set_opacity(v)
     });
-    let a = adw::TimedAnimation::new(w, w.opacity(), to, 150, target);
+    let a = adw::TimedAnimation::new(w, w.opacity(), to, motion::QUICK, target);
+    a.set_easing(if to < w.opacity() { motion::EXIT } else { motion::ENTER });
     a.play();
 }
 
@@ -362,7 +363,7 @@ pub fn open_translate(tex: &gdk::Texture, url: &str, title: &str) {
         sv.connect_clicked(move |b| save_image(b.upcast_ref(), &t, &u));
     }
     me.update();
-    win.present();
+    motion::present(&win);
     run(&me, url);
     // 닫으면 바로 놓아 사진째 메모리에 남지 않게(A-35)
     let keep = RefCell::new(Some(me));

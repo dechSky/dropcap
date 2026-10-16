@@ -201,7 +201,7 @@ pub fn open() {
         gtk::glib::Propagation::Proceed
     });
     WINDOW.with(|w| *w.borrow_mut() = Some(window.clone()));
-    window.present();
+    crate::motion::present(&window);
     crate::shots::shot_later(&window, "onboarding", 3000);
     crate::shots::shot_later(&window, "onboarding-15s", 15000); // 분야 사진이 채워진 뒤
 }

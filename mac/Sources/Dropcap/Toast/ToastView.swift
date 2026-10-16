@@ -111,7 +111,7 @@ struct ToastView: View {
             for (k, v) in frames { center.cardFrames[k] = v }
         }
         .onChange(of: center.hoveredID) { _, id in
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) { hovering = id == toast.id && !leaving }
+            withMotion(Motion.snap) { hovering = id == toast.id && !leaving }
         }
         .task { await run() }
         .accessibilityElement(children: .combine)
@@ -189,10 +189,10 @@ struct ToastView: View {
     private var closeButton: some View {
         Button { dismiss() } label: {
             Image(systemName: "xmark")
-                .font(.app(9, .bold))
+                .font(.dsMicro)
                 .foregroundStyle(.secondary)
                 .frame(width: 20, height: 20)
-                .background(.regularMaterial, in: Circle())
+                .chromeGlass(in: Circle())
                 .overlay(Circle().strokeBorder(.primary.opacity(0.1), lineWidth: 0.5))
                 .shadow(color: .black.opacity(0.15), radius: 3, y: 1)
         }
@@ -214,30 +214,30 @@ struct ToastView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
                         if item.important == true {
-                            Image(systemName: "star.fill").font(.app(9.5, .bold)).foregroundStyle(.orange)
+                            Image(systemName: "star.fill").font(.dsMicro).foregroundStyle(.orange)
                                 .help("꼭 알림 낱말이 들어간 소식")
                         }
-                        Text(item.sourceName).font(.app(11.5, .semibold)).lineLimit(1)
+                        Text(item.sourceName).font(.dsChip).lineLimit(1)
                         PaywallMark(item: item).fixedSize() // 미리 받기가 맛보기로 판정하면 '앞부분만'이 곧 붙는다
                         // 칩·'외 N곳'은 줄지 않게(좁으면 출처 이름이 먼저 줄어든다 — 예전엔 칩이 '…'만 남았다)
                         TopicChip(item: item).fixedSize()
                         if let r = item.related, !r.isEmpty {
-                            Text("외 \(r.count)곳").font(.app(10.5, .medium)).foregroundStyle(.secondary).fixedSize()
+                            Text("외 \(r.count)곳").font(.dsCaption).foregroundStyle(.secondary).fixedSize()
                                 .help("같은 소식: \(r.joined(separator: ", "))")
                         }
                         Spacer(minLength: 4)
-                        Text(RelativeTime.string(item.date)).font(.app(11)).foregroundStyle(.tertiary).monospacedDigit()
+                        Text(RelativeTime.string(item.date)).font(.dsCaption).foregroundStyle(.tertiary).monospacedDigit()
                     }
                     .rise(reveal, 1)
                     Text(item.displayTitle)
-                        .font(.app(14.5, .semibold))
+                        .font(.dsHeadline)
                         .tracking(-0.15)
                         .lineSpacing(1.5)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                         .rise(reveal, 2)
                     if let ko = item.titleKo, ko != item.title {
-                        Text(item.title).font(.app(12)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                        Text(item.title).font(.dsCallout).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
                             .rise(reveal, 3)
                     }
                 }
@@ -258,28 +258,28 @@ struct ToastView: View {
         case .info(let title, let sub):
             HStack(spacing: 11) {
                 Image(systemName: "sparkles")
-                    .font(.app(15, .semibold))
+                    .font(.dsHeadline)
                     .foregroundStyle(LinearGradient(colors: [.cyan, .blue], startPoint: .top, endPoint: .bottom))
                     .frame(width: 30, height: 30)
                     .background(.blue.opacity(0.12), in: Circle())
                     .rise(reveal, 0)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.app(13.5, .semibold)).rise(reveal, 1)
-                    Text(sub).font(.app(12)).foregroundStyle(.secondary).lineLimit(2).rise(reveal, 2)
+                    Text(title).font(.dsBodyStrong).rise(reveal, 1)
+                    Text(sub).font(.dsCallout).foregroundStyle(.secondary).lineLimit(2).rise(reveal, 2)
                 }
             }
             .padding(EdgeInsets(top: 12, leading: 13, bottom: 12, trailing: 16))
         case .digest(let n):
             HStack(spacing: 11) {
                 Image(systemName: "sun.horizon.fill")
-                    .font(.app(15, .semibold))
+                    .font(.dsHeadline)
                     .foregroundStyle(LinearGradient(colors: [.orange, .pink], startPoint: .top, endPoint: .bottom))
                     .frame(width: 30, height: 30)
                     .background(.orange.opacity(0.13), in: Circle())
                     .rise(reveal, 0)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("오늘의 브리핑").font(.app(13.5, .semibold)).rise(reveal, 1)
-                    Text("지난 하루 소식 \(n)건 — 매거진에서 보기").font(.app(12)).foregroundStyle(.secondary).rise(reveal, 2)
+                    Text("오늘의 브리핑").font(.dsBodyStrong).rise(reveal, 1)
+                    Text("지난 하루 소식 \(n)건 — 매거진에서 보기").font(.dsCallout).foregroundStyle(.secondary).rise(reveal, 2)
                 }
             }
             .padding(EdgeInsets(top: 12, leading: 13, bottom: 12, trailing: 16))
@@ -287,21 +287,21 @@ struct ToastView: View {
             let s = Sections.byID(sec)
             HStack(alignment: .top, spacing: 11) {
                 Image(systemName: s?.symbol ?? "tray.full")
-                    .font(.app(15, .semibold))
+                    .font(.dsHeadline)
                     .foregroundStyle(s?.tint ?? .accentColor)
                     .frame(width: 30, height: 30)
                     .background((s?.tint ?? .accentColor).opacity(0.14), in: Circle())
                     .rise(reveal, 0)
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 5) {
-                        Text(Sections.name(sec)).font(.app(13.5, .semibold))
-                        Text("\(items.count)건").font(.app(13.5, .semibold)).foregroundStyle(s?.tint ?? .accentColor)
+                        Text(Sections.name(sec)).font(.dsBodyStrong)
+                        Text("\(items.count)건").font(.dsBodyStrong).foregroundStyle(s?.tint ?? .accentColor)
                         Spacer(minLength: 4)
-                        Text("모아 보기").font(.app(11)).foregroundStyle(.tertiary)
+                        Text("모아 보기").font(.dsCaption).foregroundStyle(.tertiary)
                     }
                     .rise(reveal, 1)
                     ForEach(Array(items.prefix(2).enumerated()), id: \.offset) { _, it in
-                        Text("· " + it.displayTitle).font(.app(12)).foregroundStyle(.secondary).lineLimit(1)
+                        Text("· " + it.displayTitle).font(.dsCallout).foregroundStyle(.secondary).lineLimit(1)
                     }
                     .rise(reveal, 2)
                 }
@@ -310,21 +310,21 @@ struct ToastView: View {
         case .watch(let word, let items):
             HStack(alignment: .top, spacing: 11) {
                 Image(systemName: "eye")
-                    .font(.app(15, .semibold))
+                    .font(.dsHeadline)
                     .foregroundStyle(.teal)
                     .frame(width: 30, height: 30)
                     .background(Color.teal.opacity(0.14), in: Circle())
                     .rise(reveal, 0)
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 5) {
-                        Text("오늘 \(word) 소식").font(.app(13.5, .semibold))
-                        Text("\(items.count)건").font(.app(13.5, .semibold)).foregroundStyle(.teal)
+                        Text("오늘 \(word) 소식").font(.dsBodyStrong)
+                        Text("\(items.count)건").font(.dsBodyStrong).foregroundStyle(.teal)
                         Spacer(minLength: 4)
-                        Text("검색에서 보기").font(.app(11)).foregroundStyle(.tertiary)
+                        Text("검색에서 보기").font(.dsCaption).foregroundStyle(.tertiary)
                     }
                     .rise(reveal, 1)
                     ForEach(Array(items.prefix(2).enumerated()), id: \.offset) { _, it in
-                        Text("· " + it.displayTitle).font(.app(12)).foregroundStyle(.secondary).lineLimit(1)
+                        Text("· " + it.displayTitle).font(.dsCallout).foregroundStyle(.secondary).lineLimit(1)
                     }
                     .rise(reveal, 2)
                 }
@@ -336,7 +336,7 @@ struct ToastView: View {
                 Text("\(n)건").foregroundStyle(Color.accentColor)
                 Text("더 · 상단바 아이콘에서 확인")
             }
-            .font(.app(12.5, .semibold))
+            .font(.dsBodyStrong)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 10)
             .rise(reveal, 0)
@@ -348,7 +348,7 @@ struct ToastView: View {
         if case .news(let item) = toast.kind, item.id != AppModel.previewID {
             thumb = item.image
             if thumb == nil, !item.link.isEmpty {
-                Task { if let u = await FeedService.shared.ogImage(item.link) { withAnimation(.easeOut(duration: 0.3)) { thumb = u } } }
+                Task { if let u = await FeedService.shared.ogImage(item.link) { withMotion(Motion.enter(Motion.Duration.slow)) { thumb = u } } }
             }
         }
         if reduceMotion {
@@ -422,7 +422,7 @@ struct ToastView: View {
         leaving = true
         hovering = false
         if reduceMotion {
-            withAnimation(.easeOut(duration: 0.15)) { alpha = 0 }
+            withAnimation(Motion.exit()) { alpha = 0 }
             try? await Task.sleep(for: .milliseconds(150))
             center.remove(toast.id)
             return
@@ -466,7 +466,7 @@ private struct Rise: ViewModifier {
             .opacity(on ? 1 : 0)
             .offset(y: on ? 0 : 5)
             .blur(radius: on ? 0 : 3)
-            .animation(on ? .spring(response: 0.4, dampingFraction: 0.85).delay(0.14 + Double(index) * 0.045) : .easeOut(duration: 0.1), value: on)
+            .motion(on ? Motion.settle.delay(0.14 + Motion.stagger(index)) : Motion.exit(), value: on)
     }
 }
 
@@ -490,7 +490,7 @@ struct TopicChip: View {
     let item: NewsItem
     var body: some View {
         Label(item.topicLabel, systemImage: item.topicSymbol)
-            .font(.app(10.5, .semibold))
+            .font(.dsChip)
             .foregroundStyle(item.topicColor)
             .padding(.horizontal, 6).padding(.vertical, 1)
             .background(item.topicColor.opacity(0.13), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
@@ -502,7 +502,7 @@ struct CategoryChip: View {
     let category: NewsCategory
     var body: some View {
         Label(category.label, systemImage: category.symbol)
-            .font(.app(10.5, .semibold))
+            .font(.dsChip)
             .foregroundStyle(category.color)
             .padding(.horizontal, 6).padding(.vertical, 1)
             .background(category.color.opacity(0.13), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
@@ -518,7 +518,7 @@ private struct QuickButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.app(11, .semibold))
+                .font(.dsChip)
                 .frame(width: 24, height: 22)
                 .background(.primary.opacity(hover ? 0.12 : 0.06), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
@@ -533,7 +533,7 @@ struct KindBadge: View {
     let kind: ItemKind
     var body: some View {
         Label(kind.label, systemImage: kind.symbol)
-            .font(.app(10.5, .semibold))
+            .font(.dsChip)
             .foregroundStyle(.secondary)
             .padding(.horizontal, 6).padding(.vertical, 1)
             .background(.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 5, style: .continuous))

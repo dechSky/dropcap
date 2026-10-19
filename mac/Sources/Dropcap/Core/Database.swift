@@ -135,8 +135,10 @@ final class Database: @unchecked Sendable {
         return ok
     }
 
-    // 시험용: 줄을 일부러 망가뜨리기
+    #if DEBUG
+    // 시험용: 줄을 일부러 망가뜨리기(배포 빌드에는 없음)
     func execForTests(_ sql: String) { queue.sync { _ = exec(sql) } }
+    #endif
 
     // MARK: 문장 실행 도우미
     enum Value { case text(String?), real(Double?), int(Int?) }
@@ -405,8 +407,11 @@ final class Database: @unchecked Sendable {
     // 오래된 기록 정리(최근 keep 건 유지). 지우는 기사는 같은 트랜잭션에서 보관 표(archive)로 옮긴다 — 날짜·제목·링크·출처·분야만
     // (사진·요약·본문은 버림, 링크로 원문을 연다). 보관 표는 archiveYears 년이 지난 달부터 지운다(0 이면 달로는 지우지 않음),
     // 어느 경우든 archiveRowCap 건을 넘으면 가장 오래된 것부터 지운다.
-    // 옮긴 기사만 지운다 — 고르기가 실패하면 아무것도 지우지 않고, 제목·링크를 읽지 못한 줄은 남긴다. 옮긴 건수를 돌려준다.
+    // 옮긴 기사만 지운다 — 고르기가 실패하면 아무것도 지우지 않는다. 제목·링크를 읽지 못한(없거나 빈) 줄은 옮기지 않고 남기되,
+    // 30일이 지났거나 brokenKeep 건을 넘으면(오래된 것부터) 지운다 — 남은 줄 때문에 매번 정렬 질의가 돌지 않게. 옮긴 건수를 돌려준다.
     static let archiveRowCap = 5_000_000
+    static let brokenKeep = 1000
+    static let brokenLife: TimeInterval = 30 * 24 * 3600
     @discardableResult
     func prune(keep: Int = 20000, archiveYears: Int = Archive.defaultYears, now: Date = Date(), rowCap: Int = Database.archiveRowCap,
                section: (NewsItem) -> String = { Sections.primary($0) }) -> Int {
@@ -414,6 +419,7 @@ final class Database: @unchecked Sendable {
             guard exec("BEGIN IMMEDIATE") else { return 0 }
             var moved = 0, ok = true, count = 0
             var rows: [(key: String, item: NewsItem, when: Double, story: String?)] = []
+            var broken: [(key: String, when: Double)] = []
             ok = run("SELECT COUNT(*) FROM items", []) { st in count = Int(sqlite3_column_int64(st, 0)) }
             // 넘친 것이 없으면(확인 대부분) 정렬 질의를 건너뛴다. 본문 JSON 을 통째로 풀지 않고 칸만 꺼낸다
             if ok, count > keep {
@@ -424,7 +430,10 @@ final class Database: @unchecked Sendable {
                 FROM items i LEFT JOIN clusters c ON c.id = i.cluster
                 WHERE i.key IN (SELECT key FROM items ORDER BY COALESCE(date, first_seen) DESC LIMIT -1 OFFSET ?)
                 """, [.int(keep)]) { st in
-                    guard let key = Self.text(st, 0), let title = Self.text(st, 3), let link = Self.text(st, 5) else { return }
+                    guard let key = Self.text(st, 0) else { return }
+                    guard let title = Self.text(st, 3), !title.isEmpty, let link = Self.text(st, 5), !link.isEmpty else {
+                        broken.append((key, sqlite3_column_double(st, 1))); return
+                    }
                     let it = NewsItem(id: Self.text(st, 9) ?? "", title: title, titleKo: Self.text(st, 4), link: link, date: nil,
                                       summary: Self.text(st, 8) ?? "", sourceId: Self.text(st, 7) ?? "", sourceName: Self.text(st, 6) ?? "", tier: "")
                     rows.append((key, it, sqlite3_column_double(st, 1), Self.text(st, 2)))
@@ -440,6 +449,9 @@ final class Database: @unchecked Sendable {
                       .text(r.item.sourceId), .text(section(r.item)), .text(r.story)])
                 if ok { moved += Int(sqlite3_changes(db)); done.append(r.key) }
             }
+            // 읽지 못한 줄: 30일이 지난 것 + 최신 brokenKeep 건 밖의 것
+            let stale = now.timeIntervalSince1970 - Self.brokenLife
+            done += broken.sorted { $0.when > $1.when }.enumerated().filter { $0.offset >= Self.brokenKeep || $0.element.when < stale }.map(\.element.key)
             for chunk in stride(from: 0, to: done.count, by: 400).map({ Array(done[$0..<min($0 + 400, done.count)]) }) where ok {
                 ok = run("DELETE FROM items WHERE key IN (\(Array(repeating: "?", count: chunk.count).joined(separator: ",")))", chunk.map { .text($0) })
             }
@@ -447,8 +459,9 @@ final class Database: @unchecked Sendable {
             if let cutoff = Archive.cutoff(years: archiveYears, now: now) {
                 ok = ok && run("DELETE FROM archive WHERE date < ?", [.real(cutoff.timeIntervalSince1970)])
             }
-            // 줄 수 안전 상한('끝없이'여도) — 날짜 색인으로 rowCap 번째 날짜를 찾아 그보다 이른 것을 지운다
-            ok = ok && run("DELETE FROM archive WHERE date < (SELECT date FROM archive ORDER BY date DESC LIMIT 1 OFFSET ?)", [.int(max(rowCap - 1, 0))]) // rowCap 번째 줄의 날짜보다 이른 것
+            // 줄 수 안전 상한('끝없이'여도) — 날짜 색인으로 rowCap 번째 날짜를 찾아 그보다 이른 것을 지운다.
+            // 큰 표에선 색인을 rowCap 만큼 훑으므로 이번에 옮긴 것이 있을 때만(옮긴 게 없으면 줄 수가 늘지 않았다)
+            ok = ok && (moved == 0 || run("DELETE FROM archive WHERE date < (SELECT date FROM archive ORDER BY date DESC LIMIT 1 OFFSET ?)", [.int(max(rowCap - 1, 0))])) // rowCap 번째 줄의 날짜보다 이른 것
             guard ok, exec("COMMIT") else { exec("ROLLBACK"); return 0 }
             return moved
         }
@@ -468,6 +481,7 @@ final class Database: @unchecked Sendable {
         String(decoding: (try? JSONEncoder().encode(Array(list).sorted())) ?? Data("[]".utf8), as: UTF8.self)
     }
     // 숨긴·끈·해지한 출처 빼기(기존 매거진 검색과 같은 기준 — SourceFilter). 출처 id 가 없는 줄은 숨긴 출처 이름으로
+    // (그런 줄은 source_id 칸을 더하기 전 개발 판에서만 생겨 끈·해지한 출처까지는 거르지 않는다 — 이름→id 로 채우려면 시작 때 표 전체를 훑어야 해서 두었다)
     private static func hideFilter(_ hide: Archive.Hide) -> (String, [Value]) {
         let active = hide.filter.active.map { json($0) }
         return ("""

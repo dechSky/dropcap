@@ -53,9 +53,11 @@ public sealed class SettingsPage(AppModel model, IPlatform platform, Scrapbook? 
         ("Ctrl+,", "설정 열기 (매거진·읽기 창)"),
     ];
 
-    public const string ArchiveNote = "최근 기사 2만 건보다 오래된 기사는 날짜·제목·링크·출처만 남겨 매거진 '보관함'에 옮깁니다(1년에 약 110MB). 보관 기간이 지나면 가장 오래된 달부터 지웁니다.";
+    // 보관 기간 아래 안내(세 판 같은 글 — 맥 Archive.settingsNote)
+    public const string ArchiveNote = "최근 기사 2만 건보다 오래된 기사는 날짜·제목·링크·출처만 남겨 매거진 '보관함'에 옮깁니다(1년에 약 120MB).";
     public const string ArchiveForeverNote = "끝없이 두면 해마다 약 120MB씩 늘고(500만 건에서 가장 오래된 것부터 지움) 검색도 조금씩 느려집니다.";
-    public static string ArchiveNoteFor(int years) => years == 0 ? ArchiveNote + " " + ArchiveForeverNote : ArchiveNote;
+    public const string ArchiveMonthNote = "보관 기간이 지나면 가장 오래된 달부터 지웁니다.";
+    public static string ArchiveNoteFor(int years) => ArchiveNote + " " + (years == 0 ? ArchiveForeverNote : ArchiveMonthNote);
 
     // 쉼표·줄바꿈으로 나눠 앞뒤 빈칸을 지우고 빈 낱말은 버린다(맥 saveKeywords 와 같음)
     public static List<string> SplitKeywords(string text) =>

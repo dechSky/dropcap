@@ -370,10 +370,15 @@ public sealed class Database : IDisposable
         get { var n = 0; Run("SELECT COUNT(*) FROM items", [], r => n = (int)r.GetInt64(0)); return n; }
     }
 
+    // 정리 때 제목·링크를 읽지 못해 옮기지 못한 줄: 최신 이만큼까지만, 이 기간(초)이 지나면 지운다
+    public const int BrokenKeep = 1000;
+    public const double BrokenLifeSeconds = 30 * 24 * 3600;
+
     // 오래된 기록 정리(최근 keep 건 유지). 지우는 기사는 같은 트랜잭션에서 보관 표(archive)로 옮긴다 — 날짜·제목·링크·출처·분야만
     // (사진·요약·본문은 버림, 링크로 원문을 연다). 보관 표는 archiveYears 년이 지난 달부터 지우고(0 이면 기간으로는 지우지 않음),
     // 어느 때든 maxArchive 건을 넘으면 가장 오래된 것부터 지운다.
-    // 제목·링크가 없는 줄은 옮기지도 지우지도 않는다. 옮긴(또는 이미 있던) 기사만 지우고, 어디서든 실패하면 아무것도 바꾸지 않는다. 새로 옮긴 건수를 돌려준다.
+    // 제목·링크가 없는(빈) 줄은 옮기지 않고 남기되, 30일이 지났거나 BrokenKeep 건을 넘으면(오래된 것부터) 지운다 — 남은 줄 때문에 매번 정렬 질의가 돌지 않게.
+    // 옮긴(또는 이미 있던) 기사만 지우고, 어디서든 실패하면 아무것도 바꾸지 않는다. 새로 옮긴 건수를 돌려준다.
     public int Prune(int keep = 20000, int archiveYears = Archive.DefaultYears, DateTimeOffset? now = null, Func<NewsItem, string>? section = null,
         int maxArchive = Archive.MaxRows)
     {
@@ -390,6 +395,7 @@ public sealed class Database : IDisposable
                 {
                     // 본문 JSON 을 통째로 풀지 않고 칸만 꺼낸다(깨진 줄 하나가 정리 전체를 막지 않게)
                     var rows = new List<(string Key, double When, NewsItem Item, string? Story)>();
+                    var broken = new List<(string Key, double When)>();
                     Run("""
                         SELECT i.key, COALESCE(i.date, i.first_seen), json_extract(i.json,'$.title'), json_extract(i.json,'$.titleKo'), json_extract(i.json,'$.link'),
                                json_extract(i.json,'$.sourceName'), COALESCE(json_extract(i.json,'$.sourceId'), i.source), json_extract(i.json,'$.summary'),
@@ -399,7 +405,7 @@ public sealed class Database : IDisposable
                         """, [keep], r =>
                         {
                             string? S(int i) => r.IsDBNull(i) ? null : r.GetValue(i)?.ToString();
-                            if (S(2) is not { Length: > 0 } title || S(4) is not { Length: > 0 } link) return;   // 옮길 수 없는 줄은 그대로 둔다
+                            if (S(2) is not { Length: > 0 } title || S(4) is not { Length: > 0 } link) { broken.Add((r.GetString(0), r.GetDouble(1))); return; }   // 옮길 수 없는 줄
                             rows.Add((r.GetString(0), r.GetDouble(1), new NewsItem
                             {
                                 Id = S(8) ?? "", Title = title, TitleKo = S(3), Link = link, SourceName = S(5) ?? "", SourceId = S(6) ?? "", Summary = S(7) ?? "", Tier = "",
@@ -416,14 +422,18 @@ public sealed class Database : IDisposable
                         moved += Changes();
                         done.Add(key);
                     }
+                    // 읽지 못한 줄: 30일이 지난 것 + 최신 BrokenKeep 건 밖의 것
+                    var stale = Unix(now ?? DateTimeOffset.Now) - BrokenLifeSeconds;
+                    done.AddRange(broken.OrderByDescending(b => b.When).Where((b, i) => i >= BrokenKeep || b.When < stale).Select(b => b.Key));
                     foreach (var chunk in done.Chunk(400))
                         Run($"DELETE FROM items WHERE key IN ({string.Join(",", chunk.Select(_ => "?"))})", chunk.Cast<object?>().ToArray());
                 }
                 Run("DELETE FROM clusters WHERE id NOT IN (SELECT DISTINCT cluster FROM items WHERE cluster IS NOT NULL)", []);
                 if (Archive.Cutoff(archiveYears, now ?? DateTimeOffset.Now) is { } cutoff)
                     Run("DELETE FROM archive WHERE date < ?", [Unix(cutoff)]);
-                // 상한: 최신 maxArchive 건만 남기고 가장 오래된 것부터(모자라면 하위 질의가 null 이라 지우지 않음)
-                Run("DELETE FROM archive WHERE date < (SELECT date FROM archive ORDER BY date DESC LIMIT 1 OFFSET ?)", [Math.Max(1, maxArchive) - 1]);
+                // 상한: 최신 maxArchive 건만 남기고 가장 오래된 것부터(모자라면 하위 질의가 null 이라 지우지 않음).
+                // 큰 표에선 색인을 상한만큼 훑으므로 이번에 옮긴 것이 있을 때만(옮긴 게 없으면 줄 수가 늘지 않았다)
+                if (moved > 0) Run("DELETE FROM archive WHERE date < (SELECT date FROM archive ORDER BY date DESC LIMIT 1 OFFSET ?)", [Math.Max(1, maxArchive) - 1]);
                 Raw("COMMIT");
                 return moved;
             }
@@ -464,7 +474,8 @@ public sealed class Database : IDisposable
     // LIKE 의 % _ \ 는 글자 그대로(ESCAPE '\')
     internal static string LikePattern(string q) => "%" + q.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
 
-    // 보이는 출처만(숨긴 출처는 빼고, 켜진 출처 목록이 있으면 그 안만). 출처 id 가 없는 예전 줄은 숨긴 출처 이름으로 거른다.
+    // 보이는 출처만(숨긴 출처는 빼고, 켜진 출처 목록이 있으면 그 안만). 출처 id 가 없는 예전 줄은 숨긴 출처 이름으로 거른다
+    // (그런 줄은 source_id 칸을 더하기 전 판에서만 생겨 끈·해지한 출처까지는 거르지 않는다 — 이름→id 로 채우려면 시작 때 표 전체를 훑어야 해서 두었다).
     // 모든 보관 표 질의(목록·날짜별 건수·거르기 메뉴·검색)가 같은 조각을 쓴다
     private static (string Sql, List<object?> Args) VisibleSources(SourceFilter? filter)
     {

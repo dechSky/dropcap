@@ -7,6 +7,7 @@
 #   - E2E 로 시작하는 이름(E2ERunner·E2ESoak·E2EFaults·E2EProbe… — 배포에 남는 E2EOff 도 이름은 남지 않음)
 #   - DROPCAP_ 로 시작하는 환경 변수 중 배포에서도 읽는 것(아래 KEEP) 밖의 모든 것(DROPCAP_TEST_·DROPCAP_FAULTS_·DROPCAP_PROBE_·DROPCAP_SOAK_…)
 #   - TestHooks 로 끝나는 이름(ReaderSaveTestHooks·ArchiveTestHooks… — 새 훅 묶음도 목록 없이 잡는다)
+#   - ForTests 로 끝나는 이름(execForTests·allowLocalForTests… — 시험용 함수·인자)
 #   - 접두어가 없는 시험 장치 이름(NAMES)
 set -uo pipefail
 MAC="$(cd "$(dirname "$0")/.." && pwd)"
@@ -24,7 +25,7 @@ while read -r n name; do
   [[ -z "$name" ]] && continue
   [[ " $KEEP " == *" $name "* ]] && continue
   echo "남음: $name ($n)"; fail=1
-done < <(grep -oE 'E2E[A-Za-z0-9_]+|DROPCAP_[A-Z0-9_]+|[A-Za-z]+TestHooks' <<<"$STR" | sort | uniq -c)
+done < <(grep -oE 'E2E[A-Za-z0-9_]+|DROPCAP_[A-Z0-9_]+|[A-Za-z]+TestHooks|[A-Za-z]+ForTests' <<<"$STR" | sort | uniq -c)
 for pat in $NAMES; do
   n=$(grep -c -- "$pat" <<<"$STR")
   if [[ "$n" -gt 0 ]]; then echo "남음: $pat ($n)"; fail=1; fi

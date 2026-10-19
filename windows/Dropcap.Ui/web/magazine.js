@@ -644,7 +644,8 @@
     g.innerHTML = r.items.map((it, i) => card(it, i, '', { topic: (r.topics || {})[it.key] })).join('');
     wireImages(g);
     watch(g);
-    // 오래된 기사(보관 표 — 최근 결과와 같은 링크는 앱이 뺌): 최신순 200건씩
+    // 오래된 기사(보관 표 — 최근 결과와 같은 링크는 앱이 뺌): 최신순 200건씩. 앞 결과의 줄은 버린다(arcRows 가 끝없이 크지 않게)
+    arcRows.clear();
     (r.older || []).forEach((x) => arcRows.set(x.key, x));
     older = { q, next: r.olderNext || 0, recent: r.items.length, ids: new Set((r.older || []).map((x) => x.id)), count: (r.older || []).length };
     $('.older', el).innerHTML = r.older && r.older.length
@@ -713,6 +714,7 @@
     const v = await bridge.send('archive', arc);
     if (my !== gen || el !== current) return;
     arcView = v;
+    arcRows.clear();   // 목록을 통째로 다시 그리므로 앞 줄은 버린다(끝없이 크지 않게)
     arc.period = v.period; arc.anchor = v.anchor; arc.limit = v.limit; arc.section = v.section || null; arc.source = v.source || null;
     v.items.forEach((r) => arcRows.set(r.key, r));
     const scroll = el.scrollTop;

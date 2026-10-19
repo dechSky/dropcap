@@ -37,7 +37,8 @@ impl ArchivedItem {
 }
 
 // 보관함·오래된 기사 검색에 보일 출처(숨긴·끈 출처의 글은 다시 나타나지 않게 — 매거진 검색과 같은 출처 거르기).
-// 출처 id 가 없는 예전 줄은 숨긴 출처의 이름으로 거른다
+// 출처 id 가 없는 예전 줄은 숨긴 출처의 이름으로 거른다(그런 줄은 source_id 칸을 더하기 전 맥 개발 판에서만 생겨 끈·해지한 출처까지는 거르지 않는다 —
+// 이름→id 로 채우려면 시작 때 표 전체를 훑어야 해서 두었다)
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Visibility {
     pub hidden_ids: Vec<String>,
@@ -77,6 +78,9 @@ impl Visibility {
 pub const MAX_ROWS: i64 = 5_000_000;
 // 검색어는 앞 200 글자만
 pub const MAX_QUERY: usize = 200;
+// 정리 때 제목·링크를 읽지 못해 옮기지 못한 줄: 최신 이만큼까지만, 이 기간이 지나면 지운다
+pub const BROKEN_KEEP: usize = 1000;
+pub const BROKEN_LIFE_SECS: i64 = 30 * 24 * 3600;
 
 // 설정 '보관 기간'(년). 0 은 끝없이
 pub const DEFAULT_YEARS: i64 = 2;
@@ -87,6 +91,16 @@ pub fn label(years: i64) -> String {
         "끝없이".into()
     } else {
         format!("{years}년")
+    }
+}
+
+// 설정 '보관 기간' 아래 안내(세 판 같은 글 — 맥 Archive.settingsNote)
+pub fn settings_note(years: i64) -> String {
+    const HEAD: &str = "최근 기사 2만 건보다 오래된 기사는 날짜·제목·링크·출처만 남겨 매거진 '보관함'에 옮깁니다(1년에 약 120MB).";
+    if years == 0 {
+        format!("{HEAD} 끝없이 두면 해마다 약 120MB씩 늘고(500만 건에서 가장 오래된 것부터 지움) 검색도 조금씩 느려집니다.")
+    } else {
+        format!("{HEAD} 보관 기간이 지나면 가장 오래된 달부터 지웁니다.")
     }
 }
 

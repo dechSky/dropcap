@@ -424,14 +424,18 @@ impl Database {
                     rows.collect::<rusqlite::Result<_>>()?
                 };
                 let mut done: Vec<String> = vec![]; // 보관 표에 넣었거나 이미 있던 기사(이것만 items 에서 지운다)
+                let mut broken: Vec<(String, f64)> = vec![]; // 제목·링크를 읽지 못한(없거나 빈) 줄
                 {
                     let mut ins = tx.prepare(
                         "INSERT INTO archive(date,title,title_ko,link,source,source_id,section,story) SELECT ?1,?2,?3,?4,?5,?6,?7,?8
                          WHERE NOT EXISTS (SELECT 1 FROM archive WHERE date = ?1 AND link = ?4)",
                     )?;
                     for (key, when, title, title_ko, link, source_name, source_id, summary, id, story) in rows {
-                        // 제목·링크가 없는 줄은 옮기지도 지우지도 않는다(다음에 고쳐 읽을 수 있게)
-                        let (Some(title), Some(link)) = (title.filter(|t| !t.is_empty()), link.filter(|l| !l.is_empty())) else { continue };
+                        // 제목·링크가 없는 줄은 옮기지 않는다(아래에서 오래됐거나 많을 때만 지움)
+                        let (Some(title), Some(link)) = (title.filter(|t| !t.is_empty()), link.filter(|l| !l.is_empty())) else {
+                            broken.push((key, when));
+                            continue;
+                        };
                         let sid = source_id.unwrap_or_default();
                         let mut it = NewsItem::new(&id.unwrap_or_default(), &title, &link, &sid, &source_name.unwrap_or_default(), "");
                         it.title_ko = title_ko;
@@ -442,6 +446,10 @@ impl Database {
                         done.push(key);
                     }
                 }
+                // 읽지 못한 줄은 남기되 30일이 지났거나 최신 BROKEN_KEEP 건 밖이면 지운다(남은 줄 때문에 매번 정렬 질의가 돌지 않게)
+                let stale = ts(now) - crate::archive::BROKEN_LIFE_SECS as f64;
+                broken.sort_by(|a, b| b.1.total_cmp(&a.1));
+                done.extend(broken.into_iter().enumerate().filter(|(i, (_, w))| *i >= crate::archive::BROKEN_KEEP || *w < stale).map(|(_, (k, _))| k));
                 for chunk in done.chunks(400) {
                     let q = vec!["?"; chunk.len()].join(",");
                     tx.execute(&format!("DELETE FROM items WHERE key IN ({q})"), rusqlite::params_from_iter(chunk.iter()))?;
@@ -451,8 +459,11 @@ impl Database {
             if let Some(cut) = crate::archive::cutoff(archive_years, now) {
                 tx.execute("DELETE FROM archive WHERE date < ?", [ts(cut)])?;
             }
-            // 보관 기간과 상관없는 상한: 넘으면 가장 오래된 것부터(상한 번째 줄의 날짜보다 이른 것을 지워 꼭 상한만큼 남긴다)
-            tx.execute("DELETE FROM archive WHERE date < (SELECT date FROM archive ORDER BY date DESC LIMIT 1 OFFSET ?)", [max_rows.max(1) - 1])?;
+            // 보관 기간과 상관없는 상한: 넘으면 가장 오래된 것부터(상한 번째 줄의 날짜보다 이른 것을 지워 꼭 상한만큼 남긴다).
+            // 큰 표에선 색인을 상한만큼 훑으므로 이번에 옮긴 것이 있을 때만(옮긴 게 없으면 줄 수가 늘지 않았다)
+            if moved > 0 {
+                tx.execute("DELETE FROM archive WHERE date < (SELECT date FROM archive ORDER BY date DESC LIMIT 1 OFFSET ?)", [max_rows.max(1) - 1])?;
+            }
             Ok(moved)
         };
         // 어느 단계든(COMMIT 포함) 실패하면 tx 가 버려지며 모두 되돌린다

@@ -14,6 +14,11 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
 
     // 화면에 보낸 기사(검색 결과·스크랩처럼 최근 목록에 없는 것도 다시 찾게)
     private readonly Dictionary<string, NewsItem> shown = new();
+    // 화면에 보낸 보관 기사 줄(보관함은 한 번에 수천 줄 — shown 과 따로 두 묶음으로: 지금 것이 차면 앞 것을 버리고 지금 것을 앞으로).
+    // 화면에 보이는 줄(최대 ArchiveLimitMax + OlderPage)은 늘 두 묶음 안에 있다
+    private Dictionary<string, NewsItem> archShown = new(), archPrev = new();
+    public const int ArchiveShownCap = 20_000;
+    public const int ArchiveLimitMax = 10_000;
     private bool attached;
 
     // 분야 '오늘 얼굴' 사진(유리 띠). 시험에서는 바꿔 끼운다(바깥 피드를 받지 않게)
@@ -471,7 +476,11 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
     private ArchivedRowView Row(ArchivedItem a, bool showDay)
     {
         var it = a.ToNewsItem();
-        lock (shown) shown[it.Key] = it;
+        lock (shown)
+        {
+            if (archShown.Count >= ArchiveShownCap) { archPrev = archShown; archShown = new(); }
+            archShown[it.Key] = it;
+        }
         var s = Sections.ById(a.Section);
         var (l, d) = Tint(s is null ? DualColor.Gray : DualColor.Fixed(s.Color));
         return new ArchivedRowView(it.Key, a.Id, a.DisplayTitle, a.TitleKo is null ? null : a.Title, a.Source, a.Section, Sections.Name(a.Section), l, d, When(a.Date, showDay));
@@ -491,9 +500,9 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
         var p = Archive.ParsePeriod(period ?? Prefs.Get<string?>(ArchivePeriodKey, null));
         if (period is not null) Prefs.Set(ArchivePeriodKey, p.Raw());
         var nowLocal = nowOverride ?? DateTime.Now;
-        var day = Archive.ParseDay(anchor) ?? nowLocal.Date;
+        var day = ClampDay(Archive.ParseDay(anchor) ?? nowLocal.Date);
         var (from, to) = Archive.Range(p, day);
-        limit = Math.Clamp(limit <= 0 ? ArchivePageSize : limit, 1, 100_000);
+        limit = Math.Clamp(limit <= 0 ? ArchivePageSize : limit, 1, ArchiveLimitMax);
         if (section is { Length: 0 }) section = null;
         if (source is { Length: 0 }) source = null;
         var filter = model.SourceFilter;   // 숨긴·꺼진 출처는 목록·건수·거르기 메뉴에서 뺀다(상태는 여기서 떠 둔다)
@@ -525,7 +534,11 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
 
     // ◀ ▶: 한 기간 앞뒤의 기준 날('yyyy-MM-dd')
     public static string ShiftAnchor(string? period, string? anchor, int n) =>
-        Archive.DayKey(Archive.Shift(Archive.ParsePeriod(period), Archive.ParseDay(anchor) ?? DateTime.Now.Date, n));
+        Archive.DayKey(ClampDay(Archive.Shift(Archive.ParsePeriod(period), ClampDay(Archive.ParseDay(anchor) ?? DateTime.Now.Date), n)));
+
+    // 기준 날은 1971~9998년 안으로(0001-01-01 의 ◀ · 9999년 연 보기 끝처럼 DateTime 범위를 넘는 계산을 막는다)
+    public static DateTime ClampDay(DateTime d) =>
+        d < new DateTime(1971, 1, 1) ? new DateTime(1971, 1, 1) : d > new DateTime(9998, 12, 31) ? new DateTime(9998, 12, 31) : d;
 
     // 최근 검색어(맥 magRecentSearches 와 같은 키 — 화면 설정이라 prefs.json)
     public const string RecentKey = "magRecentSearches";
@@ -617,7 +630,11 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
     // MARK: 명령
     private async Task<NewsItem> Find(string key)
     {
-        lock (shown) if (shown.TryGetValue(key, out var it)) return it;
+        lock (shown) if (shown.TryGetValue(key, out var it) || archShown.TryGetValue(key, out it) || archPrev.TryGetValue(key, out it)) return it;
+        // 두 묶음에서 밀려난 보관 줄(아주 긴 '더 보기')은 key 의 링크로 연다(본문은 링크에서 다시 받는다)
+        var prefix = ArchivedItem.ReaderSource + "|";
+        if (key.StartsWith(prefix, StringComparison.Ordinal) && key[prefix.Length..] is { Length: > 0 } link)
+            return new NewsItem { Id = link, Title = link, Link = link, SourceId = ArchivedItem.ReaderSource, Summary = "", Tier = "" };
         return await Task.Run(() => Lookup.Find(model, key, mag)) ?? throw new KeyNotFoundException("기사를 찾지 못함");
     }
 
@@ -638,7 +655,8 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
         if (keys is null) return o;
         lock (shown)
             foreach (var n in keys)
-                if (n is JsonValue v && v.TryGetValue<string>(out var k) && shown.TryGetValue(k, out var it) && o.All(x => x.Key != k)) o.Add(it);
+                if (n is JsonValue v && v.TryGetValue<string>(out var k) && (shown.TryGetValue(k, out var it) || archShown.TryGetValue(k, out it) || archPrev.TryGetValue(k, out it))
+                    && o.All(x => x.Key != k)) o.Add(it);
         return o;
     }
 
@@ -721,7 +739,8 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
             {
                 var it = await Find(a.Str("key"));
                 ExternalLink.Open(it.Link);
-                if (a.Bool("read")) model.SetRead(it, true);
+                // 보관 기사는 읽음 기록에 넣지 않는다(open 과 같음)
+                if (a.Bool("read") && it.SourceId != ArchivedItem.ReaderSource) model.SetRead(it, true);
                 return null;
             }
             case "toggleRead": { var it = await Find(a.Str("key")); model.SetRead(it, !model.IsRead(it)); return null; }

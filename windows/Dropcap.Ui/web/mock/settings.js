@@ -152,7 +152,7 @@ if (!(window.chrome && window.chrome.webview)) {
         autoQuietNote: "이때 온 소식은 물방울 없이 '안 읽음'에 쌓이고, 알릴 만한 소식은 그 분야 묶음으로 모입니다.",
         backup: { intro: '계정도 서버도 없습니다. 모든 기록은 이 PC 안에만 있습니다.', note: '다른 PC·Mac 으로 옮길 때: … JSON 파일 하나로 내보내고, 다른 기기에서 가져오면 없는 것만 더합니다.', canUndo: !!st.imported, message: st.backupMsg || null },
         archiveYears: st.archiveYears ?? 2, archiveChoices: [1, 2, 5, 0].map((y) => ({ value: y, label: y ? `${y}년` : '끝없이' })),
-        archiveNote: "최근 기사 2만 건보다 오래된 기사는 날짜·제목·링크·출처만 남겨 매거진 '보관함'에 옮깁니다(1년에 약 110MB). 보관 기간이 지나면 가장 오래된 달부터 지웁니다." + (st.archiveYears === 0 ? ' 끝없이 두면 해마다 약 120MB씩 늘고(500만 건에서 가장 오래된 것부터 지움) 검색도 조금씩 느려집니다.' : ''),
+        archiveNote: "최근 기사 2만 건보다 오래된 기사는 날짜·제목·링크·출처만 남겨 매거진 '보관함'에 옮깁니다(1년에 약 120MB). " + (st.archiveYears === 0 ? '끝없이 두면 해마다 약 120MB씩 늘고(500만 건에서 가장 오래된 것부터 지움) 검색도 조금씩 느려집니다.' : '보관 기간이 지나면 가장 오래된 달부터 지웁니다.'),
         calendarNote: '윈도우 판은 설치 없이 푸는 앱이라 윈도우 캘린더(일정) 권한을 받을 수 없어 쓸 수 없습니다.',
       },
       sections: sections(),

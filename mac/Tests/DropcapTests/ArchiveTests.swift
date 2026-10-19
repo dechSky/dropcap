@@ -108,18 +108,31 @@ private func item(_ id: String, title: String? = nil, source: String = "geeknews
         #expect(ed.archivePeriod(from: week.from, to: week.to, section: nil, source: nil, limit: 100).total == 6)
     }
 
-    // 읽지 못하는 줄(제목·링크 없음)은 보관하지 못하므로 지우지도 않는다
+    // 읽지 못하는 줄(제목·링크가 없거나 빈 것)은 보관하지 못하므로 남기되, 30일이 지났거나 brokenKeep 건을 넘으면 지운다
     @Test func pruneKeepsUnreadableRows() throws {
         let db = try tempDB()
         let now = Date()
         db.upsert(item("ok", date: now.addingTimeInterval(-7200)), cluster: nil)
         db.upsert(item("bad", date: now.addingTimeInterval(-3600)), cluster: nil)
+        db.upsert(item("empty", title: "", date: now.addingTimeInterval(-5400)), cluster: nil)
+        db.upsert(item("stale", date: now.addingTimeInterval(-40 * 86400)), cluster: nil)
         db.upsert(item("new", date: now), cluster: nil)
-        db.execForTests("UPDATE items SET json=json_remove(json,'$.title') WHERE key='geeknews|bad'")
+        db.execForTests("UPDATE items SET json=json_remove(json,'$.title') WHERE key IN ('geeknews|bad','geeknews|stale')")
         db.prune(keep: 1, now: now, section: { _ in "tech" })
         #expect(db.archiveCount == 1)
-        #expect(db.exists("geeknews|bad"))
+        #expect(db.exists("geeknews|bad") && db.exists("geeknews|empty")) // 빈 제목도 읽지 못한 줄(세 판 같음)
+        #expect(!db.exists("geeknews|stale")) // 30일 지남
         #expect(!db.exists("geeknews|ok"))
+    }
+
+    @Test func pruneCapsUnreadableRows() throws {
+        let db = try tempDB()
+        let now = Date()
+        for i in 0..<(Database.brokenKeep + 2) { db.upsert(item("b\(i)", title: "", date: now.addingTimeInterval(Double(-i - 1) * 60)), cluster: nil) }
+        db.upsert(item("new", date: now), cluster: nil)
+        db.prune(keep: 1, now: now, section: { _ in "tech" })
+        #expect(db.itemCount == Database.brokenKeep + 1)
+        #expect(db.exists("geeknews|b0") && !db.exists("geeknews|b\(Database.brokenKeep + 1)")) // 오래된 것부터
     }
 
     // 숨긴·끈 출처는 보관함(목록·날짜별 건수·분야/출처 메뉴)과 오래된 기사 검색에 다시 나오지 않는다 — 최근 기사도, 보관 기사도
@@ -153,9 +166,15 @@ private func item(_ id: String, title: String? = nil, source: String = "geeknews
         let now = Date()
         for i in 0..<6 { db.upsert(item("c\(i)", date: now.addingTimeInterval(Double(-i - 1) * 86400)), cluster: nil) }
         db.upsert(item("keep", date: now), cluster: nil)
+        db.prune(keep: 1, archiveYears: 0, now: now, rowCap: 10, section: { _ in "tech" })
+        #expect(db.archiveCount == 6)
+        // 옮긴 것이 없으면 상한 질의를 건너뛴다(줄 수가 늘지 않았다)
+        db.prune(keep: 1, archiveYears: 0, now: now, rowCap: 4, section: { _ in "tech" })
+        #expect(db.archiveCount == 6)
+        db.upsert(item("next", date: now.addingTimeInterval(60)), cluster: nil)
         db.prune(keep: 1, archiveYears: 0, now: now, rowCap: 4, section: { _ in "tech" })
         #expect(db.archiveCount == 4)
-        #expect(db.searchArchive("geeknews").map(\.link).last == "https://geeknews.example/c3")
+        #expect(db.searchArchive("geeknews").map(\.link).last == "https://geeknews.example/c2")
         #expect(Archive.settingsNote(0).contains("500만 건"))
         #expect(Archive.trimQuery(String(repeating: "가", count: 500)).count == Archive.queryLimit)
     }

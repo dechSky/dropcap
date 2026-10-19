@@ -180,10 +180,8 @@ fn general() -> adw::PreferencesPage {
         use dropcap_core::archive;
         let labels: Vec<String> = archive::CHOICES.iter().map(|y| archive::label(*y)).collect();
         let sel = archive::CHOICES.iter().position(|y| *y == st.archive_years).unwrap_or(1);
-        // '끝없이'를 고르면 크기 안내를 더한다
-        const NOTE: &str = "최근 기사 2만 건보다 오래된 기사는 날짜·제목·링크·출처만 남겨 매거진 '보관함'에 옮깁니다(1년에 약 110MB). 보관 기간이 지나면 가장 오래된 달부터 지웁니다.";
-        const FOREVER: &str = "끝없이 두면 해마다 약 120MB씩 늘고(500만 건에서 가장 오래된 것부터 지움) 검색도 조금씩 느려집니다.";
-        let text = |y: i64| if y == 0 { format!("{NOTE} {FOREVER}") } else { NOTE.to_string() };
+        // '끝없이'를 고르면 크기 안내가 바뀐다(세 판 같은 글)
+        let text = archive::settings_note;
         let note = caption(&text(st.archive_years));
         {
             let note = note.clone();

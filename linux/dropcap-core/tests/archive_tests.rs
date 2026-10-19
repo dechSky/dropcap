@@ -282,7 +282,7 @@ fn legacy_rows_without_source_id_filtered_by_name() {
     assert!(db.archived(now - Duration::days(1), now, None, None, 10, 0, &vis).is_empty());
 }
 
-// 제목이 없는 줄은 보관 표로 옮기지도 items 에서 지우지도 않는다
+// 제목이 없는 줄은 보관 표로 옮기지 않고 남긴다 — 30일이 지났거나 BROKEN_KEEP 건을 넘으면 지운다
 #[test]
 fn bad_rows_are_kept_not_archived() {
     let db = Database::in_memory();
@@ -292,11 +292,31 @@ fn bad_rows_are_kept_not_archived() {
     let mut bad = item("bad", None, "geeknews", now - Duration::hours(5));
     bad.title = String::new();
     put(&db, &bad, None);
+    let mut stale = item("stale", None, "geeknews", now - Duration::days(40));
+    stale.title = String::new();
+    put(&db, &stale, None);
     let moved = db.prune(1, archive::DEFAULT_YEARS, now, &tech);
     assert_eq!(moved, 1);
     assert_eq!(db.archive_count(), 1);
     assert_eq!(db.item_count(), 2); // keep + 옮기지 못한 bad
     assert!(db.exists(&bad.key()));
+    assert!(!db.exists(&stale.key())); // 30일 지남
+}
+
+#[test]
+fn bad_rows_are_capped() {
+    let db = Database::in_memory();
+    let now = Utc::now();
+    for i in 0..archive::BROKEN_KEEP + 2 {
+        let mut b = item(&format!("b{i}"), None, "geeknews", now - Duration::minutes(i as i64 + 1));
+        b.title = String::new();
+        put(&db, &b, None);
+    }
+    put(&db, &item("keep", None, "geeknews", now), None);
+    db.prune(1, archive::DEFAULT_YEARS, now, &tech);
+    assert_eq!(db.item_count(), archive::BROKEN_KEEP as i64 + 1);
+    assert!(db.exists("geeknews|b0"));
+    assert!(!db.exists(&format!("geeknews|b{}", archive::BROKEN_KEEP + 1))); // 오래된 것부터
 }
 
 // 보관 기간과 상관없는 상한: 넘으면 가장 오래된 것부터 지운다
@@ -307,11 +327,18 @@ fn archive_row_cap() {
     for i in 0..6 {
         put(&db, &item(&format!("c{i}"), None, "geeknews", now - Duration::days(i)), None);
     }
+    db.prune_capped(1, 0, now, &tech, 10);
+    assert_eq!(db.archive_count(), 5);
+    // 옮긴 것이 없으면 상한 질의를 건너뛴다(줄 수가 늘지 않았다)
+    db.prune_capped(1, 0, now, &tech, 3);
+    assert_eq!(db.archive_count(), 5);
+    put(&db, &item("next", None, "geeknews", now + Duration::minutes(1)), None);
     db.prune_capped(1, 0, now, &tech, 3);
     assert_eq!(db.archive_count(), 3); // 꼭 상한만큼 남는다
-    let left: Vec<String> = db.archived(now - Duration::days(30), now, None, None, 10, 0, &all()).into_iter().map(|a| a.link).collect();
-    assert_eq!(left, ["https://geeknews.example/c1", "https://geeknews.example/c2", "https://geeknews.example/c3"]);
+    let left: Vec<String> = db.archived(now - Duration::days(30), now + Duration::days(1), None, None, 10, 0, &all()).into_iter().map(|a| a.link).collect();
+    assert_eq!(left, ["https://geeknews.example/c0", "https://geeknews.example/c1", "https://geeknews.example/c2"]);
     assert_eq!(archive::MAX_ROWS, 5_000_000);
+    assert!(archive::settings_note(0).contains("500만 건") && archive::settings_note(2).contains("가장 오래된 달부터"));
 }
 
 // 검색어는 앞 200 글자만 쓴다(긴 글을 붙여 넣어도)

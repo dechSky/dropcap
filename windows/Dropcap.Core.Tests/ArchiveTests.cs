@@ -123,17 +123,31 @@ public class ArchiveTests : IDisposable
         cmd.ExecuteNonQuery();
     }
 
-    // 제목이 없는 줄은 옮기지도 지우지도 않는다(다른 줄은 그대로 옮김)
+    // 제목이 없는 줄은 옮기지 않고 남긴다(다른 줄은 그대로 옮김) — 30일이 지났거나 BrokenKeep 건을 넘으면 지운다
     [Fact]
     public void BadRowIsKept()
     {
         var now = DateTimeOffset.Now;
         db.Upsert(Item("bad", now.AddHours(-5), ""), null);
+        db.Upsert(Item("stale", now.AddDays(-40), ""), null);
         for (var i = 0; i < 4; i++) db.Upsert(Item($"g{i}", now.AddHours(-i)), null);
         Assert.Equal(2, db.Prune(keep: 2, now: now, section: _ => "tech"));
         Assert.Equal(3, db.ItemCount);   // 최근 2 + 옮기지 못한 줄
         Assert.Equal(2, db.ArchiveCount);
         Assert.True(db.Exists("geeknews|bad"));
+        Assert.False(db.Exists("geeknews|stale"));   // 30일 지남
+    }
+
+    [Fact]
+    public void BadRowsAreCapped()
+    {
+        var now = DateTimeOffset.Now;
+        for (var i = 0; i < Database.BrokenKeep + 2; i++) db.Upsert(Item($"b{i}", now.AddMinutes(-i - 1), ""), null);
+        db.Upsert(Item("keep", now), null);
+        db.Prune(keep: 1, now: now, section: _ => "tech");
+        Assert.Equal(Database.BrokenKeep + 1, db.ItemCount);
+        Assert.True(db.Exists("geeknews|b0"));
+        Assert.False(db.Exists($"geeknews|b{Database.BrokenKeep + 1}"));   // 오래된 것부터
     }
 
     // 보관 기간과 관계없는 상한: 넘으면 가장 오래된 것부터 지워 꼭 상한만큼 남긴다
@@ -144,9 +158,13 @@ public class ArchiveTests : IDisposable
         for (var i = 0; i < 6; i++) db.Upsert(Item($"c{i}", now.AddDays(-i)), null);
         db.Prune(keep: 1, archiveYears: 0, now: now, section: _ => "tech", maxArchive: 10);
         Assert.Equal(5, db.ArchiveCount);
+        // 옮긴 것이 없으면 상한 질의를 건너뛴다(줄 수가 늘지 않았다)
+        db.Prune(keep: 1, archiveYears: 0, now: now, section: _ => "tech", maxArchive: 3);
+        Assert.Equal(5, db.ArchiveCount);
+        db.Upsert(Item("next", now.AddMinutes(1)), null);
         db.Prune(keep: 1, archiveYears: 0, now: now, section: _ => "tech", maxArchive: 3);
         Assert.Equal(3, db.ArchiveCount);
-        Assert.Equal(["c1", "c2", "c3"], db.Archived(now.AddDays(-30), now).Select(a => a.Link[(a.Link.LastIndexOf('/') + 1)..]));
+        Assert.Equal(["c0", "c1", "c2"], db.Archived(now.AddDays(-30), now.AddDays(1)).Select(a => a.Link[(a.Link.LastIndexOf('/') + 1)..]));
     }
 
     // 먼저 만든 판의 보관 표(출처 id 칸 없음)는 칸만 더하고 줄은 그대로
@@ -374,6 +392,20 @@ public class ArchivePageTests : IDisposable
         var none = await Run("archive", new { period = "day", anchor = Archive.DayKey(day), source = "없는 출처" });
         Assert.Equal("거른 조건에 맞는 기사가 없습니다.", (string)none["empty"]!);
         Assert.Equal(Archive.DayKey(day.AddDays(1)), (string)(await Run("archiveShift", new { period = "day", anchor = Archive.DayKey(day), by = 1 }))!);
+    }
+
+    // 날짜 끝값(0001년 ◀ · 9999년 연 보기)은 범위 안으로 묶고, 보관 기사는 '브라우저에서 열기'로도 읽음 기록에 넣지 않는다.
+    // 화면에 보낸 줄 묶음에서 밀려난 key 도 링크로 연다
+    [Fact]
+    public async Task ArchiveEdgesAndRead()
+    {
+        Assert.Equal("1971-01-01", (string)(await Run("archiveShift", new { period = "year", anchor = "0001-01-01", by = -1 }))!);
+        Assert.Equal("9998", ((string)(await Run("archive", new { period = "year", anchor = "9999-12-31" }))["anchor"]!)[..4]);
+        var key = ArchivedItem.ReaderSource + "|https://old.example/gone";
+        await Run("browser", new { key, read = true });
+        Assert.False(model.IsRead(new NewsItem { Id = "https://old.example/gone", Title = "", Link = "https://old.example/gone", SourceId = ArchivedItem.ReaderSource, SourceName = "", Summary = "", Tier = "" }));
+        await Run("open", new { key });
+        Assert.Equal("https://old.example/gone", Assert.Single(platform.Readers).Link);
     }
 
     // 검색: '오래된 기사 포함'(기본 켜짐)이면 보관 표에서도 찾고, 최근 결과와 같은 링크는 뺀다. 끄면 기억하고 찾지 않는다

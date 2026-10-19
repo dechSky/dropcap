@@ -22,7 +22,7 @@ import Testing
         return NSBitmapImageRep(cgImage: ctx.makeImage()!).representation(using: .jpeg, properties: [.compressionFactor: 0.8])!
     }
 
-    // S1: 사진 메모리 캐시가 장 수(160장)로만 묶여, 큰 사진이면 풀린 그림만 수백 MB 를 붙들었다(오래 켜 두기 6시간에 952MB).
+    // 사진 메모리 캐시가 장 수(160장)로만 묶여, 큰 사진이면 풀린 그림만 수백 MB 를 붙들었다(오래 켜 두기 6시간에 952MB).
     // 바이트 상한으로 묶어 오래된 것부터 버린다.
     @Test func imageMemoryCacheIsBoundedInBytes() async throws {
         let dir = Self.tempDir("images")
@@ -84,7 +84,7 @@ func finishes<T: Sendable>(within limit: Double, _ op: @escaping @Sendable () as
 }
 
 @Suite struct StallTests {
-    // S2: 피드 하나가 아주 천천히 흘러나오면 받기가 끝나지 않아 확인(checkAll)이 영영 '확인 중'에 머물고 그 뒤 확인이 모두 건너뛰어졌다.
+    // 피드 하나가 아주 천천히 흘러나오면 받기가 끝나지 않아 확인(checkAll)이 영영 '확인 중'에 머물고 그 뒤 확인이 모두 건너뛰어졌다.
     // 요청 전체 시간 상한(timeoutIntervalForResource)으로 끊는다.
     @Test func slowDripFeedIsCutByDeadline() async throws {
         let server = try TrickleHTTP()
@@ -108,8 +108,8 @@ final class SilentTranslate: URLProtocol {
 }
 
 @Suite(.serialized) struct TranslateStallTests {
-    // S3: 확인(checkAll)은 새 글 제목 번역을 기다린다. 번역 요청이 끝나지 않으면(대답 없는 프록시·천천히 흐르는 응답)
-    // 확인이 끝나지 않아 S2 와 같이 그 뒤 확인이 모두 멈췄다. 요청마다 전체 시간 상한을 두고, 넘으면 원문 그대로.
+    // 확인(checkAll)은 새 글 제목 번역을 기다린다. 번역 요청이 끝나지 않으면(대답 없는 프록시·천천히 흐르는 응답)
+    // 확인이 끝나지 않아 느린 피드 때와 같이 그 뒤 확인이 모두 멈췄다. 요청마다 전체 시간 상한을 두고, 넘으면 원문 그대로.
     @Test func silentTranslateServerFallsBackToOriginal() async throws {
         URLProtocol.registerClass(SilentTranslate.self)
         SilentTranslate.on = true
@@ -124,7 +124,7 @@ final class SilentTranslate: URLProtocol {
         #expect(en != nil, "영어 제목 받기가 끝나지 않음")
     }
 
-    // S3-나: 묶음이 시간 상한에 걸리면 문단마다 다시 보내는데(번역 한 번에 40개까지), 그 하나하나가 또 상한까지 기다려
+    // 묶음이 시간 상한에 걸리면 문단마다 다시 보내는데(번역 한 번에 40개까지), 그 하나하나가 또 상한까지 기다려
     // 확인 한 번이 수 분씩 걸렸다. 시간 상한에 걸린 뒤 잠시(1분)는 구글을 부르지 않고 원문 그대로.
     @Test func silentServerDoesNotMultiplyWaits() async throws {
         URLProtocol.registerClass(SilentTranslate.self)
@@ -144,7 +144,7 @@ final class SilentTranslate: URLProtocol {
 }
 
 @Suite struct ClockChangeTests {
-    // S4: 시계가 앞서 있던 때(잘못 맞춘 시계·고친 상태 파일) 켠 '1시간 잠시 끄기'가, 시계를 바로잡은 뒤에도 그만큼(며칠) 남아
+    // 시계가 앞서 있던 때(잘못 맞춘 시계·고친 상태 파일) 켠 '1시간 잠시 끄기'가, 시계를 바로잡은 뒤에도 그만큼(며칠) 남아
     // 알림이 계속 꺼져 있었다. 잠시 끄기는 길어야 '내일 아침 8시'(32시간 안)이므로 이틀보다 먼 끝은 시계가 바뀐 것으로 보고 푼다.
     @MainActor @Test func snoozeFromFutureClockIsReleased() {
         let now = Date()
@@ -157,7 +157,7 @@ final class SilentTranslate: URLProtocol {
 }
 
 @Suite struct StoryListTests {
-    // S5: 스토리 목록이 스토리마다 DB 를 두 번씩 묻고(보도 JSON 을 모두 풀어) 메인 스레드에서 만들어져, 기록이 쌓일수록
+    // 스토리 목록이 스토리마다 DB 를 두 번씩 묻고(보도 JSON 을 모두 풀어) 메인 스레드에서 만들어져, 기록이 쌓일수록
     // 스토리 화면을 열거나 앱 상태가 바뀔 때마다 화면이 멈췄다(오래 켜 두기 4일 — 11ms → 940ms). 한 번에 묻는다.
     @Test func storyListAsksDatabaseOnce() throws {
         let file = StabilityTests.tempDir("stories").appendingPathComponent("m.sqlite")
@@ -186,6 +186,33 @@ final class SilentTranslate: URLProtocol {
         let one = Magazine.stories(db: db, filter: SourceFilter(hidden: ["src1", "src2"], active: nil), now: now)
         #expect(one.isEmpty)
     }
+
+    // 보도가 아주 많은 스토리: 수는 전부 세되 카드에는 견본만(출처마다 첫 보도 + 최근 것) 꺼낸다
+    @Test func bigStoryCardTakesSample() throws {
+        let file = StabilityTests.tempDir("bigstory").appendingPathComponent("m.sqlite")
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let db = Database(file: file)
+        let now = Date()
+        db.saveCluster(Database.Cluster(id: "big", title: "big story", tokens: [], first: now.addingTimeInterval(-7200), last: now, size: 600))
+        for i in 0..<600 {
+            let s = i < 3 ? i : 0 // 출처 셋, 거의 다 src0
+            let it = NewsItem(id: "b\(i)", title: "big story \(i)", titleKo: nil, link: "https://e.example/b/\(i)", date: now.addingTimeInterval(-7200 + Double(i)),
+                              summary: "", sourceId: "src\(s)", sourceName: "S\(s)", tier: s == 2 ? "lab" : "press")
+            db.upsert(it, cluster: "big")
+        }
+        let cards = Magazine.stories(db: db, filter: SourceFilter(), now: now)
+        #expect(cards.count == 1)
+        let c = try #require(cards.first)
+        #expect(c.cluster.size == 600)
+        #expect(c.items.count <= Database.storySample + 3)
+        #expect(Set(c.items.map(\.sourceId)) == ["src0", "src1", "src2"]) // 출처 줄은 그대로
+        #expect(c.items.first?.key == "src0|b0") // 첫 보도
+        #expect(c.items.contains { $0.title == "big story 599" }) // 최근 보도
+        #expect(c.topic != nil)
+        // 숨긴 출처는 세지 않는다
+        let hid = Magazine.stories(db: db, filter: SourceFilter(hidden: ["src0"], active: nil), now: now)
+        #expect(hid.first?.cluster.size == 2 && hid.first?.items.count == 2)
+    }
 }
 
 @Suite struct DBWriteFailureTests {
@@ -194,7 +221,7 @@ final class SilentTranslate: URLProtocol {
                  date: Date(), summary: "", sourceId: "src\(i % 3)", sourceName: "S", tier: "press")
     }
 
-    // S7: DB 가 잠기거나 디스크가 가득 차 기사를 넣지 못하면, 앱 상태에는 '본 글'로 남아 다시 오지 않으므로 매거진에서 영영 빠졌다
+    // DB 가 잠기거나 디스크가 가득 차 기사를 넣지 못하면, 앱 상태에는 '본 글'로 남아 다시 오지 않으므로 매거진에서 영영 빠졌다
     // (실패 처리 시험 F4·F5). 잠깐의 잠금은 기다리고(busy timeout), 그래도 못 넣은 것은 다음 받아 넣기 때 다시 넣는다.
     @Test func failedIngestIsRetried() async throws {
         let dir = StabilityTests.tempDir("dbfail")
@@ -233,7 +260,7 @@ final class SilentTranslate: URLProtocol {
         #expect(await Editor(db: db, retryFile: file).retry.isEmpty)
     }
 
-    // S7-나: 잠금을 기다리는 동안 메인 스레드(화면)가 멈추지 않게 — 메인에서 부른 쓰기는 0.1초만 기다리고 포기한다
+    // 잠금을 기다리는 동안 메인 스레드(화면)가 멈추지 않게 — 메인에서 부른 쓰기는 0.1초만 기다리고 포기한다
     // (실패 처리 시험 F4-나: 8초 잠금에 메인이 6.5초 멈춤 — 사진 주소·점수 쓰기)
     @MainActor @Test func mainThreadWriteDoesNotWaitLong() async throws {
         let dir = StabilityTests.tempDir("dbmain")
@@ -259,7 +286,7 @@ final class SilentTranslate: URLProtocol {
 }
 
 @Suite struct KeywordSpeedTests {
-    // S8: 한국어 낱말 찾기를 글자 그대로(.literal)로 바꿨다. 글을 NFC 로 맞추므로 자모가 풀린(NFD) 글도 같게 나뉜다
+    // 한국어 낱말 찾기를 글자 그대로(.literal)로 바꿨다. 글을 NFC 로 맞추므로 자모가 풀린(NFD) 글도 같게 나뉜다
     @Test func decomposedHangulStillMatches() {
         let nfc = "한국은행 기준금리 인하 결정에 코스피 급등"
         let nfd = nfc.decomposedStringWithCanonicalMapping

@@ -121,7 +121,7 @@ fn recommend_carousels_stay_out() {
     assert!(at(&b, &para(8)).is_some());
 }
 
-// 보안 낮음 L2: 추천 머리말이 캐러셀 바깥 바로 앞 형제(또는 한 겹 감싼 상자의 앞 형제)이고 칸에 링크가 없어도(onclick 카드) 화면 밖 칸을 넣지 않는다
+// 보안 낮음: 추천 머리말이 캐러셀 바깥 바로 앞 형제(또는 한 겹 감싼 상자의 앞 형제)이고 칸에 링크가 없어도(onclick 카드) 화면 밖 칸을 넣지 않는다
 #[test]
 fn recommend_head_outside_root() {
     let cards: String = (1..=3)
@@ -144,7 +144,7 @@ fn recommend_head_outside_root() {
     assert!(at(&b, &slide_text(7)).is_some(), "추천이 아닌 앞 제목은 그대로");
 }
 
-// 보안 낮음 L3: 칸 수(50)·칸 글 양(본문 글자 2배, 적어도 3000자) 상한
+// 보안 낮음: 칸 수(50)·칸 글 양(본문 글자 2배, 적어도 3000자) 상한
 #[test]
 fn slide_cap() {
     let photos: String = (0..80).map(|i| format!(r#"<div class="swiper-slide"><img src="https://img.example.com/g{i}.jpg"></div>"#)).collect();
@@ -158,7 +158,7 @@ fn slide_cap() {
     assert!(at(&b2, &para(5)).is_some());
 }
 
-// 보안 낮음 L5: 한 글에 캐러셀이 둘 — 첫 것을 넣으며 지운 요소(본문에 남은 칸 글 X)가 둘째의 뒤 글로 골라져
+// 보안 낮음: 한 글에 캐러셀이 둘 — 첫 것을 넣으며 지운 요소(본문에 남은 칸 글 X)가 둘째의 뒤 글로 골라져
 // 떨어진 노드 앞에 넣는 바람에 둘째 칸이 조용히 빠지지 않는다(순서 표를 캐러셀마다 새로)
 #[test]
 fn two_carousels_after_removal() {

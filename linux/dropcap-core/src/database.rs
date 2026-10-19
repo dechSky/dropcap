@@ -1,5 +1,6 @@
 // 매거진 기록 저장소: magazine.sqlite (맥 Core/Database.swift 와 같은 표·열·JSON).
 // 이 파일이 없거나 깨져도 알림 기능은 그대로 돈다(지우면 처음부터 다시 쌓임).
+use crate::archive::{ArchivedItem, Visibility};
 use crate::magazine::Issue;
 use crate::models::{ItemKind, NewsItem};
 use crate::scrapbook::Scrap;
@@ -61,8 +62,11 @@ pub struct Database {
     pub file: PathBuf,
     pub recreated: bool,        // 이번 실행에서 깨진 파일을 치우고 새로 만들었는가
     pub salvaged_scraps: usize, // 그때 깨진 파일에서 건진 스크랩 수
-    statements: AtomicUsize,    // 시험용: 실행한 읽기 문장 수(화면 하나에 DB 를 몇 번 묻는지 — S5·S8)
+    statements: AtomicUsize,    // 시험용: 실행한 읽기 문장 수(화면 하나에 DB 를 몇 번 묻는지)
 }
+
+// 스토리 카드에 꺼내는 보도 수: 출처마다 첫 보도 + 최근 이만큼(보도가 수천 건인 스토리도 목록을 만들 때 전부 풀지 않게)
+pub const STORY_SAMPLE: i64 = 40;
 
 fn ts(d: DateTime<Utc>) -> f64 {
     d.timestamp_millis() as f64 / 1000.0
@@ -92,7 +96,43 @@ CREATE TABLE IF NOT EXISTS teasers(
   link TEXT PRIMARY KEY, updated REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS image_scores(
   url TEXT PRIMARY KEY, score REAL NOT NULL, text REAL NOT NULL, colors REAL NOT NULL, flat REAL NOT NULL, updated REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS archive(
+  date REAL NOT NULL, title TEXT NOT NULL, title_ko TEXT, link TEXT NOT NULL, source TEXT, source_id TEXT, section TEXT, story TEXT);
 ";
+
+// 보관 표 손보기: 출처 id 칸이 없던 표에는 더하고(예전 줄은 NULL — 이름으로 거름), 색인은 출처 id 까지 담은 것으로 바꾼다
+fn migrate_archive(c: &Connection) -> rusqlite::Result<()> {
+    let has_id = {
+        let mut st = c.prepare("PRAGMA table_info(archive)")?;
+        let cols = st.query_map([], |r| r.get::<_, String>(1))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        cols.iter().any(|n| n == "source_id")
+    };
+    if !has_id {
+        c.execute_batch("ALTER TABLE archive ADD COLUMN source_id TEXT;")?;
+    }
+    c.execute_batch(
+        "DROP INDEX IF EXISTS archive_date;
+         CREATE INDEX IF NOT EXISTS archive_date_src ON archive(date, section, source, source_id);",
+    )
+}
+
+const ARCHIVE_COLUMNS: &str = "date, title, title_ko, link, source, section, story, source_id";
+
+// 분야·출처 거르기(None 이면 모두) + 보일 출처(숨긴·끈 출처 빼기)
+fn archive_filter(section: Option<&str>, source: Option<&str>, vis: &Visibility) -> (String, Vec<Option<String>>) {
+    let (mut sql, mut args) = (String::new(), vec![]);
+    if let Some(s) = section {
+        sql += " AND section = ?";
+        args.push(Some(s.to_string()));
+    }
+    if let Some(s) = source {
+        sql += " AND source = ?";
+        args.push(Some(s.to_string()));
+    }
+    sql += Visibility::SQL;
+    args.extend(vis.sql_args());
+    (sql, args)
+}
 
 pub const TEASER_LIFE_SECS: i64 = 30 * 24 * 3600;
 pub const TEASER_LIMIT: usize = 2000;
@@ -122,6 +162,9 @@ impl Database {
             }
         };
         let _ = conn.execute_batch(SCHEMA);
+        if let Err(e) = migrate_archive(&conn) {
+            log::warn!("[DB] 보관 표 손보기 실패: {e}");
+        }
         let _ = conn.execute_batch(&format!("PRAGMA user_version={SCHEMA_VERSION};"));
         let _ = conn.busy_timeout(std::time::Duration::from_millis(busy_ms));
         let mut db = Database { conn: Mutex::new(conn), file, recreated, salvaged_scraps: 0, statements: AtomicUsize::new(0) };
@@ -168,6 +211,7 @@ impl Database {
     pub fn in_memory() -> Database {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(SCHEMA).unwrap();
+        migrate_archive(&conn).unwrap();
         Database { conn: Mutex::new(conn), file: PathBuf::from(":memory:"), recreated: false, salvaged_scraps: 0, statements: AtomicUsize::new(0) }
     }
 
@@ -177,7 +221,7 @@ impl Database {
     }
 
     // MARK: 기사
-    // 넣었으면 true. 잠김(기다림 상한을 넘김)·디스크 가득 등으로 못 넣으면 false — 부르는 쪽이 다음에 다시 넣게(S7)
+    // 넣었으면 true. 잠김(기다림 상한을 넘김)·디스크 가득 등으로 못 넣으면 false — 부르는 쪽이 다음에 다시 넣게
     pub fn upsert(&self, item: &NewsItem, cluster: Option<&str>, first_seen: DateTime<Utc>) -> bool {
         let Ok(json) = serde_json::to_string(item) else { return false };
         // 논문 피드(arXiv)는 날짜가 발표일 자정이라, 지면에는 받은 때를 기준으로 싣는다
@@ -348,11 +392,230 @@ impl Database {
         c.query_row("SELECT COUNT(*) FROM items", [], |r| r.get(0)).unwrap_or(0)
     }
 
-    // 오래된 기록 정리(최근 20000건 유지)
-    pub fn prune(&self, keep: i64) {
+    // 오래된 기록 정리(최근 keep 건 유지). 지우는 기사는 같은 트랜잭션에서 보관 표(archive)로 옮긴다 — 날짜·제목·링크·출처·분야만
+    // (사진·요약·본문은 버림, 링크로 원문을 연다). 보관 표는 archive_years 년이 지난 달부터 지운다(0 이면 지우지 않음).
+    // 옮기지 못하면(잠김·디스크 가득) 아무것도 지우지 않는다. 옮긴 건수를 돌려준다.
+    pub fn prune(&self, keep: i64, archive_years: i64, now: DateTime<Utc>, section: &dyn Fn(&NewsItem) -> String) -> i64 {
+        self.prune_capped(keep, archive_years, now, section, crate::archive::MAX_ROWS)
+    }
+
+    // prune 과 같고 보관 표 상한(max_rows)만 정해 준다(시험용)
+    pub fn prune_capped(&self, keep: i64, archive_years: i64, now: DateTime<Utc>, section: &dyn Fn(&NewsItem) -> String, max_rows: i64) -> i64 {
+        let mut c = self.conn.lock().unwrap();
+        let Ok(tx) = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate) else { return 0 };
+        type Row = (String, f64, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>);
+        let run = |tx: &rusqlite::Transaction| -> rusqlite::Result<i64> {
+            let mut moved = 0;
+            // 넘친 것이 없으면(확인 대부분) 정렬 질의를 건너뛴다
+            let count: i64 = tx.query_row("SELECT COUNT(*) FROM items", [], |r| r.get(0))?;
+            if count > keep {
+                // 넘친 기사를 칸만 꺼낸다(본문 JSON 을 통째로 풀지 않음). 읽지 못하면 아무것도 지우지 않는다(되돌림)
+                let rows: Vec<Row> = {
+                    let mut st = tx.prepare(
+                        "SELECT i.key, COALESCE(i.date, i.first_seen), json_extract(i.json,'$.title'), json_extract(i.json,'$.titleKo'),
+                                json_extract(i.json,'$.link'), json_extract(i.json,'$.sourceName'), COALESCE(json_extract(i.json,'$.sourceId'), i.source),
+                                json_extract(i.json,'$.summary'), json_extract(i.json,'$.id'), CASE WHEN c.size >= 2 THEN i.cluster END
+                         FROM items i LEFT JOIN clusters c ON c.id = i.cluster
+                         WHERE i.key IN (SELECT key FROM items ORDER BY COALESCE(date, first_seen) DESC LIMIT -1 OFFSET ?)",
+                    )?;
+                    let rows = st.query_map([keep], |r| {
+                        Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?))
+                    })?;
+                    rows.collect::<rusqlite::Result<_>>()?
+                };
+                let mut done: Vec<String> = vec![]; // 보관 표에 넣었거나 이미 있던 기사(이것만 items 에서 지운다)
+                {
+                    let mut ins = tx.prepare(
+                        "INSERT INTO archive(date,title,title_ko,link,source,source_id,section,story) SELECT ?1,?2,?3,?4,?5,?6,?7,?8
+                         WHERE NOT EXISTS (SELECT 1 FROM archive WHERE date = ?1 AND link = ?4)",
+                    )?;
+                    for (key, when, title, title_ko, link, source_name, source_id, summary, id, story) in rows {
+                        // 제목·링크가 없는 줄은 옮기지도 지우지도 않는다(다음에 고쳐 읽을 수 있게)
+                        let (Some(title), Some(link)) = (title.filter(|t| !t.is_empty()), link.filter(|l| !l.is_empty())) else { continue };
+                        let sid = source_id.unwrap_or_default();
+                        let mut it = NewsItem::new(&id.unwrap_or_default(), &title, &link, &sid, &source_name.unwrap_or_default(), "");
+                        it.title_ko = title_ko;
+                        it.summary = summary.unwrap_or_default();
+                        // 같은 날짜·링크가 이미 있으면 다시 넣지 않는다(지운 뒤 다시 받은 기사)
+                        let sid = (!sid.is_empty()).then_some(sid);
+                        moved += ins.execute(params![when, it.title, it.title_ko, it.link, it.source_name, sid, section(&it), story])? as i64;
+                        done.push(key);
+                    }
+                }
+                for chunk in done.chunks(400) {
+                    let q = vec!["?"; chunk.len()].join(",");
+                    tx.execute(&format!("DELETE FROM items WHERE key IN ({q})"), rusqlite::params_from_iter(chunk.iter()))?;
+                }
+            }
+            tx.execute("DELETE FROM clusters WHERE id NOT IN (SELECT DISTINCT cluster FROM items WHERE cluster IS NOT NULL)", [])?;
+            if let Some(cut) = crate::archive::cutoff(archive_years, now) {
+                tx.execute("DELETE FROM archive WHERE date < ?", [ts(cut)])?;
+            }
+            // 보관 기간과 상관없는 상한: 넘으면 가장 오래된 것부터(상한 번째 줄의 날짜보다 이른 것을 지워 꼭 상한만큼 남긴다)
+            tx.execute("DELETE FROM archive WHERE date < (SELECT date FROM archive ORDER BY date DESC LIMIT 1 OFFSET ?)", [max_rows.max(1) - 1])?;
+            Ok(moved)
+        };
+        // 어느 단계든(COMMIT 포함) 실패하면 tx 가 버려지며 모두 되돌린다
+        match run(&tx).and_then(|n| tx.commit().map(|_| n)) {
+            Ok(n) => n,
+            Err(e) => {
+                log::warn!("[DB] 정리·보관 실패(되돌림): {e}");
+                0
+            }
+        }
+    }
+
+    // MARK: 보관 표(지난 기사)
+    fn archived_rows(&self, sql: &str, p: &[&dyn rusqlite::ToSql]) -> Vec<ArchivedItem> {
+        self.statements.fetch_add(1, Ordering::Relaxed);
         let c = self.conn.lock().unwrap();
-        let _ = c.execute("DELETE FROM items WHERE key IN (SELECT key FROM items ORDER BY COALESCE(date, first_seen) DESC LIMIT -1 OFFSET ?)", [keep]);
-        let _ = c.execute("DELETE FROM clusters WHERE id NOT IN (SELECT DISTINCT cluster FROM items WHERE cluster IS NOT NULL)", []);
+        let Ok(mut st) = c.prepare(sql) else { return vec![] };
+        let Ok(rows) = st.query_map(p, |r| {
+            Ok(ArchivedItem {
+                date: from_ts(r.get(0)?),
+                title: r.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                title_ko: r.get(2)?,
+                link: r.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                source: r.get::<_, Option<String>>(4)?.unwrap_or_default(),
+                section: r.get::<_, Option<String>>(5)?.unwrap_or_else(|| crate::sections::TOP.into()),
+                story: r.get(6)?,
+                source_id: r.get(7)?,
+            })
+        }) else {
+            return vec![];
+        };
+        rows.flatten().collect()
+    }
+
+    pub fn archive_count(&self) -> i64 {
+        let c = self.conn.lock().unwrap();
+        c.query_row("SELECT COUNT(*) FROM archive", [], |r| r.get(0)).unwrap_or(0)
+    }
+
+    // 보관 표에서 제목·한국어 제목·출처로 찾기(FTS 없이 LIKE — 검색어는 앞 200 글자), 최신순. 숨긴·끈 출처는 뺀다.
+    // '+date': 날짜 색인을 거꾸로 훑으며 줄마다 표를 찾아가면(맞는 것이 적을 때) 느리다 — 표를 한 번 훑고 맞은 것만 정렬한다
+    pub fn search_archive(&self, q: &str, limit: i64, offset: i64, vis: &Visibility) -> Vec<ArchivedItem> {
+        let q: String = q.chars().take(crate::archive::MAX_QUERY).collect();
+        let pat = format!("%{}%", q.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
+        let v = vis.sql_args();
+        let mut p: Vec<&dyn rusqlite::ToSql> = vec![&pat];
+        p.extend(v.iter().map(|s| s as &dyn rusqlite::ToSql));
+        p.push(&limit);
+        p.push(&offset);
+        self.archived_rows(
+            &format!(
+                "SELECT {ARCHIVE_COLUMNS} FROM archive
+                 WHERE (title LIKE ?1 ESCAPE '\\' OR title_ko LIKE ?1 ESCAPE '\\' OR source LIKE ?1 ESCAPE '\\'){}
+                 ORDER BY +date DESC LIMIT ? OFFSET ?",
+                Visibility::SQL
+            ),
+            &p,
+        )
+    }
+
+    // [from, to) 의 보관 기사(최신순, 날짜 색인)
+    #[allow(clippy::too_many_arguments)]
+    pub fn archived(&self, from: DateTime<Utc>, to: DateTime<Utc>, section: Option<&str>, source: Option<&str>, limit: i64, offset: i64, vis: &Visibility) -> Vec<ArchivedItem> {
+        let (f, args) = archive_filter(section, source, vis);
+        let (a, b) = (ts(from), ts(to));
+        let mut p: Vec<&dyn rusqlite::ToSql> = vec![&a, &b];
+        p.extend(args.iter().map(|s| s as &dyn rusqlite::ToSql));
+        p.push(&limit);
+        p.push(&offset);
+        self.archived_rows(&format!("SELECT {ARCHIVE_COLUMNS} FROM archive WHERE date >= ? AND date < ?{f} ORDER BY date DESC LIMIT ? OFFSET ?"), &p)
+    }
+
+    // [from, to) 보관 기사의 날짜별 건수(이 컴퓨터의 날 기준 'YYYY-MM-DD'). 건수·거르기는 색인(date, section, source, source_id)만 읽는다
+    pub fn archive_day_counts(&self, from: DateTime<Utc>, to: DateTime<Utc>, section: Option<&str>, source: Option<&str>, vis: &Visibility) -> HashMap<String, i64> {
+        let (f, args) = archive_filter(section, source, vis);
+        let (a, b) = (ts(from), ts(to));
+        let mut p: Vec<&dyn rusqlite::ToSql> = vec![&a, &b];
+        p.extend(args.iter().map(|s| s as &dyn rusqlite::ToSql));
+        let c = self.conn.lock().unwrap();
+        let sql = format!("SELECT date(date,'unixepoch','localtime') AS d, COUNT(*) FROM archive WHERE date >= ? AND date < ?{f} GROUP BY d");
+        let Ok(mut st) = c.prepare(&sql) else { return HashMap::new() };
+        st.query_map(p.as_slice(), |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, i64>(1)?)))
+            .map(|rows| rows.flatten().filter_map(|(d, n)| d.map(|d| (d, n))).collect())
+            .unwrap_or_default()
+    }
+
+    // [from, to) 보관 기사의 분야별·출처별 건수(거르기 메뉴) — 한 번 묶어 센다
+    pub fn archive_facets(&self, from: DateTime<Utc>, to: DateTime<Utc>, vis: &Visibility) -> (HashMap<String, i64>, HashMap<String, i64>) {
+        let (mut sections, mut sources) = (HashMap::new(), HashMap::new());
+        let (f, args) = archive_filter(None, None, vis);
+        let (a, b) = (ts(from), ts(to));
+        let mut p: Vec<&dyn rusqlite::ToSql> = vec![&a, &b];
+        p.extend(args.iter().map(|s| s as &dyn rusqlite::ToSql));
+        let c = self.conn.lock().unwrap();
+        let Ok(mut st) = c.prepare(&format!("SELECT section, source, COUNT(*) FROM archive WHERE date >= ? AND date < ?{f} GROUP BY section, source")) else {
+            return (sections, sources);
+        };
+        let rows: Vec<(Option<String>, Option<String>, i64)> = st
+            .query_map(p.as_slice(), |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .map(|rows| rows.flatten().collect())
+            .unwrap_or_default();
+        for (sec, src, n) in rows {
+            *sections.entry(sec.unwrap_or_else(|| crate::sections::TOP.into())).or_insert(0) += n;
+            *sources.entry(src.unwrap_or_default()).or_insert(0) += n;
+        }
+        (sections, sources)
+    }
+
+    // 기록이 있는 가장 이른 때(보관 표와 최근 기사 중) — 보관함 ◀ 의 끝
+    pub fn earliest_record(&self) -> Option<DateTime<Utc>> {
+        let c = self.conn.lock().unwrap();
+        c.query_row(
+            "SELECT MIN(m) FROM (SELECT MIN(date) AS m FROM archive UNION ALL SELECT MIN(COALESCE(date, first_seen)) FROM items)",
+            [],
+            |r| r.get::<_, Option<f64>>(0),
+        )
+        .ok()
+        .flatten()
+        .map(from_ts)
+    }
+
+    // 아직 items 에 있는 [from, to) 기사를 보관 표와 같은 가벼운 꼴로(본문 JSON 을 통째로 풀지 않게 칸만 꺼낸다)
+    pub fn recent_light(&self, from: DateTime<Utc>, to: DateTime<Utc>, vis: &Visibility, section: &mut dyn FnMut(&NewsItem) -> String) -> Vec<ArchivedItem> {
+        self.statements.fetch_add(1, Ordering::Relaxed);
+        type Row = (f64, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>);
+        let rows: Vec<Row> = {
+            let c = self.conn.lock().unwrap();
+            let Ok(mut st) = c.prepare(
+                "SELECT COALESCE(i.date, i.first_seen), json_extract(i.json,'$.title'), json_extract(i.json,'$.titleKo'), json_extract(i.json,'$.link'),
+                        json_extract(i.json,'$.sourceName'), i.source, json_extract(i.json,'$.summary'), json_extract(i.json,'$.id'),
+                        CASE WHEN c.size >= 2 THEN i.cluster END
+                 FROM items i LEFT JOIN clusters c ON c.id = i.cluster
+                 WHERE COALESCE(i.date, i.first_seen) >= ? AND COALESCE(i.date, i.first_seen) < ?
+                 ORDER BY COALESCE(i.date, i.first_seen) DESC",
+            ) else {
+                return vec![];
+            };
+            st.query_map(params![ts(from), ts(to)], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?))
+            })
+            .map(|rows| rows.flatten().collect())
+            .unwrap_or_default()
+        };
+        // 분야 가르기는 DB 를 잡지 않은 채로(낱말 규칙이 수만 건이면 오래 걸림)
+        // 숨긴·끈 출처 글은 빼고(매거진 검색과 같은 거르기)
+        rows.into_iter()
+            .filter(|r| vis.shows(r.5.as_deref().unwrap_or("")))
+            .map(|(when, title, title_ko, link, source_name, source_id, summary, id, story)| {
+                let mut it = NewsItem::new(
+                    &id.unwrap_or_default(),
+                    &title.unwrap_or_default(),
+                    &link.unwrap_or_default(),
+                    &source_id.unwrap_or_default(),
+                    &source_name.unwrap_or_default(),
+                    "",
+                );
+                it.title_ko = title_ko;
+                it.summary = summary.unwrap_or_default();
+                let sec = section(&it);
+                let source_id = (!it.source_id.is_empty()).then_some(it.source_id);
+                ArchivedItem { date: from_ts(when), title: it.title, title_ko: it.title_ko, link: it.link, source: it.source_name, source_id, section: sec, story }
+            })
+            .collect()
     }
 
     // MARK: 스토리
@@ -379,18 +642,46 @@ impl Database {
         self.cluster_rows("SELECT id,title,tokens,first,last,size FROM clusters WHERE last >= ? ORDER BY last DESC", &[&ts(since)])
     }
 
-    // 최근 스토리(보도 2건 이상)의 보도들을 한 번에(스토리 목록 — 스토리마다 따로 묻지 않게, 맥 Database.storyMembers · S5)
+    // 최근 스토리(보도 2건 이상)의 보도 견본을 한 번에(스토리 목록 — 스토리마다 따로 묻지 않게, 맥 Database.storyMembers).
+    // 견본: 출처마다 첫 보도(카드의 출처 줄·대표) + 최근 STORY_SAMPLE 건(분야 다수결). 보도가 그보다 적으면 전부
     pub fn story_members(&self, since: DateTime<Utc>) -> HashMap<String, Vec<StoredItem>> {
         let mut out: HashMap<String, Vec<StoredItem>> = HashMap::new();
         let rows = self.stored_rows(
-            "SELECT json, first_seen, cluster FROM items
-             WHERE cluster IN (SELECT id FROM clusters WHERE last >= ? AND size >= 2)
-             ORDER BY COALESCE(date, first_seen) ASC",
-            &[&ts(since)],
+            "SELECT i.json, i.first_seen, i.cluster FROM items i JOIN (
+               SELECT r FROM (
+                 SELECT rowid AS r,
+                        ROW_NUMBER() OVER (PARTITION BY cluster, source ORDER BY COALESCE(date, first_seen) ASC, rowid ASC) AS rs,
+                        ROW_NUMBER() OVER (PARTITION BY cluster ORDER BY COALESCE(date, first_seen) DESC, rowid DESC) AS rn
+                 FROM items WHERE cluster IN (SELECT id FROM clusters WHERE last >= ? AND size >= 2)
+               ) WHERE rs = 1 OR rn <= ?
+             ) s ON i.rowid = s.r
+             ORDER BY COALESCE(i.date, i.first_seen) ASC",
+            &[&ts(since), &STORY_SAMPLE],
         );
         for s in rows {
             if let Some(c) = s.cluster.clone() {
                 out.entry(c).or_default().push(s);
+            }
+        }
+        out
+    }
+
+    // 최근 스토리(보도 2건 이상)의 출처별 보도 수(보이는 보도 수·출처 수를 JSON 을 풀지 않고 세게, 맥 Database.storySourceCounts)
+    pub fn story_source_counts(&self, since: DateTime<Utc>) -> HashMap<String, HashMap<String, i64>> {
+        self.statements.fetch_add(1, Ordering::Relaxed);
+        let mut out: HashMap<String, HashMap<String, i64>> = HashMap::new();
+        let c = self.conn.lock().unwrap();
+        let Ok(mut st) = c.prepare(
+            "SELECT cluster, source, COUNT(*) FROM items
+             WHERE cluster IN (SELECT id FROM clusters WHERE last >= ? AND size >= 2)
+             GROUP BY cluster, source",
+        ) else {
+            return out;
+        };
+        let rows = st.query_map([ts(since)], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, i64>(2)?)));
+        if let Ok(rows) = rows {
+            for (cl, src, n) in rows.flatten() {
+                *out.entry(cl).or_default().entry(src.unwrap_or_default()).or_default() += n;
             }
         }
         out

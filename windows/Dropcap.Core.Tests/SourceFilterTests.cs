@@ -178,3 +178,132 @@ public class SourceFilterAppTests : IDisposable
         Assert.Equal(0, await MenuRows());
     }
 }
+
+// 숨긴 출처·'알리지 않음' 낱말은 지우지 않고 거르기만(맥 E2ESettingsTests·리 source_filter_tests 와 같은 규칙):
+// 숨기거나 낱말을 넣으면 목록·안 읽음 수·대기열에서 빠지고, 풀면 그대로 돌아온다
+public class HideMuteFilterTests : IDisposable
+{
+    private readonly TempDir tmp = new();
+    private readonly Database db;
+    private readonly AppModel model;
+    private readonly string a, b;
+
+    public HideMuteFilterTests()
+    {
+        db = new Database(Path.Combine(tmp.Path, "magazine.sqlite"));
+        model = new AppModel(new FakeUi(), new Magazine(db), new AppState(), persist: false);
+        var press = Resources.Config.Sources.Where(s => s.Kind is null or "article").ToList();
+        (a, b) = (press[0].Id, press[1].Id);
+        foreach (var id in new[] { a, b }) model.State.Enabled[id] = true;
+    }
+
+    public void Dispose() { db.Dispose(); tmp.Dispose(); }
+
+    private static NewsItem It(string src, string id, string title = "제목") => new()
+    {
+        Id = id, Title = title, Link = "https://a.com/" + id, Date = DateTimeOffset.Now, Summary = "", SourceId = src, SourceName = src, Tier = "kr",
+    };
+
+    // 맥 unreadFollowsVisibility 와 같은 표
+    [Fact]
+    public void UnreadFollowsVisibility()
+    {
+        NewsItem x1 = It("x", "1"), y2 = It("y", "2"), x3 = It("x", "3");
+        var keys = new List<string> { x1.Key, y2.Key, x3.Key };
+        Assert.Equal(1, AppModel.RecountUnread(3, keys, [y2]));               // x 끔
+        Assert.Equal(3, AppModel.RecountUnread(1, keys, [x1, y2, x3]));       // 다시 켬
+        Assert.Equal(3, AppModel.RecountUnread(2, keys, [x1, y2, x3, It("z", "9")])); // 안 읽음에 들지 않은 글은 세지 않음
+        Assert.Equal(2, AppModel.RecountUnread(5, [], [x1, y2]));             // 예전 파일
+        Assert.Equal(1, AppModel.RecountUnread(1, [], [x1, y2]));
+    }
+
+    // 맥 hideAndMuteAreFiltersNotDeletes 와 같은 표
+    [Fact]
+    public void HideAndMuteAreFiltersNotDeletes()
+    {
+        var items = new List<NewsItem> { It("x", "1", "지역화폐 소식"), It("y", "2", "다른 소식"), It("z", "3") };
+        var f = new SourceFilter { Hidden = new HashSet<string> { "y" }, Active = new HashSet<string> { "x", "y", "z" } };
+        Assert.Equal(["3"], AppModel.Visible(items, f, ["지역화폐"]).Select(i => i.Id));
+        f = f with { Hidden = new HashSet<string>() };
+        Assert.Equal(["1", "2", "3"], AppModel.Visible(items, f, []).Select(i => i.Id));
+        Assert.Equal(["3"], AppModel.Visible(items, new SourceFilter { Active = new HashSet<string> { "z" } }, []).Select(i => i.Id));
+    }
+
+    [Fact]
+    public void HideThenUnhideRestoresListAndUnread()
+    {
+        var items = new List<NewsItem> { It(a, "1"), It(b, "2"), It(a, "3") };
+        model.State.Recent = items;
+        model.State.Unread = 3;
+        model.State.UnreadKeys = items.Select(i => i.Key).ToList();
+        model.State.Pending.Add(new AppState.PendingItem(items[0], "ai", "s", DateTimeOffset.Now));
+
+        model.HideSource(a);
+        Assert.Equal(["2"], model.VisibleRecent.Select(i => i.Id));
+        Assert.Equal(1, model.State.Unread);
+        Assert.Empty(model.State.Pending);
+        Assert.Equal(3, model.State.Recent.Count);                            // 지우지는 않음
+
+        model.UnhideSource(a);
+        Assert.Equal(["1", "2", "3"], model.VisibleRecent.Select(i => i.Id));  // 바로 돌아옴
+        Assert.Equal(3, model.State.Unread);                                  // 안 읽음 수도
+    }
+
+    [Fact]
+    public void MuteWordThenRemoveRestoresListAndUnread()
+    {
+        var items = new List<NewsItem> { It(a, "1", "환율 급등"), It(b, "2", "다른 소식"), It(a, "3", "Crypto 환율") };
+        model.State.Recent = items;
+        model.State.Unread = 3;
+        model.State.UnreadKeys = items.Select(i => i.Key).ToList();
+        model.State.Pending.Add(new AppState.PendingItem(items[0], "economy", "s", DateTimeOffset.Now));
+
+        model.MuteWord("환율");                                                // 카드에서 낱말 고르기
+        Assert.Equal(["2"], model.VisibleRecent.Select(i => i.Id));
+        Assert.Equal(1, model.State.Unread);
+        Assert.Empty(model.State.Pending);
+        Assert.Equal(3, model.State.Recent.Count);
+
+        model.Update(s => s.MuteKeywords = []);                               // 설정에서 낱말 지우기
+        model.ReapplyKeywords();
+        Assert.Equal(["1", "2", "3"], model.VisibleRecent.Select(i => i.Id));
+        Assert.Equal(3, model.State.Unread);
+    }
+
+    // 확인으로 들어온 소식이 안 읽음 수에 든 소식으로 기억되고, 다 읽으면 비움
+    [Fact]
+    public void ReadAllClearsUnreadKeys()
+    {
+        model.State.Recent = [It(a, "1")];
+        model.State.Unread = 1;
+        model.State.UnreadKeys = [model.State.Recent[0].Key];
+        model.MarkRead();
+        Assert.Empty(model.State.UnreadKeys);
+        model.State.Unread = 1;
+        model.State.UnreadKeys = [model.State.Recent[0].Key];
+        model.MarkAllRead();
+        Assert.Empty(model.State.UnreadKeys);
+    }
+
+    // 예전 상태 파일(unreadKeys 없음)도 그대로 읽히고, 새 항목은 저장·다시 읽기에서 남음
+    [Fact]
+    public void OldStateWithoutUnreadKeysLoads()
+    {
+        var s = AppState.FromJson("""{"unread": 4, "hiddenSources": ["x"]}""");
+        Assert.Equal(4, s.Unread);
+        Assert.Empty(s.UnreadKeys);
+        Assert.Equal(["x"], s.HiddenSources);
+        s.UnreadKeys = ["k1"];
+        Assert.Equal(["k1"], AppState.FromJson(s.ToJson()).UnreadKeys);
+    }
+
+    // 손으로 고친 상태 파일의 unreadKeys 도 읽을 때 저장할 때와 같은 상한(최근 것)
+    [Fact]
+    public void UnreadKeysCappedOnLoad()
+    {
+        var keys = Enumerable.Range(0, AppModel.RecentLimit + 50).Select(i => $"k{i}").ToList();
+        var s = AppState.FromJson(System.Text.Json.JsonSerializer.Serialize(new { unreadKeys = keys }))!;
+        Assert.Equal(AppModel.RecentLimit, s.UnreadKeys.Count);
+        Assert.Equal(keys[^1], s.UnreadKeys[^1]);
+    }
+}

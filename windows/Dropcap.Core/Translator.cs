@@ -14,7 +14,7 @@ public sealed class Translator
     public const string EngineGoogle = "Google 번역";
     public const string EngineNone = "번역 안 함";
 
-    // 번역 방식(W4 · 맥과 같은 설정 키 translateEngine · 값 auto|apple|google|off).
+    // 번역 방식(맥과 같은 설정 키 translateEngine · 값 auto|apple|google|off).
     // 윈도우엔 기기 내 번역이 없어 auto = Google. apple(맥에서 '기기 내만'으로 고른 기록을 가져온 것)은 기기 밖으로 보내지 않는다는 뜻이라 여기선 번역 안 함.
     public static readonly string[] Modes = ["auto", "apple", "google", "off"];
     public static string NormalizeMode(string? v) => v is not null && Modes.Contains(v) ? v : "auto"; // 모르는 값은 자동(맥과 같음)
@@ -195,7 +195,7 @@ public sealed class Translator
             size += n + 2;
         }
         // 묶음은 동시에 ParallelBatches 개까지, 문단별 다시 보내기는 번역 한 번에 RetryLimit 개까지(넘는 문단은 원문 그대로) —
-        // 표가 큰 기사 하나가 요청을 한꺼번에 수백 건 보내지 않게(보안 점검 2 X3)
+        // 표가 큰 기사 하나가 요청을 한꺼번에 수백 건 보내지 않게
         using var gate = new SemaphoreSlim(ParallelBatches);
         var retries = RetryLimit;
         var outs = await Task.WhenAll(batches.Where(b => b.Count > 0).Select(async batch =>

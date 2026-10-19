@@ -12,6 +12,7 @@ struct EditContext: Sendable {
     var interestCategory: [String: Double] = [:]
     var interestSource: [String: Double] = [:]
     var followed: Set<String> = []
+    var archiveYears = Archive.defaultYears // 지난 기사 보관 기간(0 이면 끝없이)
 }
 
 actor Editor {
@@ -236,7 +237,7 @@ actor Editor {
             let again = makeIssue(kind: old.kind, from: old.from, to: old.to, id: old.id, ctx: ctx)
             if again.count > 0 { db.saveIssue(again) }
         }
-        db.prune()
+        db.prune(archiveYears: ctx.archiveYears)
         return db.issues()
     }
 
@@ -266,7 +267,7 @@ actor Editor {
                                  clusters: clusters, regions: regions)
     }
 
-    // 사진 주소·점수 쓰기도 화면 줄기 밖에서(DB 가 잠겼을 때 메인이 기다리지 않게 — S7)
+    // 사진 주소·점수 쓰기도 화면 줄기 밖에서(DB 가 잠겼을 때 메인이 기다리지 않게)
     func setImage(_ key: String, _ url: String) { db.setImage(key, url) }
     func imageScores(_ urls: [String]) -> [String: Double] { db.imageScores(urls) }
     func saveImageScore(_ url: String, _ s: PhotoQuality.Score) { db.saveImageScore(url, s) }

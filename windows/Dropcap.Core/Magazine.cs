@@ -55,6 +55,7 @@ public sealed class Magazine
     private readonly Database db;
     private readonly FeedService feeds;
     private readonly object gate = new();
+    private readonly ArchiveReader reader;
     private bool enriching;
 
     // 관심사 가중치(분야, 출처) → 0~1.5. AppModel 이 넣어 준다.
@@ -64,6 +65,7 @@ public sealed class Magazine
     public Func<List<string>?> Chosen { get; set; } = () => null;                           // 고른 분야(G-10)
     public Func<PolicyLimits> Limits { get; set; } = () => new PolicyLimits();
     public Func<string, bool> IsFollowed { get; set; } = _ => false;
+    public Func<int> ArchiveYears { get; set; } = () => Dropcap.Core.Archive.DefaultYears;   // 지난 기사 보관 기간(0 이면 끝없이)
 
     private readonly List<(Database.Cluster Cluster, NewsItem Item)> grown = new();   // 이번에 팔로우한 스토리에 붙은 새 보도
     public List<(Database.Cluster Cluster, NewsItem Item)> TakeGrown() { lock (gate) { var g = grown.ToList(); grown.Clear(); return g; } }
@@ -85,6 +87,7 @@ public sealed class Magazine
         this.db = db;
         this.feeds = feeds ?? FeedService.Shared;
         this.retryFile = retryFile;
+        reader = new ArchiveReader(db);
         retry = LoadRetry(retryFile);
         Archive = ArchiveOrder(db.Issues());
     }
@@ -519,7 +522,7 @@ public sealed class Magazine
             var again = MakeIssue(old.Kind, old.From, old.To, old.Id);
             if (again.Count > 0) db.SaveIssue(again);
         }
-        db.Prune();
+        db.Prune(archiveYears: ArchiveYears());
         Archive = ArchiveOrder(db.Issues());
         Changed?.Invoke();
     }
@@ -650,28 +653,37 @@ public sealed class Magazine
     // 지금 보이는 출처로만 두 곳 이상이 다룬 스토리(출처를 끄면 그 스토리의 보도 수도 줄어 목록에서 빠질 수 있음, S-13). 크기도 보이는 보도 수로
     public List<Database.Cluster> Stories() => StoryCards().Select(c => c.Cluster).ToList();
 
-    // 스토리 카드 하나: 스토리와 보이는 보도들(카드가 DB 를 다시 묻지 않게)
+    // 스토리 카드 하나: 스토리와 보이는 보도 견본(카드가 DB 를 다시 묻지 않게 — 출처마다 첫 보도 + 최근 것, Database.StoryMembers)
     public sealed record StoryCard(Database.Cluster Cluster, List<NewsItem> Items);
 
-    // 스토리 목록 전체를 문장 두 번(스토리 · 보도)으로 — 예전엔 스토리마다 한 번씩 물어 기록이 쌓일수록 느려졌다.
+    // 스토리 목록 전체를 문장 세 번(스토리 · 출처별 수 · 보도 견본)으로 — 예전엔 스토리마다 한 번씩 물어 기록이 쌓일수록 느려졌다.
+    // 보도 수·출처 수는 DB 에서 센다(보도가 수천 건인 스토리에서 보도를 전부 풀고 분야를 가리던 것이 몇 초씩 걸렸다).
     // filter 는 뒤 스레드에서 부를 때 화면 쪽에서 미리 떠 둔 것(상태를 뒤 스레드에서 읽지 않게)
     public List<StoryCard> StoryCards(SourceFilter? filter = null, DateTimeOffset? now = null)
     {
         var since = (now ?? DateTimeOffset.Now).AddDays(-14);
         var f = filter ?? Filter();
         var clusters = db.RecentClusters(since).Where(c => c.Size >= 2).ToList();
+        var counts = clusters.Count == 0 ? new() : db.StorySourceCounts(since);
         var members = clusters.Count == 0 ? new() : db.StoryMembers(since);
         var o = new List<StoryCard>();
         foreach (var c in clusters)
         {
+            var shown = (counts.GetValueOrDefault(c.Id) ?? new()).Where(kv => f.Shows(kv.Key)).ToList();
+            if (shown.Count < 2) continue;
             var items = f.Visible((members.GetValueOrDefault(c.Id) ?? new()).Select(s => s.Item));
-            if (items.Select(i => i.SourceId).Distinct().Count() < 2) continue;
-            o.Add(new StoryCard(c with { Size = items.Count }, items));
+            o.Add(new StoryCard(c with { Size = shown.Sum(kv => kv.Value) }, items));
         }
         return o;
     }
 
     public List<NewsItem> Search(string q) => Filter().Visible(db.Search(q));
+    // 보관함(지난 기사): 화면에서는 Task.Run 으로
+    // filter 는 화면 쪽에서 미리 떠 둔 것(상태를 뒤 스레드에서 읽지 않게), 없으면 지금 것
+    public List<ArchivedItem> SearchArchive(string q, int offset = 0, int limit = 200, SourceFilter? filter = null) => reader.Search(q, limit, offset, filter ?? Filter());
+    public Dropcap.Core.Archive.Page ArchivePeriod(DateTimeOffset from, DateTimeOffset to, string? section, string? source, int limit, SourceFilter? filter = null) =>
+        reader.Period(from, to, section, source, limit, filter ?? Filter());
+    public DateTimeOffset? EarliestRecord() => reader.EarliestRecord();
     // 최근 기사(지켜볼 낱말 하루 정리, N-27)
     public List<NewsItem> RecentItems(DateTimeOffset since) => Filter().Visible(db.Items(since, limit: 3000).Select(s => s.Item));
 }

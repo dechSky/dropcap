@@ -81,7 +81,8 @@ final class Magazine: ObservableObject {
     var context: EditContext {
         let st = AppModel.shared.state
         return EditContext(hidden: Set(st.hiddenSources), filter: AppModel.shared.sourceFilter, chosen: st.sectionsChosen, limits: st.settings.limits,
-                           interestCategory: st.interestCategory, interestSource: st.interestSource, followed: Set(st.followedStories))
+                           interestCategory: st.interestCategory, interestSource: st.interestSource, followed: Set(st.followedStories),
+                           archiveYears: st.settings.archiveYears)
     }
 
     // 처음 실행: 예전 기록(최근 소식·저장)을 옮겨 온다. 이미 있으면 건너뜀.
@@ -388,7 +389,7 @@ final class Magazine: ObservableObject {
     // 스토리: 최근 2주 동안 두 곳 이상이 다룬 것
     func stories() -> [Database.Cluster] { Self.stories(db: db, filter: AppModel.shared.sourceFilter, now: Date()).map(\.cluster) }
 
-    // 스토리 카드 하나: 스토리와 보이는 보도들(카드가 DB 를 다시 묻지 않게)
+    // 스토리 카드 하나: 스토리와 보이는 보도 견본(카드가 DB 를 다시 묻지 않게 — 출처마다 첫 보도 + 최근 것, Database.storyMembers)
     struct StoryCard: Identifiable, Sendable {
         var cluster: Database.Cluster
         var items: [NewsItem]
@@ -397,15 +398,18 @@ final class Magazine: ObservableObject {
     }
 
     // 지금 보이는 출처로만 두 곳 이상이 다룬 스토리(출처를 끄면 그 스토리의 보도 수도 줄어 목록에서 빠질 수 있음)
-    // 스토리 목록 전체를 문장 두 번(스토리 · 보도)으로 — 예전엔 스토리마다 두 번씩 물어 기록이 쌓일수록 화면이 멈췄다
+    // 스토리 목록 전체를 문장 세 번(스토리 · 출처별 수 · 보도 견본)으로 — 예전엔 스토리마다 두 번씩 물어 기록이 쌓일수록 화면이 멈췄다.
+    // 보도 수·출처 수는 DB 에서 세고, 분야 다수결은 견본으로(보도가 수천 건인 스토리에서 보도마다 분야를 가리던 것이 몇 초씩 걸렸다)
     nonisolated static func stories(db: Database, filter: SourceFilter, now: Date) -> [StoryCard] {
         let since = now.addingTimeInterval(-14 * 24 * 3600)
+        let counts = db.storySourceCounts(since: since)
         let members = db.storyMembers(since: since)
         return db.recentClusters(since: since).filter { $0.size >= 2 }.compactMap { c in
+            let shown = (counts[c.id] ?? [:]).filter { filter.shows($0.key) }
+            guard shown.count >= 2 else { return nil }
             let items = filter.visible((members[c.id] ?? []).map(\.item))
-            guard Set(items.map(\.sourceId)).count >= 2 else { return nil }
-            var v = c; v.size = items.count
-            return StoryCard(cluster: v, items: items, topic: storyTopic(items, place: \.section))
+            var v = c; v.size = shown.values.reduce(0, +)
+            return StoryCard(cluster: v, items: items, topic: storyTopic(items) { Sections.primary($0) })
         }
     }
 
@@ -432,6 +436,23 @@ final class Magazine: ObservableObject {
     // 매거진에 아직 없는 key(채우기 전 — 이미 있는 글은 번역·넣기를 건너뛰게)
     func missing(_ keys: [String]) async -> Set<String> { await editor.missing(keys) }
     func search(_ q: String) async -> [NewsItem] { let f = context.filter; return await editor.search(q, filter: f) }
+    // 보관함 읽기는 화면 줄기·편집 줄 밖에서. 숨긴·끈 출처는 기존 검색과 같은 기준으로 뺀다
+    var archiveHide: Archive.Hide {
+        let f = AppModel.shared.sourceFilter
+        let names = AppModel.shared.allSources.filter { f.hidden.contains($0.id) }.map(\.name)
+        return Archive.Hide(filter: f, hiddenNames: Set(names))
+    }
+    func searchArchive(_ q: String, offset: Int = 0) async -> [ArchivedItem] {
+        let hide = archiveHide
+        return await Task.detached(priority: .userInitiated) { ArchiveReader.shared.searchArchive(q, offset: offset, hide: hide) }.value
+    }
+    func archivePeriod(from: Date, to: Date, section: String?, source: String?, limit: Int) async -> Archive.Page {
+        let hide = archiveHide
+        return await Task.detached(priority: .userInitiated) {
+            ArchiveReader.shared.archivePeriod(from: from, to: to, section: section, source: source, limit: limit, hide: hide)
+        }.value
+    }
+    func earliestRecord() async -> Date? { await Task.detached(priority: .userInitiated) { ArchiveReader.shared.earliestRecord() }.value }
     func recentItems(since: Date) async -> [NewsItem] { await editor.recentItems(since: since, limit: 3000).map(\.item) }
     func storedImage(_ key: String) -> String? { db.image(key) }
     func coverage(_ items: [NewsItem]) -> [String: Int] { db.coverage(items.map(\.key)) }

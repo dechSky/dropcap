@@ -701,7 +701,7 @@ fn photo_url(it: &NewsItem, cb: impl FnOnce(Option<String>) + 'static) {
 }
 
 // 텍스처를 cairo 그림으로(한 번만 바꿔 두고 다시 그릴 때 쓴다). 칸(box, 화면 배율 포함 픽셀)을 채울 만큼으로 줄여 둔다 —
-// 카드마다 원본(최대 1400px) 크기 사본을 두면 목록 하나에 수십 MB 였다(S1). 원본 크기 표면은 줄이는 동안만 쓰고 버린다
+// 카드마다 원본(최대 1400px) 크기 사본을 두면 목록 하나에 수십 MB 였다. 원본 크기 표면은 줄이는 동안만 쓰고 버린다
 fn surface_of(tex: &gdk::Texture, box_w: i32, box_h: i32) -> Option<gtk::cairo::ImageSurface> {
     let (w, h) = (tex.width(), tex.height());
     let stride = gtk::cairo::Format::ARgb32.stride_for_width(w as u32).ok()?;

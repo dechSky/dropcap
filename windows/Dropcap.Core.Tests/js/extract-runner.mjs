@@ -2,7 +2,7 @@
 // 앱의 격리 칸과 같은 조건(받은 HTML 을 원래 주소로, 페이지 스크립트·그림·바깥 요청 모두 막음)으로 돌리고 결과 JSON 을 낸다.
 // 입력(표준 입력, JSON): { readability, extract, cases: [{ html, base }] } → 출력: 결과 배열(각각 추출 JSON 글자 또는 null)
 // probe: true 면 격리 칸 CSP 를 빼고(한 겹 방어가 스스로 막는지 보려고) 페이지가 다 뜬 뒤 추출하는 동안 나간 바깥 요청 수와
-// onerror 실행 여부를 { requests, onerror } JSON 글자로 낸다(보안 점검 X2 — 추출 스크립트가 살아 있는 문서에 노드를 붙이지 않는지)
+// onerror 실행 여부를 { requests, onerror } JSON 글자로 낸다(추출 스크립트가 살아 있는 문서에 노드를 붙이지 않는지)
 // 필요: DROPCAP_PLAYWRIGHT = playwright-core 폴더. DROPCAP_CHROMIUM = 브라우저 실행 파일(없으면 Playwright 캐시에서 찾음).
 // 창을 띄우지 않는다(머리 없음 — 포커스를 뺏지 않음).
 import { createRequire } from 'node:module';

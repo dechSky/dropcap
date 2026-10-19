@@ -35,7 +35,7 @@ public static class ExtractJs
         return raw.Select(r => r is null ? null : Json.Decode<Article>(r)).ToList();
     }
 
-    // 격리 칸 CSP 없이 추출하는 동안 나간 바깥 요청 수·onerror 실행(보안 점검 X2 — 스크립트 스스로의 한 겹 방어)
+    // 격리 칸 CSP 없이 추출하는 동안 나간 바깥 요청 수·onerror 실행(스크립트 스스로의 한 겹 방어)
     public static async Task<(int Requests, string? OnError)> ProbeAsync(string html, string @base = ReaderCutText.Base)
     {
         var r = (await RawAsync(probe: true, (html, @base)))[0]!;
@@ -117,7 +117,7 @@ public class ReaderCutExtractTests
         Assert.DoesNotContain(t, x => x.Contains("Comments"));
     }
 
-    // 보안 점검 2 X1: 형제 상자 안에 본문 상자와 같은 class 가 N겹 — 겹마다 하위 전체를 복사해 N²(800겹 80초) → 바깥 상자만
+    // 형제 상자 안에 본문 상자와 같은 class 가 N겹 — 겹마다 하위 전체를 복사해 N²(800겹 80초) → 바깥 상자만
     [JsFact]
     public async Task NestedCoreClassGatheredOnce()
     {

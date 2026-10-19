@@ -139,7 +139,7 @@ private let atomXML = """
 @Suite(.serialized) struct TeaserReview3Tests {
     private func p(_ s: String) -> Block { Block(type: .p, text: s) }
 
-    // B3: 다시 맛보기로 판정되면 시각을 새로 써서, 계속 맛보기인 기사가 처음 판정 30일 뒤에 빠지지 않는다(표시는 그대로라 다시 그리지 않음)
+    // 다시 맛보기로 판정되면 시각을 새로 써서, 계속 맛보기인 기사가 처음 판정 30일 뒤에 빠지지 않는다(표시는 그대로라 다시 그리지 않음)
     @MainActor @Test func teaserAgainRefreshesTime() throws {
         let (db, dir) = try tempDB()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -154,7 +154,7 @@ private let atomXML = """
         #expect(db.teaserLinks(now: Date().addingTimeInterval(2 * 86400)).contains(link)) // 고치기 전: 29+2일 → 빠짐
     }
 
-    // T1: 기사 준비(ArticleService.run 이 부르는 judgeTeaser)가 목록 표시를 바꾸고, 바뀔 때만 화면(PaywallMark)이 다시 그린다
+    // 기사 준비(ArticleService.run 이 부르는 judgeTeaser)가 목록 표시를 바꾸고, 바뀔 때만 화면(PaywallMark)이 다시 그린다
     @MainActor @Test func serviceJudgementMarksListAndRedraws() throws {
         let (db, dir) = try tempDB()
         defer { try? FileManager.default.removeItem(at: dir) }

@@ -3,7 +3,7 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
-// 시험 장치(M9): 디버그 빌드(swift build·swift test·e2e·clicksweep)에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
+// 시험 장치: 디버그 빌드(swift build·swift test·e2e·clicksweep)에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
 #if DEBUG
 
 // 시나리오 시험(DROPCAP_TEST_E2E)용 견본 피드. 실제 네트워크 없이 같은 결과를 재현한다.

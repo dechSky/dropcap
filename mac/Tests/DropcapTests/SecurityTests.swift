@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import Dropcap
 
-// 보안 점검(2026-10-14)에서 찾은 것: 바깥 HTML 정규식 되풀이 훑기 · 사이트맵 정규식 · 가져오기 정리 · 16진수 IP 표기
+// 보안 점검에서 찾은 것: 바깥 HTML 정규식 되풀이 훑기 · 사이트맵 정규식 · 가져오기 정리 · 16진수 IP 표기
 @Suite struct SecurityScanTests {
     private func fast(_ limit: TimeInterval = 2, _ body: () throws -> Void) rethrows {
         let t = Date()

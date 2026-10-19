@@ -27,6 +27,7 @@ struct Shape {
     mine: Vec<String>,
     groups: Vec<(String, Vec<String>)>,
     catalog: Vec<String>,
+    open: Vec<String>, // 펼친 묶음(펼침·접힘도 줄을 다시 만든다)
 }
 
 struct View {
@@ -36,7 +37,6 @@ struct View {
     expanded: RefCell<HashSet<String>>,            // 찾지 않을 때 펼친 묶음
     collapsed_searching: RefCell<HashSet<String>>, // 찾는 중에 사용자가 접은 묶음
     shape: RefCell<Option<Shape>>,
-    building: Cell<bool>,
     summary: adw::ActionRow,
     count: gtk::Label,
     empty: gtk::Label,
@@ -45,7 +45,7 @@ struct View {
     base_group: adw::PreferencesGroup,
     catalog_group: adw::PreferencesGroup,
     rows: RefCell<Vec<(adw::PreferencesGroup, gtk::Widget)>>,
-    heads: RefCell<Vec<(String, adw::ExpanderRow, gtk::Button)>>, // 묶음 줄: 'N/M 켬'·모두 켜기/끄기
+    heads: RefCell<Vec<(String, gtk::Label, gtk::Button)>>, // 묶음 줄: 'N/M 켬'·모두 켜기/끄기
     updaters: RefCell<Vec<Box<dyn Fn()>>>,
     err: gtk::Label,
 }
@@ -77,7 +77,7 @@ pub fn page() -> adw::PreferencesPage {
 
     // 1. 채널 추가(그대로)
     let g = adw::PreferencesGroup::builder().title("채널 추가").build();
-    let entry = adw::EntryRow::builder().title("언론사·블로그 주소 또는 youtube.com/@채널 · r/이름 · github.com/소유자/저장소").build();
+    let entry = adw::EntryRow::builder().title("사이트·뉴스레터·YouTube·GitHub·Reddit 주소").build();
     let add = gtk::Button::builder().label("구독").valign(gtk::Align::Center).css_classes(["suggested-action"]).build();
     entry.add_suffix(&add);
     g.add(&entry);
@@ -85,7 +85,7 @@ pub fn page() -> adw::PreferencesPage {
     err.set_visible(false);
     err.set_margin_top(6);
     g.add(&err);
-    g.add(&caption("웹사이트·뉴스레터(Substack·Medium)·YouTube 채널·GitHub 릴리스·Reddit·arXiv·팟캐스트 주소를 넣으면 알맞은 피드를 찾아 구독합니다."));
+    g.add(&caption("웹사이트·뉴스레터(Substack·Medium)·YouTube(youtube.com/@채널)·GitHub 릴리스(github.com/소유자/저장소)·Reddit(r/이름)·arXiv·팟캐스트 주소를 넣으면 알맞은 피드를 찾아 구독합니다."));
     page.add(&g);
     let do_add = {
         let entry = entry.clone();
@@ -181,7 +181,6 @@ pub fn page() -> adw::PreferencesPage {
         expanded: RefCell::new(HashSet::new()),
         collapsed_searching: RefCell::new(HashSet::new()),
         shape: RefCell::new(None),
-        building: Cell::new(false),
         summary,
         count,
         empty,
@@ -262,6 +261,7 @@ fn refresh(v: &Rc<View>) {
         mine: mine.iter().map(|s| s.id.clone()).collect(),
         groups: groups.iter().map(|g| (g.id.clone(), g.sources.iter().map(|s| s.id.clone()).collect())).collect(),
         catalog: catalog.iter().map(|s| s.id.clone()).collect(),
+        open: groups.iter().map(|g| g.id.clone()).chain(["catalog".to_string()]).filter(|id| is_open(v, id, searching)).collect(),
     };
     if v.shape.borrow().as_ref() != Some(&shape) {
         rebuild(v, &shape, &mine, &groups, &catalog);
@@ -270,9 +270,9 @@ fn refresh(v: &Rc<View>) {
     for u in v.updaters.borrow().iter() {
         u();
     }
-    for (id, row, btn) in v.heads.borrow().iter() {
+    for (id, count, btn) in v.heads.borrow().iter() {
         if let Some(g) = groups.iter().find(|g| &g.id == id) {
-            row.set_subtitle(&format!("{}/{} 켬", g.on, g.total));
+            count.set_text(&format!("{}/{} 켬", g.on, g.total));
             let all_on = g.sources.iter().all(|s| enabled(&s.id));
             btn.set_label(if all_on { "모두 끄기" } else { "모두 켜기" });
         }
@@ -280,7 +280,6 @@ fn refresh(v: &Rc<View>) {
 }
 
 fn rebuild(v: &Rc<View>, shape: &Shape, mine: &[Source], groups: &[sd::Group], catalog: &[&Source]) {
-    v.building.set(true);
     for (g, r) in v.rows.borrow_mut().drain(..) {
         g.remove(&r);
     }
@@ -295,21 +294,19 @@ fn rebuild(v: &Rc<View>, shape: &Shape, mine: &[Source], groups: &[sd::Group], c
         rows.push((v.mine_group.clone(), r.upcast()));
     }
     for s in mine {
-        rows.push((v.mine_group.clone(), source_row(s, true, None, v).upcast()));
+        rows.push((v.mine_group.clone(), source_row(s, true, None, false, v).upcast()));
     }
 
-    // 기본 출처: 고른 보기의 묶음
+    // 기본 출처: 고른 보기의 묶음. 묶음 줄과 하위 줄을 따로 만들어 모든 줄이 같은 열(col)을 쓴다
     v.base_group.set_visible(!groups.is_empty());
     let layout = shape.layout;
     for g in groups {
         if layout == Layout::Media && g.total == 1 {
             if let Some(s) = g.sources.first() {
-                rows.push((v.base_group.clone(), source_row(s, false, None, v).upcast()));
+                rows.push((v.base_group.clone(), source_row(s, false, None, false, v).upcast()));
             }
             continue;
         }
-        let ex = expander(v, &g.id, &glib::markup_escape_text(&g.title), shape.searching);
-        ex.add_prefix(&group_mark(g, layout));
         let ids: Vec<String> = g.sources.iter().map(|s| s.id.clone()).collect();
         let btn = gtk::Button::builder().label("모두 켜기").css_classes(["flat"]).valign(gtk::Align::Center).build();
         btn.set_tooltip_text(Some(&if g.sources.len() < g.total { format!("보이는 {}곳에만", g.sources.len()) } else { format!("이 묶음 {}곳 모두", g.total) }));
@@ -319,58 +316,137 @@ fn rebuild(v: &Rc<View>, shape: &Shape, mine: &[Source], groups: &[sd::Group], c
             let all_on = ids.iter().all(|id| st.enabled.get(id) == Some(&true));
             core.set_enabled_many(&ids, !all_on); // 거른 것에만, 저장·확인은 한 번
         });
-        ex.add_suffix(&btn);
-        let media = (layout == Layout::Media).then_some(g.title.as_str());
-        for s in &g.sources {
-            ex.add_row(&source_row(s, false, media, v));
+        let (head, count) = head_row(v, &g.id, &g.title, &format!("{}/{} 켬", g.on, g.total), group_mark(g, layout), shape.searching, Some(btn.clone().upcast()));
+        v.heads.borrow_mut().push((g.id.clone(), count, btn));
+        rows.push((v.base_group.clone(), head.upcast()));
+        if is_open(v, &g.id, shape.searching) {
+            let media = (layout == Layout::Media).then_some(g.title.as_str());
+            for s in &g.sources {
+                rows.push((v.base_group.clone(), source_row(s, false, media, true, v).upcast()));
+            }
         }
-        v.heads.borrow_mut().push((g.id.clone(), ex.clone(), btn));
-        rows.push((v.base_group.clone(), ex.upcast()));
     }
 
     // 추천 채널: 맨 아래 접힌 묶음(찾기 적용, 걸리면 펼침)
     if !catalog.is_empty() {
-        let ex = expander(v, "catalog", &format!("추천 채널 {}", catalog.len()), shape.searching);
-        for group in channels::GROUPS {
-            let list: Vec<&&Source> = catalog.iter().filter(|s| s.group.as_deref() == Some(group)).collect();
-            if list.is_empty() {
-                continue;
-            }
-            let h = adw::ActionRow::builder().title(group).css_classes(["dim-label"]).activatable(false).build();
-            ex.add_row(&h);
-            for s in list {
-                ex.add_row(&catalog_row(s, v));
+        let mark = icon("starred-symbolic", 16);
+        mark.add_css_class("dc-secondary");
+        let (head, _) = head_row(v, "catalog", "추천 채널", &catalog.len().to_string(), mark.upcast(), shape.searching, None);
+        rows.push((v.catalog_group.clone(), head.upcast()));
+        if is_open(v, "catalog", shape.searching) {
+            for group in channels::GROUPS {
+                let list: Vec<&&Source> = catalog.iter().filter(|s| s.group.as_deref() == Some(group)).collect();
+                if list.is_empty() {
+                    continue;
+                }
+                let (h, line) = row_frame(&spacer(col::DISCLOSURE + col::INDENT));
+                line.append(&tag(group, 12.0, 400, &["dc-secondary"]));
+                rows.push((v.catalog_group.clone(), h.upcast()));
+                for s in list {
+                    rows.push((v.catalog_group.clone(), catalog_row(s, v).upcast()));
+                }
             }
         }
-        rows.push((v.catalog_group.clone(), ex.upcast()));
     }
 
     for (g, r) in &rows {
         g.add(r);
     }
     *v.rows.borrow_mut() = rows;
-    v.building.set(false);
 }
 
-// 묶음 줄: 찾는 중이면 걸린 묶음을 펼친다(찾는 중에 접은 것은 접힌 채로), 아니면 사용자가 펼친 것만
-fn expander(v: &Rc<View>, id: &str, title: &str, searching: bool) -> adw::ExpanderRow {
-    let open = if searching { !v.collapsed_searching.borrow().contains(id) } else { v.expanded.borrow().contains(id) };
-    let ex = adw::ExpanderRow::builder().title(title).expanded(open).build();
+// 줄 열(맥 DesignSystem.swift RowColumn · 윈도우 settings.css --col-* 와 같은 규칙):
+// [펼침 자리] [아이콘] [이름(고정 폭, 말줄임)] [칩들] … [건수·모두 켜기·구독] [알림 종] [켜기 스위치].
+// 하위 줄은 한 단계(아이콘 + 간격) 들이고 이름 열을 그만큼 줄여 칩 열은 그대로. GTK 스위치·평평한 단추가 맥보다 커서 종·스위치 열만 넓다.
+mod col {
+    pub const DISCLOSURE: i32 = 16;
+    pub const ICON: i32 = 22;
+    pub const GAP: i32 = 8;
+    pub const INDENT: i32 = ICON + GAP;
+    pub const NAME: i32 = 136;
+    pub const BELL: i32 = 34;
+    pub const TOGGLE: i32 = 48;
+    pub const CONTROLS: i32 = BELL + GAP + TOGGLE;
+}
+
+// 찾는 중이면 걸린 묶음을 펼친다(찾는 중에 접은 것은 접힌 채로), 아니면 사용자가 펼친 것만
+fn is_open(v: &View, id: &str, searching: bool) -> bool {
+    if searching { !v.collapsed_searching.borrow().contains(id) } else { v.expanded.borrow().contains(id) }
+}
+
+// 줄 틀: 목록 한 칸 안에 열 상자 하나(제목 없이 앞 자리에). lead = 펼침 자리(하위 줄은 + 들임)
+fn row_frame(lead: &impl IsA<gtk::Widget>) -> (adw::ActionRow, gtk::Box) {
+    let line = gtk::Box::new(gtk::Orientation::Horizontal, col::GAP);
+    line.set_hexpand(true);
+    line.append(lead);
+    let row = adw::ActionRow::new();
+    row.add_prefix(&line);
+    (row, line)
+}
+
+fn spacer(width: i32) -> gtk::Box {
+    let b = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    b.set_size_request(width, -1);
+    b
+}
+
+// 이름 열: 고정 폭, 길면 말줄임(전체 이름은 풍선 도움말)
+fn name_label(text: &str, full: &str, width: i32, bold: bool) -> gtk::Label {
+    let l = gtk::Label::new(Some(text));
+    l.set_xalign(0.0);
+    l.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    l.set_max_width_chars(1); // 자연 폭을 줄여 정한 폭(size_request)만 쓰게
+    l.set_size_request(width, -1);
+    l.set_tooltip_text(Some(full));
+    if bold {
+        l.add_css_class("heading");
+    }
+    l
+}
+
+// 오른쪽 열 상자: 정한 폭 안에서 오른쪽 끝에 붙인다(밖으로 늘어나지 않게 hexpand 를 끊는다)
+fn end_slot(width: i32, child: &impl IsA<gtk::Widget>) -> gtk::Box {
+    let b = spacer(width);
+    b.set_hexpand(false);
+    child.set_halign(gtk::Align::End);
+    child.set_hexpand(true);
+    b.append(child);
+    b
+}
+
+// 묶음 줄: [펼침 화살표] [아이콘] [이름] [건수] … [모두 켜기(종+스위치 자리)]. 줄을 누르면(Enter 포함) 펼치고 접는다.
+// 모두 켜기/끄기는 줄 안 따로 단추라 줄 누름이 묶음을 켜지 않는다
+fn head_row(v: &Rc<View>, id: &str, title: &str, count: &str, mark: gtk::Widget, searching: bool, trailing: Option<gtk::Widget>) -> (adw::ActionRow, gtk::Label) {
+    let open = is_open(v, id, searching);
+    let arrow = icon(if open { "pan-down-symbolic" } else { "pan-end-symbolic" }, 16);
+    arrow.add_css_class("dc-secondary");
+    arrow.set_size_request(col::DISCLOSURE, -1);
+    let (row, line) = row_frame(&arrow);
+    row.set_activatable(true);
+    row.upcast_ref::<gtk::Widget>().update_property(&[gtk::accessible::Property::Label(&format!("{title}, {count}"))]);
+    row.upcast_ref::<gtk::Widget>().update_state(&[gtk::accessible::State::Expanded(Some(open))]);
+    mark.set_size_request(col::ICON, col::ICON);
+    mark.set_valign(gtk::Align::Center);
+    line.append(&mark);
+    line.append(&name_label(title, title, col::NAME, true));
+    let n = tag(count, 12.0, 400, &["dc-secondary", "numeric"]);
+    n.set_hexpand(true);
+    line.append(&n);
+    if let Some(t) = trailing {
+        line.append(&end_slot(col::CONTROLS, &t));
+    }
     let (v, id) = (v.clone(), id.to_string());
-    ex.connect_expanded_notify(move |e| {
-        if v.building.get() {
-            return;
+    row.connect_activated(move |_| {
+        {
+            let mut set = if searching { v.collapsed_searching.borrow_mut() } else { v.expanded.borrow_mut() };
+            if !set.remove(&id) {
+                set.insert(id.clone());
+            }
         }
-        let on = e.is_expanded();
-        if searching {
-            let mut c = v.collapsed_searching.borrow_mut();
-            if on { c.remove(&id) } else { c.insert(id.clone()) };
-        } else {
-            let mut x = v.expanded.borrow_mut();
-            if on { x.insert(id.clone()) } else { x.remove(&id) };
-        }
+        let v = v.clone();
+        glib::idle_add_local_once(move || refresh(&v)); // 누른 줄을 그 신호 안에서 지우지 않게 다음 차례에
     });
-    ex
+    (row, n)
 }
 
 // 묶음 줄 앞 표시: 매체 = 첫 글자 동그라미, 분야 = 분야 아이콘, 지역 = 집/지구
@@ -421,20 +497,31 @@ fn kind_badge(k: ItemKind) -> gtk::Label {
 }
 
 // 출처 줄: 이름(묶음 안에서는 짧은 이름) · 분야 칩 · 국내/해외 · 유료 자물쇠 · (종류) · 알림 종 · 켜기 스위치 · (해지) · 주소 · 오류 표시
-fn source_row(src: &Source, removable: bool, media: Option<&str>, v: &Rc<View>) -> adw::ActionRow {
+// 열은 col(묶음 안 줄 child 는 한 단계 들임)
+fn source_row(src: &Source, removable: bool, media: Option<&str>, child: bool, v: &Rc<View>) -> adw::ActionRow {
     let name = media.map(|m| sd::short_name(src, m)).unwrap_or_else(|| src.name.clone());
-    let row = adw::ActionRow::builder().title(glib::markup_escape_text(&name).as_str()).build();
-    row.add_prefix(&source_monogram(src));
+    let indent = if child { col::INDENT } else { 0 };
+    let (row, line) = row_frame(&spacer(col::DISCLOSURE + indent));
+    row.upcast_ref::<gtk::Widget>().update_property(&[gtk::accessible::Property::Label(&name)]);
+    line.append(&source_monogram(src));
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    body.set_hexpand(true);
+    body.set_valign(gtk::Align::Center);
+    let top = gtk::Box::new(gtk::Orientation::Horizontal, col::GAP);
+    body.append(&top);
+    line.append(&body);
+    top.append(&name_label(&name, &src.name, col::NAME - indent, false));
     if let Some(h) = src.home.clone().or_else(|| removable.then(|| src.url.clone())) {
-        row.set_subtitle(&glib::markup_escape_text(&h));
-        row.set_subtitle_lines(1);
+        let sub = tag(&h, 12.0, 400, &["dc-secondary"]);
+        sub.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+        body.append(&sub);
     }
     if let Some(sec) = sections::by_id(src.section_id()) {
         let c = chip(&sec.name, &sec.color);
         c.set_valign(gtk::Align::Center);
-        row.add_suffix(&c);
+        top.append(&c);
     }
-    row.add_suffix(&tag(sd::region_label(src), 11.5, 400, &["dc-secondary"]));
+    top.append(&tag(sd::region_label(src), 11.5, 400, &["dc-secondary"]));
     if let Some(note) = sd::paywall_note(src) {
         let k = if src.paywall.as_deref() == Some("metered") { PaywallKind::Metered } else { PaywallKind::Hard };
         let lock = icon(k.icon(), 13);
@@ -442,32 +529,33 @@ fn source_row(src: &Source, removable: bool, media: Option<&str>, v: &Rc<View>) 
         lock.set_valign(gtk::Align::Center);
         lock.set_tooltip_text(Some(note));
         lock.update_property(&[gtk::accessible::Property::Label(note)]);
-        row.add_suffix(&lock);
+        top.append(&lock);
     }
     if src.item_kind() != ItemKind::Article {
         let b = kind_badge(src.item_kind());
         b.set_valign(gtk::Align::Center);
-        row.add_suffix(&b);
+        top.append(&b);
     }
     if src.ai_only {
-        row.add_suffix(&tag("AI 글만", 11.5, 400, &["dc-secondary"]));
+        top.append(&tag("AI 글만", 11.5, 400, &["dc-secondary"]));
     }
     let warn = icon("dialog-warning-symbolic", 14);
     warn.add_css_class("warning");
-    row.add_suffix(&warn);
+    top.append(&warn);
     // 출처 건강: 조용함·멈춤·글 없음·오류(켜진 출처만)
     let health = crate::settings_tools::health_badge();
-    row.add_suffix(&health);
-    let bell = gtk::ToggleButton::builder().css_classes(["flat"]).valign(gtk::Align::Center).build();
-    row.add_suffix(&bell);
-    let sw = gtk::Switch::builder().valign(gtk::Align::Center).build();
-    row.add_suffix(&sw);
+    top.append(&health);
+    // 해지 단추는 종 앞에 — 종·스위치 열은 모든 줄에서 오른쪽 끝 같은 자리
     if removable {
         let del = gtk::Button::builder().icon_name("user-trash-symbolic").css_classes(["flat"]).valign(gtk::Align::Center).tooltip_text("구독 해지").build();
         let id = src.id.clone();
         del.connect_clicked(move |_| ui().core.remove_custom_source(&id));
-        row.add_suffix(&del);
+        line.append(&del);
     }
+    let bell = gtk::ToggleButton::builder().css_classes(["flat"]).valign(gtk::Align::Center).build();
+    line.append(&end_slot(col::BELL, &bell));
+    let sw = gtk::Switch::builder().valign(gtk::Align::Center).build();
+    line.append(&end_slot(col::TOGGLE, &sw));
     let id = src.id.clone();
     let busy = Rc::new(Cell::new(false));
     let update = {
@@ -516,17 +604,24 @@ fn source_row(src: &Source, removable: bool, media: Option<&str>, v: &Rc<View>) 
 }
 
 // 추천 채널: 구독 / 확인 중… / 구독 중
+// '추천 채널' 묶음의 하위 줄 — 출처 줄과 같은 열, 구독 단추는 종+스위치 자리
 fn catalog_row(src: &Source, v: &Rc<View>) -> adw::ActionRow {
-    let row = adw::ActionRow::builder()
-        .title(glib::markup_escape_text(&src.name).as_str())
-        .subtitle(if src.notify_default == Some(false) { "글이 많아 알림 없이 매거진에만 실림" } else { "새 글이 오면 알림" })
-        .build();
-    row.add_prefix(&source_monogram(src));
+    let (row, line) = row_frame(&spacer(col::DISCLOSURE + col::INDENT));
+    row.upcast_ref::<gtk::Widget>().update_property(&[gtk::accessible::Property::Label(&src.name)]);
+    line.append(&source_monogram(src));
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    body.set_hexpand(true);
+    body.set_valign(gtk::Align::Center);
+    let top = gtk::Box::new(gtk::Orientation::Horizontal, col::GAP);
+    top.append(&name_label(&src.name, &src.name, col::NAME - col::INDENT, false));
     if src.item_kind() != ItemKind::Article {
         let b = kind_badge(src.item_kind());
         b.set_valign(gtk::Align::Center);
-        row.add_suffix(&b);
+        top.append(&b);
     }
+    body.append(&top);
+    body.append(&tag(if src.notify_default == Some(false) { "글이 많아 알림 없이 매거진에만 실림" } else { "새 글이 오면 알림" }, 12.0, 400, &["dc-secondary"]));
+    line.append(&body);
     let done = gtk::Box::new(gtk::Orientation::Horizontal, 4);
     let ok = icon("object-select-symbolic", 13);
     ok.add_css_class("success");
@@ -534,9 +629,11 @@ fn catalog_row(src: &Source, v: &Rc<View>) -> adw::ActionRow {
     let l = tag("구독 중", 12.0, 500, &["success"]);
     done.append(&l);
     done.set_valign(gtk::Align::Center);
-    row.add_suffix(&done);
     let btn = gtk::Button::builder().label("구독").valign(gtk::Align::Center).build();
-    row.add_suffix(&btn);
+    let right = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    right.append(&done);
+    right.append(&btn);
+    line.append(&end_slot(col::CONTROLS, &right));
     let src2 = src.clone();
     let update = {
         let (done, btn) = (done.clone(), btn.clone());

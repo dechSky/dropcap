@@ -43,7 +43,7 @@ pub struct Env {
 
 impl Env {
     pub fn read(args: &[String]) -> Env {
-        let v = |k: &str| dropcap_core::test_hooks::var(k).filter(|s| !s.is_empty()); // 시험 훅은 개발 빌드에서만(L8)
+        let v = |k: &str| dropcap_core::test_hooks::var(k).filter(|s| !s.is_empty()); // 시험 훅은 개발 빌드에서만
         Env {
             background: args.iter().any(|a| a == "--background"),
             shot_dir: v("DROPCAP_TEST_SHOT_DIR").map(PathBuf::from),
@@ -216,7 +216,7 @@ pub fn resource(name: &str) -> PathBuf {
             cands.push(bin.join("../share/dropcap").join(name));
         }
     }
-    // 개발 중에만 저장소의 linux/resources(배포판에 빌드한 컴퓨터의 경로가 남지 않게 — L8)
+    // 개발 중에만 저장소의 linux/resources(배포판에 빌드한 컴퓨터의 경로가 남지 않게)
     #[cfg(debug_assertions)]
     cands.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../resources").join(name));
     cands.iter().find(|p| p.exists()).cloned().unwrap_or_else(|| cands.last().cloned().unwrap_or_else(|| PathBuf::from(name)))

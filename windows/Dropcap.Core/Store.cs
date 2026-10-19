@@ -18,6 +18,7 @@ public sealed class AppState
     public DateTimeOffset? LastCheck { get; set; }
     public Dictionary<string, string> Errors { get; set; } = new();
     public int Unread { get; set; }
+    public List<string> UnreadKeys { get; set; } = new();             // 안 읽음 수에 든 소식(출처를 숨겼다 풀어도 수가 맞게 — 예전 파일엔 없음)
     public Dictionary<string, double> Read { get; set; } = new();     // 읽은 기사 key → 읽은 시각
     public List<NewsItem> Saved { get; set; } = new();                // 나중에 읽기
     public List<Source> CustomSources { get; set; } = new();          // 직접 추가한 출처
@@ -62,6 +63,7 @@ public sealed class AppState
         s.LastCheck = Json.Field<DateTimeOffset?>(o, "lastCheck", null);
         s.Errors = Json.Field(o, "errors", s.Errors);
         s.Unread = Json.Field(o, "unread", 0);
+        s.UnreadKeys = Json.Field(o, "unreadKeys", s.UnreadKeys).TakeLast(AppModel.RecentLimit).ToList(); // 저장할 때와 같은 상한
         if (o["read"] is JsonArray old)
             s.Read = old.Select(n => n?.GetValue<string>()).OfType<string>().Distinct().ToDictionary(k => k, _ => 0.0); // 예전 형식(목록)
         else
@@ -118,6 +120,7 @@ public sealed class StateSettings
     public bool AutoQuietSharing { get; set; } = true;     // 화면 공유·기록 중
     public string TranslateEngine { get; set; } = "auto"; // 번역 방식 auto·apple·google·off(맥과 같은 키·값 — Translator.Modes)
     public bool AutoQuietCalendar { get; set; }            // 캘린더 일정 중(윈도우는 지원하지 않음 — 패키지 없는 배포)
+    public int ArchiveYears { get; set; } = Archive.DefaultYears; // 지난 기사 보관 기간(년): 1·2·5, 0 은 끝없이(맥·리눅스와 같은 키·값)
 
     [JsonIgnore] public PolicyLimits Limits => new() { TotalCap = TotalDailyCap, KrThreshold = KrThreshold, IntlThreshold = IntlThreshold, BigThreshold = BigThreshold };
 
@@ -146,6 +149,7 @@ public sealed class StateSettings
         d.AutoQuietSharing = Json.Field(o, "autoQuietSharing", true);
         d.AutoQuietCalendar = Json.Field(o, "autoQuietCalendar", false);
         d.TranslateEngine = Json.Field<string?>(o, "translateEngine", null) ?? "auto"; // 예전 파일엔 없음 → 자동, 모르는 값은 Clamp 에서 자동
+        d.ArchiveYears = Json.Field(o, "archiveYears", Archive.DefaultYears);           // 예전 파일엔 없음 → 2년, 모르는 값은 Clamp 에서 2년
         d.Clamp();
         return d;
     }
@@ -163,6 +167,7 @@ public sealed class StateSettings
         IntlThreshold = Math.Clamp(IntlThreshold, 1, 10);
         BigThreshold = Math.Clamp(BigThreshold, 2, 20);
         TranslateEngine = Translator.NormalizeMode(TranslateEngine);
+        ArchiveYears = Archive.ClampYears(ArchiveYears);
     }
 
     public StateSettings Copy()

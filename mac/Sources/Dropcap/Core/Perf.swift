@@ -53,7 +53,7 @@ final class MainStallMonitor: @unchecked Sendable {
     }
 }
 
-#if DEBUG // 시험 장치(M9)
+#if DEBUG // 시험 장치
 // 시험용: DROPCAP_TEST_PERF=<폴더> 면 시작 뒤 정해진 일들을 하며 메인 막힘을 재고 perf.txt 로 남긴 뒤 끝낸다.
 @MainActor
 enum PerfHarness {

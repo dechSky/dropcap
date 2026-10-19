@@ -58,7 +58,8 @@ public sealed class AppModel
         Magazine.Chosen = () => State.SectionsChosen;
         Magazine.Limits = () => State.Settings.Limits;
         Magazine.IsFollowed = id => State.FollowedStories.Contains(id);
-        Translator.Shared.ModeSource = () => State.Settings.TranslateEngine;   // 번역 방식(W4)
+        Magazine.ArchiveYears = () => State.Settings.ArchiveYears;
+        Translator.Shared.ModeSource = () => State.Settings.TranslateEngine;   // 번역 방식
         Shared = this;
     }
 
@@ -164,6 +165,7 @@ public sealed class AppModel
             var listed = GroupSameStory(candidates);
             State.Recent = listed.Concat(State.Recent).Take(RecentLimit).ToList();
             State.Unread += listed.Count;
+            State.UnreadKeys = State.UnreadKeys.Concat(listed.Select(i => i.Key)).TakeLast(RecentLimit).ToList();
             State.LastCheck = Now();
             State.Seen = Store.Pruned(State.Seen); // 저장 파일만이 아니라 메모리의 기억도 정리(오래 켜 두면 끝없이 커지던 문제)
             // 분야 정책(G-04~G-08): 즉시 알릴 것 · 묶음으로 고일 것 · 매거진에만 둘 것
@@ -376,28 +378,46 @@ public sealed class AppModel
     }
 
     // MARK: 보여 줄 출처(S-13 — SourceFilter 한 곳)
-    public SourceFilter SourceFilter => ShowAllSourcesForTests ? new SourceFilter { Hidden = State.HiddenSources.ToHashSet() } : SourceFilter.Make(State, AllSources);
+    public SourceFilter SourceFilter => ShowAllSourcesForTests
+        ? new SourceFilter { Hidden = State.HiddenSources.ToHashSet(), HiddenNames = SourceFilter.NamesOf(State.HiddenSources, AllSources) }
+        : SourceFilter.Make(State, AllSources);
     // 시험용: 출처 목록에 없는 가짜 출처 id 를 쓰는 예전 시험은 켜짐 여부를 따지지 않고 숨긴 출처만 뺀다(맥 SourceFilter.active = nil 과 같음)
     internal bool ShowAllSourcesForTests { get; set; }
-    // 트레이 창 목록·안 읽음 수가 쓰는 최근 소식(꺼진·해지한·숨긴 출처 글은 빠짐, 지우지는 않음)
-    public List<NewsItem> VisibleRecent => SourceFilter.Visible(State.Recent);
+    // 트레이 창 목록·안 읽음 수가 쓰는 최근 소식(꺼진·해지한·숨긴 출처 글과 '알리지 않음' 낱말 글은 빠짐, 지우지는 않음)
+    public List<NewsItem> VisibleRecent => Visible(State.Recent, SourceFilter, State.Settings.MuteKeywords);
+
+    // '알리지 않음' 낱말도 지우지 않고 거르기만(낱말을 지우면 돌아옴, 맥 AppModel.visible 과 같음)
+    public static List<NewsItem> Visible(IEnumerable<NewsItem> items, SourceFilter filter, IEnumerable<string> mute)
+    {
+        var m = Words(mute);
+        return filter.Visible(items).Where(i => !m.Any(Text(i).Contains)).ToList();
+    }
+    private static string Text(NewsItem it) => $"{it.Title} {it.TitleKo ?? ""} {it.Summary}".ToLowerInvariant();
+
+    // 안 읽음 수: 어떤 소식이 들었는지 알면(UnreadKeys) 지금 보이는 것만 세고, 모르면(예전 파일) 줄이기만
+    public static int RecountUnread(int unread, IReadOnlyCollection<string> keys, IEnumerable<NewsItem> visibleUnread)
+    {
+        if (keys.Count == 0) return Math.Min(unread, visibleUnread.Count());
+        var counted = keys.ToHashSet();
+        return visibleUnread.Count(i => counted.Contains(i.Key));
+    }
 
     // 구독(출처 켜기·끄기·해지·분야·숨기기)이 바뀐 뒤: 알림 대기열에서 빠진 출처 글을 빼고, 안 읽음 수를 맞추고, 열린 화면을 바로 갱신
     private void SubscriptionsChanged()
     {
         var f = SourceFilter;
         State.Pending.RemoveAll(p => !f.Shows(p.Item.SourceId));
-        State.Unread = Math.Min(State.Unread, f.Visible(State.Recent).Count(i => !IsRead(i)));
+        State.Unread = RecountUnread(State.Unread, State.UnreadKeys, Visible(State.Recent, f, State.Settings.MuteKeywords).Where(i => !IsRead(i))); // 숨기면 줄고 풀면 돌아옴
         Save();
         Magazine.Refresh();
     }
 
     // MARK: 바로 줄이기(G-11)
+    // 지우지 않고 거르기만(SourceFilter): 숨김을 풀면 목록에 그대로 돌아온다
     public void HideSource(string id)
     {
         if (State.HiddenSources.Contains(id)) return;
         State.HiddenSources.Add(id);
-        State.Recent.RemoveAll(i => i.SourceId == id);
         SubscriptionsChanged();
     }
 
@@ -419,8 +439,8 @@ public sealed class AppModel
         var w = word.Trim();
         if (w.Length == 0) return;
         Update(s => { if (!s.MuteKeywords.Contains(w)) s.MuteKeywords.Add(w); });
-        State.Pending.RemoveAll(p => $"{p.Item.Title} {p.Item.TitleKo ?? ""}".ToLowerInvariant().Contains(w.ToLowerInvariant()));
-        Save();
+        PrunePending();
+        SubscriptionsChanged();   // 목록에서는 지우지 않고 거르기만 — 안 읽음 수를 맞추고 화면 갱신
     }
 
     // 낱말 고르기 메뉴에 보일 제목 낱말
@@ -505,12 +525,18 @@ public sealed class AppModel
         return o;
     }
 
-    // 낱말 설정이 바뀌면 이미 받은 최근 목록에도 바로: ★ 다시 매기고, '알리지 않음' 낱말이 든 기사는 목록에서 뺌
+    // 낱말 설정이 바뀌면 이미 받은 최근 목록에도 바로: ★ 다시 매기고, '알리지 않음'은 지우지 않고 VisibleRecent 가 거른다(낱말을 지우면 돌아옴)
     public void ReapplyKeywords()
     {
-        State.Recent = ApplyKeywords(State.Recent.Select(i => i with { Important = null, Watch = null }));
+        var must = Words(State.Settings.MustKeywords);
+        var watch = WatchWords.Normalized(State.Settings.WatchKeywords);
+        State.Recent = State.Recent.Select(i => i with
+        {
+            Important = must.Any(Text(i).Contains) ? true : null,
+            Watch = watch.Count > 0 ? WatchWords.Match(i, watch) : null,
+        }).ToList();
         PrunePending();   // 설정에서 더한 '알리지 않음' 낱말도 이미 고인 소식에 적용
-        Save();
+        SubscriptionsChanged();
     }
 
     // 설정이 바뀐 뒤 고인 소식(묶음 대기열)에서 이제 알리지 않을 것을 뺀다(맥 prunePending):
@@ -534,6 +560,7 @@ public sealed class AppModel
         var sorted = items.OrderBy(i => rank.GetValueOrDefault(i.Tier, 3)).ThenByDescending(i => i.Date ?? DateTimeOffset.MinValue).ToList();
         var kept = new List<NewsItem>();
         var cutoff = Now().AddHours(-36);
+        var shown = VisibleRecent.Select(r => r.Key).ToHashSet(); // 숨긴·'알리지 않음' 글과 같은 소식이라고 보이는 새 글을 삼키지 않게
         foreach (var it in sorted)
         {
             var i = kept.FindIndex(k => StoryMatch.Same(it, k));
@@ -542,8 +569,8 @@ public sealed class AppModel
                 kept[i] = kept[i] with { Related = (kept[i].Related ?? new()).Append(it.SourceName).ToList() };
                 continue;
             }
-            // 하루 반 안에 이미 알린 소식과 같으면 알리지 않고 그 소식에 출처만 더한다
-            var j = State.Recent.FindIndex(r => (r.Date ?? DateTimeOffset.MinValue) > cutoff && StoryMatch.Same(it, r));
+            // 하루 반 안에 이미 알린(지금 보이는) 소식과 같으면 알리지 않고 그 소식에 출처만 더한다
+            var j = State.Recent.FindIndex(r => (r.Date ?? DateTimeOffset.MinValue) > cutoff && shown.Contains(r.Key) && StoryMatch.Same(it, r));
             if (j >= 0)
             {
                 var r = State.Recent[j];
@@ -776,6 +803,7 @@ public sealed class AppModel
         var now = Now().ToUnixTimeMilliseconds() / 1000.0;
         foreach (var it in State.Recent) State.Read.TryAdd(it.Key, now);
         State.Unread = 0;
+        State.UnreadKeys = [];
         Save();
     }
 
@@ -889,6 +917,7 @@ public sealed class AppModel
     {
         if (State.Unread == 0) return;
         State.Unread = 0;
+        State.UnreadKeys = [];
         Save();
     }
 

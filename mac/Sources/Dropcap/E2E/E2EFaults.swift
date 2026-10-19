@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 import SQLite3
 
-// 시험 장치(M9): 디버그 빌드(swift build·swift test·e2e·clicksweep)에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
+// 시험 장치: 디버그 빌드(swift build·swift test·e2e·clicksweep)에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
 #if DEBUG
 
 // 실패 처리 시험(scripts/e2e/faults.sh). DROPCAP_TEST_E2E_PHASE=faults 일 때만.

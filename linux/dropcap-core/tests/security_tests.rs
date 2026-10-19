@@ -1,4 +1,4 @@
-// 보안 점검(2026-10-14) 리눅스 항목 재현·고침 시험
+// 보안 점검 리눅스 항목 재현·고침 시험
 use dropcap_core::url_safety::is_public_http;
 
 #[test]
@@ -12,7 +12,7 @@ fn hex_ip_spellings_are_rejected() {
 use dropcap_core::backup;
 use dropcap_core::store::Settings;
 
-// L6 · 맥 M5: 상태 파일·가져온 기록의 범위 밖 수치(Int.max 간격은 곱셈 넘침·0 은 쉬지 않고 받기)
+// 상태 파일·가져온 기록의 범위 밖 수치(Int.max 간격은 곱셈 넘침·0 은 쉬지 않고 받기)
 #[test]
 fn settings_are_clamped_when_read() {
     let s: Settings = serde_json::from_str(r#"{"intervalMinutes":9223372036854775807,"quietStart":99,"digestHour":-3,"totalDailyCap":0,"bigThreshold":1000}"#).unwrap();
@@ -69,7 +69,7 @@ fn oversized_backup_file_is_refused() {
     assert!(backup::Failure::TooLarge.to_string().contains("50MB"));
 }
 
-// 맥 M4: 사이트맵 정규식은 앱에 든 기본 출처(같은 id·같은 정규식)의 것만
+// 사이트맵 정규식은 앱에 든 기본 출처(같은 id·같은 정규식)의 것만
 #[test]
 fn sitemap_pattern_only_from_bundled_sources() {
     use dropcap_core::feed_service::sitemap_pattern;
@@ -84,7 +84,7 @@ fn sitemap_pattern_only_from_bundled_sources() {
     assert_eq!(sitemap_pattern(&custom), None);
 }
 
-// L1: 숨은 웹 보기는 보여 줄 수 없는 응답·첨부를 들이지 않는다(내려받기로 바뀌지 않게)
+// 숨은 웹 보기는 보여 줄 수 없는 응답·첨부를 들이지 않는다(내려받기로 바뀌지 않게)
 #[test]
 fn web_view_refuses_downloads() {
     use dropcap_core::url_safety::web_response_allowed;
@@ -95,7 +95,7 @@ fn web_view_refuses_downloads() {
     assert!(!web_response_allowed(false, None));
 }
 
-// L3: 사진 크기 폭탄 — 가로·세로가 8192 를 넘으면 풀지 않는다
+// 사진 크기 폭탄 — 가로·세로가 8192 를 넘으면 풀지 않는다
 #[test]
 fn huge_image_dimensions_are_refused() {
     let mut png = Vec::new();
@@ -106,7 +106,7 @@ fn huge_image_dimensions_are_refused() {
     assert!(dropcap_core::images::shrink(&ok).is_some());
 }
 
-// L7: 데이터 폴더 0700 · 파일 0600
+// 데이터 폴더 0700 · 파일 0600
 #[cfg(unix)]
 #[test]
 fn data_files_are_private() {
@@ -122,7 +122,7 @@ fn data_files_are_private() {
     assert_eq!(std::fs::metadata(&f).unwrap().permissions().mode() & 0o777, 0o600);
 }
 
-// L9: 특수 대역(문서용·Teredo·폐기·로컬 NAT64 등)
+// 특수 대역(문서용·Teredo·폐기·로컬 NAT64 등)
 #[test]
 fn special_ranges_are_not_public() {
     use dropcap_core::url_safety::{parse_v4, parse_v6, is_public_v4, is_public_v6};
@@ -136,7 +136,7 @@ fn special_ranges_are_not_public() {
     assert!(is_public_v4(&parse_v4("8.8.8.8").unwrap()));
 }
 
-// L5: Ollama 의 원격(클라우드) 모델은 이름이 아니라 목록의 원격 표시로도 거른다
+// Ollama 의 원격(클라우드) 모델은 이름이 아니라 목록의 원격 표시로도 거른다
 #[test]
 fn ollama_remote_models_are_skipped() {
     let tags = serde_json::json!({"models":[
@@ -147,7 +147,7 @@ fn ollama_remote_models_are_skipped() {
     assert_eq!(dropcap_core::summarizer::pick_local(&tags, Some("mystery")), None);
 }
 
-// ── 보안 점검 2(2026-10-15) ──
+// ── 깊게 겹친 상자 ──
 use dropcap_core::article::extract_html;
 use dropcap_core::reader_extract::{gather, pre_clean, rough_depth, MAX_PARSE_DEPTH};
 use std::time::{Duration, Instant};
@@ -161,7 +161,7 @@ fn on_2mb<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
     std::thread::Builder::new().stack_size(2 << 20).spawn(f).unwrap().join().unwrap()
 }
 
-// L11: 깊게 겹친 인라인·div 에서 재귀가 스택을 넘어 프로세스가 죽던 것(span 8,000겹: 고치기 전 abort)
+// 깊게 겹친 인라인·div 에서 재귀가 스택을 넘어 프로세스가 죽던 것(span 8,000겹: 고치기 전 abort)
 #[test]
 fn deep_nesting_does_not_overflow_the_stack() {
     for n in [8000usize, 15000] {
@@ -190,7 +190,7 @@ fn absurd_div_nesting_is_refused_quickly() {
     assert!(t.elapsed() < Duration::from_secs(1));
 }
 
-// X1: 형제 상자 안에 본문 상자와 같은 class 가 N겹 — 겹마다 하위 전체를 복사해 N²(2,000겹 60초+)
+// 형제 상자 안에 본문 상자와 같은 class 가 N겹 — 겹마다 하위 전체를 복사해 N²(2,000겹 60초+)
 #[test]
 fn nested_core_class_is_gathered_once() {
     let n = 2000;
@@ -208,7 +208,7 @@ fn nested_core_class_is_gathered_once() {
     assert!(c.len() < html.len() * 2, "{} vs {}", c.len(), html.len());
 }
 
-// L12: 겹친 군더더기 상자마다 하위 글을 세던 것(N²) — 바깥 상자를 지우면 그 안은 건너뛴다
+// 겹친 군더더기 상자마다 하위 글을 세던 것(N²) — 바깥 상자를 지우면 그 안은 건너뛴다
 #[test]
 fn nested_junk_boxes_are_cleaned_once() {
     let html = format!("<html><body>{}{}z{}</body></html>", long_ps(2000), "<div class=\"author-box\">ab ".repeat(20000), "</div>".repeat(20000));

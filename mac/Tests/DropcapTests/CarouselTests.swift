@@ -101,7 +101,7 @@ private func page(_ middle: String, after: String = "") -> String {
     }
 
     @Test func recommendHeadOutsideRoot() async {
-        // 보안 낮음 L2: 추천 머리말이 캐러셀 바깥 바로 앞 형제(또는 한 겹 감싼 상자의 앞 형제)이고 칸에 링크가 없어도(onclick 카드) 화면 밖 칸을 넣지 않는다
+        // 보안 낮음: 추천 머리말이 캐러셀 바깥 바로 앞 형제(또는 한 겹 감싼 상자의 앞 형제)이고 칸에 링크가 없어도(onclick 카드) 화면 밖 칸을 넣지 않는다
         let card = { (i: Int) in "<div class=\"swiper-slide\" aria-hidden=\"true\" onclick=\"go(\(i))\"><p>Related card \(i) follows the council debate on the new harbor budget.</p></div>" }
         let html = page("""
         <h2>Related stories</h2><div class="swiper"><div class="swiper-wrapper">\((1...3).map(card).joined())</div></div>
@@ -117,7 +117,7 @@ private func page(_ middle: String, after: String = "") -> String {
     }
 
     @Test func slideCap() async {
-        // 보안 낮음 L3: 칸 수(50)·칸 글 양(본문 글자 2배, 적어도 3000자) 상한 — 수백 칸 갤러리로 본문이 불어나지 않게
+        // 보안 낮음: 칸 수(50)·칸 글 양(본문 글자 2배, 적어도 3000자) 상한 — 수백 칸 갤러리로 본문이 불어나지 않게
         let photos = (0..<80).map { "<div class=\"swiper-slide\"><img src=\"https://img.example.com/g\($0).jpg\"></div>" }.joined()
         let b1 = await blocks(page("<div class=\"swiper\">\(photos)</div>"))
         #expect(b1.filter { $0.type == .img && $0.src?.contains("/g") == true }.count == 50, "칸 50개까지")

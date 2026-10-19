@@ -100,6 +100,20 @@ public class AppModelTests : IDisposable
         Assert.Single(model.GroupSameStory([It("new2", "GPT-6 launches: OpenAI reveals reasoning features", "wired", "press", now)]));
     }
 
+    // 숨긴 출처·'알리지 않음' 낱말 글(지우지 않고 거르기만 함)과 같은 소식이라고 보이는 새 글을 삼키지 않는다
+    [Fact]
+    public void HiddenRecentDoesNotSwallowSameStory()
+    {
+        model.State.Recent.Add(It("old", "OpenAI launches GPT-6 with new reasoning features", "openai", "lab", now.AddHours(-10)));
+        model.State.HiddenSources.Add("openai");
+        var o = model.GroupSameStory([It("new", "GPT-6 launches: OpenAI reveals reasoning features", "verge", "press", now)]);
+        Assert.Equal(["new"], o.Select(i => i.Id));
+        Assert.Null(model.State.Recent[0].Related);
+        model.State.HiddenSources.Clear();
+        model.State.Settings.MuteKeywords = ["gpt-6"];
+        Assert.Equal(["new2"], model.GroupSameStory([It("new2", "GPT-6 launches: OpenAI reveals reasoning features", "wired", "press", now)]).Select(i => i.Id));
+    }
+
     [Fact]
     public void ReadLimitKeeps2000Newest()
     {
@@ -204,7 +218,7 @@ public class MagazineTests : IDisposable
         cmd.CommandText = "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name";
         var names = new List<string>();
         using (var r = cmd.ExecuteReader()) while (r.Read()) names.Add(r.GetString(0));
-        Assert.Equal(["clusters", "extract_stats", "image_scores", "issues", "items", "scraps", "teasers"], names); // 맥과 같은 표(유료 기록·사진 점수·맛보기 기사 포함)
+        Assert.Equal(["archive", "clusters", "extract_stats", "image_scores", "issues", "items", "scraps", "teasers"], names); // 맥과 같은 표(유료 기록·사진 점수·맛보기 기사·지난 기사 보관 포함)
         cmd.CommandText = "PRAGMA user_version";
         Assert.Equal(1L, cmd.ExecuteScalar());
     }

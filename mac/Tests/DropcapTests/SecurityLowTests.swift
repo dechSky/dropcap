@@ -6,9 +6,9 @@ import UniformTypeIdentifiers
 import WebKit
 @testable import Dropcap
 
-// 보안 점검(2026-10-14) 낮음 등급 M7(판정 함수)·M8·M10·M11 (M9 는 배포 빌드 확인: scripts/check-release-hooks.sh)
+// 보안 점검 낮음 등급: 프록시 판정 함수·내부망 요청 막기·단축어 저장 주소·사진 압축 폭탄 (배포 빌드에 시험 장치가 없는지는 scripts/check-release-hooks.sh)
 @Suite struct SecurityLowTests {
-    // M7(받아들인 위험): 시스템 프록시를 거친 연결은 출처 밖 도메인이라도 연결 전 이름 확인으로 받는다.
+    // 받아들인 위험: 시스템 프록시를 거친 연결은 출처 밖 도메인이라도 연결 전 이름 확인으로 받는다.
     // 설정된 프록시가 없는데 프록시 연결이면 막는다(예전 동작 그대로).
     @Test func proxiedHopJudgedByNameCheckOnly() {
         let proxied = RequestGuard.Hop(proxied: true, remote: "10.0.0.8")
@@ -23,7 +23,7 @@ import WebKit
         #expect(!RequestGuard.judge([], systemProxy: true).safe) // 확인한 연결이 없으면 막음
     }
 
-    // M8: 느린 길(자바스크립트 켜짐)에서 페이지 스크립트가 내부망으로 요청하지 못하게 content rule 로도 막는다
+    // 느린 길(자바스크립트 켜짐)에서 페이지 스크립트가 내부망으로 요청하지 못하게 content rule 로도 막는다
     @Test @MainActor func slowPathBlocksPrivateNetworks() {
         let filters = ArticleExtractor.privateNetworkFilters
         func blocked(_ s: String) -> Bool {
@@ -53,7 +53,7 @@ import WebKit
         try? await store.removeContentRuleList(forIdentifier: id)
     }
 
-    // M10: 단축어 저장도 아이디·암호가 든 주소를 받지 않는다(SaveLink.normalize 와 같게)
+    // 단축어 저장도 아이디·암호가 든 주소를 받지 않는다(SaveLink.normalize 와 같게)
     @Test func intentSaveRejectsCredentials() {
         #expect(IntentLogic.savableURL("https://user:pw@example.com/a") == nil)
         #expect(IntentLogic.savableURL("user@example.com/a") == nil)
@@ -61,7 +61,7 @@ import WebKit
         #expect(IntentLogic.savableURL("<https://example.com/b>")?.absoluteString == "https://example.com/b")
     }
 
-    // M11: 사진 압축 폭탄 — 받은 크기(8MB)는 작아도 풀면 수백 메가픽셀인 사진은 풀기 전에 거른다
+    // 사진 압축 폭탄 — 받은 크기(8MB)는 작아도 풀면 수백 메가픽셀인 사진은 풀기 전에 거른다
     @Test func imageBombRejectedBeforeDecode() throws {
         let small = try png(width: 64, height: 48)
         #expect(ImageLoader.decode(small) != nil)

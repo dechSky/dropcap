@@ -42,7 +42,7 @@ import Testing
         // 칸이 없는 예전 기록 · 3단계 첫 판(9a3a87b)이 글을 그대로 적은 기록 · null
         let base = #""id":"a","title":"t","link":"https://example.com","summary":"","sourceId":"s","sourceName":"S","tier":"intl""#
         #expect(try JSONDecoder().decode(NewsItem.self, from: Data("{\(base)}".utf8)).feedBody == nil)
-        // 백업·상태 파일 같은 기본 디코더는 글이 있어도 버리고(보안 점검 2 M13), 피드 기록 DB 디코더만 받는다
+        // 백업·상태 파일 같은 기본 디코더는 글이 있어도 버리고, 피드 기록 DB 디코더만 받는다
         #expect(try JSONDecoder().decode(NewsItem.self, from: Data("{\(base),\"feedBody\":\"<p>x</p>\"}".utf8)).feedBody == nil)
         #expect(try Database.decoder.decode(NewsItem.self, from: Data("{\(base),\"feedBody\":\"<p>x</p>\"}".utf8)).feedBody == "<p>x</p>")
         #expect(try JSONDecoder().decode(NewsItem.self, from: Data("{\(base),\"feedBody\":null}".utf8)).feedBody == nil)

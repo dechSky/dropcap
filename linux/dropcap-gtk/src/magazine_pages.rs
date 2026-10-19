@@ -5,6 +5,7 @@ use crate::magazine_card::{has_photo, open_card, region_columns, stagger, StoryC
 use crate::magazine_issue::balanced_columns;
 use crate::widgets::{self, label, lines, RemoteImage};
 use dropcap_core::app_model::UiEvent;
+use dropcap_core::category::NewsCategory;
 use dropcap_core::database::Cluster;
 use dropcap_core::models::{relative_time, resources, NewsItem};
 use dropcap_core::scrapbook::{Scrap, DEFAULT_COLLECTION};
@@ -81,10 +82,9 @@ pub fn stories(on_story: Rc<dyn Fn(String)>) -> (gtk::Widget, gtk::ScrolledWindo
     bg(
         async move {
             let filter = core.source_filter(); // 지금 보이는 출처로만(S-13)
-            // 스토리 목록 전체를 문장 두 번으로, 카드에는 이때 읽은 보도를 넘긴다(스토리마다 DB 를 다시 묻지 않게 — S5)
+            // 스토리 목록 전체를 문장 두 번으로, 카드에는 이때 읽은 보도를 넘긴다(스토리마다 DB 를 다시 묻지 않게)
             let (live, past) = dropcap_core::magazine::story_cards(&core.db, Utc::now(), &filter);
-            let pairs = |cs: Vec<dropcap_core::magazine::StoryCard>| -> Vec<(Cluster, Vec<NewsItem>)> { cs.into_iter().map(|c| (c.cluster, c.items)).collect() };
-            (pairs(live), pairs(past))
+            (live, past)
         },
         move |(live, past)| {
             if live.is_empty() && past.is_empty() {
@@ -103,8 +103,8 @@ pub fn stories(on_story: Rc<dyn Fn(String)>) -> (gtk::Widget, gtk::ScrolledWindo
                 h.append(&label(title, 15.0, 700, &[]));
                 h.append(&label(sub, 12.0, 400, &["dc-tertiary"]));
                 list.append(&h);
-                for (i, (c, items)) in group.iter().enumerate() {
-                    let card = story_list_card(c, items, group.as_ptr() == live.as_ptr() && i == 0, on_story.clone());
+                for (i, sc) in group.iter().enumerate() {
+                    let card = story_list_card(&sc.cluster, &sc.items, sc.topic.as_ref(), group.as_ptr() == live.as_ptr() && i == 0, on_story.clone());
                     stagger(&card, n);
                     n += 1;
                     list.append(&card);
@@ -126,7 +126,7 @@ fn unique_sources(items: &[NewsItem]) -> Vec<NewsItem> {
 }
 
 // 스토리 카드: 대표 사진 · 분야 · 다룬 출처들 · 시작/최근 · 새 보도 · 팔로우 표시
-fn story_list_card(c: &Cluster, items: &[NewsItem], big: bool, on_story: Rc<dyn Fn(String)>) -> gtk::Widget {
+fn story_list_card(c: &Cluster, items: &[NewsItem], topic: Option<&(String, Option<NewsCategory>)>, big: bool, on_story: Rc<dyn Fn(String)>) -> gtk::Widget {
     let core = ui().core.clone();
     let b = gtk::Button::new();
     b.add_css_class("flat");
@@ -148,9 +148,9 @@ fn story_list_card(c: &Cluster, items: &[NewsItem], big: bool, on_story: Rc<dyn 
     let v = gtk::Box::new(gtk::Orientation::Vertical, 8);
     v.set_hexpand(true);
     let meta = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    // 분야는 묶인 보도들의 다수결(대표 기사 하나의 AI 하위 분류를 그대로 쓰면 IT 소식이 'AI·모델·제품'이 됐다, M-26)
-    if let Some(topic) = dropcap_core::magazine::story_topic(items, |i| i.section()) {
-        let (name, icon, color) = dropcap_core::magazine::story_topic_label(&topic, crate::theme::is_dark());
+    // 분야는 묶인 보도들의 다수결(대표 기사 하나의 AI 하위 분류를 그대로 쓰면 IT 소식이 'AI·모델·제품'이 됐다, M-26) — 목록을 만들 때 화면 줄기 밖에서
+    if let Some(topic) = topic {
+        let (name, icon, color) = dropcap_core::magazine::story_topic_label(topic, crate::theme::is_dark());
         let t = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         t.append(&widgets::icon(icon, 11));
         t.append(&label(&name, 11.5, 600, &[]));
@@ -568,13 +568,23 @@ thread_local! {
     pub static PENDING_QUERY: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
 
+pub const OLDER_PAGE: i64 = 200; // 보관 표에서 한 번에 꺼내는 오래된 기사 수
+
 pub fn search() -> (gtk::Widget, gtk::ScrolledWindow) {
     let (v, scroll) = wide_box();
     v.append(&big_title("검색"));
+    let bar = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     let entry = gtk::SearchEntry::new();
     entry.set_placeholder_text(Some("모든 기록에서 제목·출처·요약 검색"));
     entry.set_search_delay(250);
-    v.append(&entry);
+    entry.set_hexpand(true);
+    bar.append(&entry);
+    // 오래된 기사 포함: 보관함에 옮겨 둔 지난 기사(제목·출처)에서도 찾는다(맥 magSearchArchive — 기본 켬)
+    let include = gtk::CheckButton::with_label("오래된 기사 포함");
+    include.set_active(ui().prefs.borrow().mag_search_archive);
+    include.set_tooltip_text(Some("보관함에 옮겨 둔 지난 기사(제목·출처)에서도 찾습니다"));
+    bar.append(&include);
+    v.append(&bar);
     let count = label("", 13.0, 400, &["dc-secondary"]);
     v.append(&count);
     // 빈 검색 화면: 지켜볼 낱말·최근 검색어를 눌러 바로 찾기, 무엇을 찾는지 안내(맥 SearchView.emptyState)
@@ -583,42 +593,75 @@ pub fn search() -> (gtk::Widget, gtk::ScrolledWindow) {
     v.append(&empty);
     let results = gtk::Box::new(gtk::Orientation::Vertical, 0);
     v.append(&results);
+    // 보관 표에서 찾은 오래된 기사(최신순 200건씩): 머리 · 줄 목록 · 더 보기
+    let older_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    older_box.set_margin_top(16);
+    v.append(&older_box);
     let serial = Rc::new(Cell::new(0u64));
     let last_hit: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new())); // 결과가 있었던 마지막 낱말(떠날 때 최근 검색에)
-    let run = {
+    let current_older: Rc<RefCell<Option<Rc<OlderList>>>> = Rc::new(RefCell::new(None)); // 지금 낱말의 오래된 기사 목록
+    let run: Rc<dyn Fn(String)> = {
         let results = results.clone();
         let count = count.clone();
         let empty = empty.clone();
+        let older_box = older_box.clone();
         let last_hit = last_hit.clone();
-        move |q: String| {
+        let current_older = current_older.clone();
+        let entry = entry.clone();
+        Rc::new(move |q: String| {
             let n = serial.get() + 1;
             serial.set(n);
             empty.set_visible(q.is_empty());
             if q.chars().count() < 2 {
                 widgets::clear_box(&results);
+                widgets::clear_box(&older_box);
+                *current_older.borrow_mut() = None;
                 count.set_text("");
                 return;
             }
             let core = ui().core.clone();
+            let with_older = ui().prefs.borrow().mag_search_archive;
             let results = results.clone();
             let count = count.clone();
+            let older_box = older_box.clone();
             let serial = serial.clone();
             let last_hit = last_hit.clone();
+            let current_older = current_older.clone();
+            let entry = entry.clone();
             let q2 = q.clone();
-            bg(async move { core.search(&q2, 200) }, move |found| {
-                if serial.get() != n {
-                    return; // 그새 다른 글자를 입력함
-                }
-                if !found.is_empty() {
-                    *last_hit.borrow_mut() = q.clone();
-                }
-                widgets::clear_box(&results);
-                count.set_text(&format!("{}건", found.len()));
-                results.append(&card_grid(&found, 900, |_, c| c));
-            });
-        }
+            bg(
+                async move {
+                    let r = core.search(&q2, 200);
+                    let o = if with_older { core.archive_reader.search(&q2, OLDER_PAGE, 0, &core.archive_visibility()) } else { vec![] };
+                    (r, o)
+                },
+                move |(found, older)| {
+                    if serial.get() != n || entry.text() != q.as_str() {
+                        return; // 그새 다른 글자를 입력함(찾기 시작한 뒤 낱말이 바뀜)
+                    }
+                    if !found.is_empty() || !older.is_empty() {
+                        *last_hit.borrow_mut() = q.clone();
+                    }
+                    widgets::clear_box(&results);
+                    results.append(&card_grid(&found, 900, |_, c| c));
+                    let fetched = older.len() as i64;
+                    // 최근 결과에 이미 있는 링크는 빼고
+                    let links: std::collections::HashSet<&str> = found.iter().map(|i| i.link.as_str()).collect();
+                    let older: Vec<_> = older.into_iter().filter(|a| !links.contains(a.link.as_str())).collect();
+                    *current_older.borrow_mut() = Some(OlderList::fill(&older_box, &count, &entry, &q, found.len(), older, fetched, n, &serial));
+                },
+            );
+        })
     };
     fill_search_empty(&empty, &entry);
+    {
+        let (r, e) = (run.clone(), entry.clone());
+        include.connect_toggled(move |c| {
+            let on = c.is_active();
+            ui().update_prefs(|p| p.mag_search_archive = on);
+            r(e.text().to_string());
+        });
+    }
     let r1 = run.clone();
     entry.connect_search_changed(move |e| r1(e.text().to_string()));
     entry.connect_activate(move |e| {
@@ -639,6 +682,99 @@ pub fn search() -> (gtk::Widget, gtk::ScrolledWindow) {
         e2.grab_focus();
     });
     (scroll.clone().upcast(), scroll)
+}
+
+// 검색 지면의 '오래된 기사' 목록: 보관 표에서 최신순 200건씩, '200건 더 보기'로 이어서
+struct OlderList {
+    q: String,
+    recent: usize,
+    items: RefCell<Vec<dropcap_core::archive::ArchivedItem>>,
+    offset: Cell<i64>, // 보관 표에서 지금까지 꺼낸 수(거르기 전 — 다음 쪽의 시작)
+    more: Cell<bool>,
+    list: gtk::Box,
+    more_button: gtk::Button,
+    count: gtk::Label,
+    entry: gtk::SearchEntry,
+    serial: Rc<Cell<u64>>,
+    n: u64,
+}
+
+impl OlderList {
+    #[allow(clippy::too_many_arguments)]
+    fn fill(
+        holder: &gtk::Box,
+        count: &gtk::Label,
+        entry: &gtk::SearchEntry,
+        q: &str,
+        recent: usize,
+        older: Vec<dropcap_core::archive::ArchivedItem>,
+        fetched: i64,
+        n: u64,
+        serial: &Rc<Cell<u64>>,
+    ) -> Rc<OlderList> {
+        widgets::clear_box(holder);
+        let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let more_button = gtk::Button::with_label(&format!("{OLDER_PAGE}건 더 보기"));
+        more_button.add_css_class("flat");
+        more_button.set_halign(gtk::Align::Start);
+        let me = Rc::new(OlderList {
+            q: q.to_string(),
+            recent,
+            items: RefCell::new(vec![]),
+            offset: Cell::new(0),
+            more: Cell::new(false),
+            list: list.clone(),
+            more_button: more_button.clone(),
+            count: count.clone(),
+            entry: entry.clone(),
+            serial: serial.clone(),
+            n,
+        });
+        holder.append(&label("오래된 기사", 20.0, 700, &["dc-title"]));
+        holder.append(&list);
+        holder.append(&more_button);
+        me.add(older, fetched);
+        holder.set_visible(!me.items.borrow().is_empty());
+        let weak = Rc::downgrade(&me);
+        more_button.connect_clicked(move |b| {
+            let Some(me) = weak.upgrade() else { return };
+            b.set_sensitive(false);
+            let core = ui().core.clone();
+            let (q, off) = (me.q.clone(), me.offset.get());
+            let me2 = me.clone();
+            bg(async move { core.archive_reader.search(&q, OLDER_PAGE, off, &core.archive_visibility()) }, move |o| {
+                if me2.serial.get() != me2.n || me2.entry.text() != me2.q.as_str() {
+                    return; // 그새 다른 낱말로 찾음 — 이어 붙이지 않는다
+                }
+                let fetched = o.len() as i64;
+                me2.add(o, fetched);
+                me2.more_button.set_sensitive(true);
+            });
+        });
+        me
+    }
+
+    fn add(&self, o: Vec<dropcap_core::archive::ArchivedItem>, fetched: i64) {
+        self.offset.set(self.offset.get() + fetched);
+        self.more.set(fetched >= OLDER_PAGE);
+        let have: std::collections::HashSet<String> = self.items.borrow().iter().map(|a| a.id()).collect();
+        for a in o.into_iter().filter(|a| !have.contains(&a.id())) {
+            if !self.items.borrow().is_empty() {
+                let s = gtk::Separator::new(gtk::Orientation::Horizontal);
+                s.set_opacity(0.5);
+                self.list.append(&s);
+            }
+            self.list.append(&crate::magazine_archive::archive_row(&a, true));
+            self.items.borrow_mut().push(a);
+        }
+        self.more_button.set_visible(self.more.get());
+        let n = self.items.borrow().len();
+        self.count.set_text(&if n == 0 {
+            format!("{}건", self.recent)
+        } else {
+            format!("최근 {}건 · 오래된 기사 {n}{}", self.recent, if self.more.get() { "건 넘음" } else { "건" })
+        });
+    }
 }
 
 fn remember_search(q: &str) {
@@ -688,7 +824,7 @@ fn fill_search_empty(empty: &gtk::Box, entry: &gtk::SearchEntry) {
         empty.append(&clear);
     }
     let help = gtk::Box::new(gtk::Orientation::Vertical, 4);
-    help.append(&label("이 컴퓨터에 모인 모든 기사(지난 호 포함)의 제목·출처·요약에서 찾습니다.", 13.0, 400, &["dc-secondary"]));
+    help.append(&label("이 컴퓨터에 모인 최근 기사(지난 호 포함)의 제목·출처·요약에서 찾고, '오래된 기사 포함'을 켜 두면 보관함의 지난 기사 제목·출처에서도 찾습니다.", 13.0, 400, &["dc-secondary"]));
     help.append(&label("회사·인물 이름이나 출처 이름(예: 연합뉴스)으로도 찾을 수 있습니다. Ctrl+F 로 언제든 이 화면을 엽니다.", 13.0, 400, &["dc-secondary"]));
     if watch.is_empty() {
         help.append(&label("설정 › 거르기의 '지켜볼 낱말'을 넣으면 여기서 바로 누를 수 있습니다.", 13.0, 400, &["dc-secondary"]));

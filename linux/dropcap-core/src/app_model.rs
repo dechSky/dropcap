@@ -61,10 +61,11 @@ pub struct AppModel {
     subscribing: Mutex<std::collections::HashSet<String>>,
     grown: Mutex<Vec<(crate::database::Cluster, NewsItem)>>, // 이번에 팔로우한 스토리에 붙은 새 보도(알림 뒤 비움)
     enrich_tried: Mutex<std::collections::HashSet<String>>,   // 이번 실행에서 이미 사진을 찾아본 기사
-    retry: Mutex<Vec<NewsItem>>, // DB 에 넣지 못한 기사(잠김·디스크 가득) — 다음 받아 넣기 때 먼저(S7)
+    retry: Mutex<Vec<NewsItem>>, // DB 에 넣지 못한 기사(잠김·디스크 가득) — 다음 받아 넣기 때 먼저
     digest_cache: Mutex<std::collections::HashMap<String, (i64, Vec<String>)>>,
     pending_fill: Mutex<std::collections::HashSet<String>>, // 켰지만 아직 매거진을 채우지 못한 출처(다음 확인에서 7일치를 넣음)
     pub paywall: Arc<crate::paywall::PaywallBook>, // 유료 기사 표시·무료 보도(G-14·G-15)
+    pub archive_reader: Arc<crate::archive::ArchiveReader>, // 보관함·오래된 기사 검색 읽기
     weak: Mutex<std::sync::Weak<AppModel>>,
 }
 
@@ -145,7 +146,8 @@ fn tier_rank(t: &str) -> i32 {
 
 // 여러 곳이 같은 소식을 다루면 하나만 알리고 "외 N곳"으로 묶는다. 공식 발표 > 언론 > 국내 순으로 대표.
 // 하루 반(36시간) 안에 이미 알린 소식과 같으면 알리지 않고 그 소식에 출처만 더한다.
-pub fn group_same_story(items: Vec<NewsItem>, recent: &mut [NewsItem], now: DateTime<Utc>) -> Vec<NewsItem> {
+// 숨긴 글(hidden — 숨긴 출처·'알리지 않음' 낱말, 지우지 않고 거르기만 함)은 견주지 않는다: 보이는 새 글이 그 글에 묻혀 알리지 않게 되던 것
+pub fn group_same_story(items: Vec<NewsItem>, recent: &mut [NewsItem], hidden: &std::collections::HashSet<String>, now: DateTime<Utc>) -> Vec<NewsItem> {
     let mut sorted = items;
     sorted.sort_by(|a, b| tier_rank(&a.tier).cmp(&tier_rank(&b.tier)).then(b.date_or_past().cmp(&a.date_or_past())));
     let mut kept: Vec<NewsItem> = vec![];
@@ -155,7 +157,7 @@ pub fn group_same_story(items: Vec<NewsItem>, recent: &mut [NewsItem], now: Date
             kept[i].related.get_or_insert_with(Vec::new).push(it.source_name.clone());
             continue;
         }
-        if let Some(j) = recent.iter().position(|r| r.date_or_past() > cutoff && story_match::same(&it, r)) {
+        if let Some(j) = recent.iter().position(|r| r.date_or_past() > cutoff && !hidden.contains(&r.key()) && story_match::same(&it, r)) {
             let r = &mut recent[j];
             if !r.related.as_ref().map(|x| x.contains(&it.source_name)).unwrap_or(false) && r.source_name != it.source_name {
                 r.related.get_or_insert_with(Vec::new).push(it.source_name.clone());
@@ -317,8 +319,9 @@ impl AppModel {
         let db = Arc::new(Database::open(&store.dir));
         let articles = ArticleService::new(store.dir.clone());
         let archive = magazine::archive_order(db.issues(120));
-        let retry = magazine::load_retry(&store.dir.join(magazine::RETRY_FILE)); // 지난 실행에서 못 넣은 기사(S7)
+        let retry = magazine::load_retry(&store.dir.join(magazine::RETRY_FILE)); // 지난 실행에서 못 넣은 기사
         let paywall = Arc::new(crate::paywall::PaywallBook::new(db.clone()));
+        let archive_reader = Arc::new(crate::archive::ArchiveReader::new(db.clone()));
         let me = Arc::new(AppModel {
             store,
             state: Mutex::new(state),
@@ -339,6 +342,7 @@ impl AppModel {
             digest_cache: Mutex::new(Default::default()),
             pending_fill: Mutex::new(Default::default()),
             paywall,
+            archive_reader,
             weak: Mutex::new(std::sync::Weak::new()),
         });
         *me.weak.lock().unwrap() = Arc::downgrade(&me);
@@ -604,9 +608,12 @@ impl AppModel {
         // 알림을 끈 채널(논문·커뮤니티 등)은 매거진에만 싣고, 목록·알림에는 넣지 않는다
         let candidates: Vec<NewsItem> = found.into_iter().filter(|it| self.notifies(&it.source_id)).collect();
         let focus = crate::focus_guard::MONITOR.reason(&self.settings()); // 상태 잠금 밖에서(프로세스 목록 읽기)
+        let filter = self.source_filter(); // 상태 잠금 밖에서(안에서 상태를 다시 잠금)
         let (listed, quiet, sound, style) = {
             let mut st = self.state.lock().unwrap();
-            let listed = group_same_story(candidates.clone(), &mut st.recent, now);
+            let shown: std::collections::HashSet<String> = visible(&st.recent, &filter, &st.settings.mute_keywords).iter().map(|i| i.key()).collect();
+            let hidden = st.recent.iter().map(|i| i.key()).filter(|k| !shown.contains(k)).collect();
+            let listed = group_same_story(candidates.clone(), &mut st.recent, &hidden, now);
             let mut recent = listed.clone();
             recent.extend(st.recent.drain(..));
             recent.truncate(RECENT_LIMIT);
@@ -904,6 +911,14 @@ impl AppModel {
         magazine::story_items(&self.db, id, &self.source_filter())
     }
 
+    // 보관함·오래된 기사 검색에 보일 출처(검색과 같은 거르기 + 출처 id 가 없는 예전 줄을 거를 숨긴 출처 이름)
+    pub fn archive_visibility(&self) -> crate::archive::Visibility {
+        let sources = self.all_sources();
+        let f = self.source_filter();
+        let names = sources.iter().filter(|s| f.hidden.contains(&s.id)).map(|s| s.name.clone()).collect();
+        crate::archive::Visibility::new(&f, names)
+    }
+
     // 검색(보이는 출처만)
     pub fn search(&self, q: &str, limit: i64) -> Vec<NewsItem> {
         self.source_filter().visible(&self.db.search(q, limit))
@@ -955,6 +970,7 @@ impl AppModel {
             ),
             chosen: st.sections_chosen.clone(),
             limits: st.settings.limits(),
+            archive_years: st.settings.archive_years,
         }
     }
 
@@ -1009,7 +1025,7 @@ impl AppModel {
         Interest { category: s.interest_category.clone(), source: s.interest_source.clone() }
     }
 
-    // 새 글을 매거진 기록에 넣는다. 앞서 DB 잠김·디스크 가득으로 못 넣은 글(retry)을 먼저 — 새 글이 없어도(S7).
+    // 새 글을 매거진 기록에 넣는다. 앞서 DB 잠김·디스크 가득으로 못 넣은 글(retry)을 먼저 — 새 글이 없어도.
     // 본 글 기억(seen)은 확인에서 먼저 남기므로, 못 넣은 글은 retry 에 두어 잃지 않는다(자료 폴더 ingest-retry.json 에도 — 다시 켜도 남게)
     pub fn ingest(self: &Arc<Self>, items: &[NewsItem]) {
         let grown = {
@@ -1028,7 +1044,8 @@ impl AppModel {
             grown
         };
         self.grown.lock().unwrap().extend(grown);
-        self.db.prune(crate::database::KEEP_ITEMS);
+        let years = self.state.lock().unwrap().settings.archive_years;
+        self.db.prune(crate::database::KEEP_ITEMS, years, Utc::now(), &crate::sections::primary);
         self.trim_story_seen();
         self.send(UiEvent::Magazine);
         self.enrich_images();

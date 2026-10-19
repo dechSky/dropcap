@@ -55,8 +55,20 @@ select:focus-visible, .btn:focus-visible, .switch:focus-visible, .field:focus { 
 .add { margin: 0; }
 
 /* 출처 한 줄(sourceRow·catalogRow) */
-.src { gap: var(--sp-m); }
-.src .mono { --s: 22px; }
+/* 구독 목록 열 — 모든 줄이 같은 열(맥 DesignSystem.swift RowColumn 과 같은 값)
+   [펼침 자리] [아이콘] [이름(고정 폭, 말줄임)] [칩들] … [건수·모두 켜기·구독] [종] [스위치]. 묶음 안 줄은 한 단계(아이콘+간격) 들이고 이름 열을 그만큼 줄인다 */
+#sourceLists { --col-disc: 16px; --col-icon: 22px; --col-gap: var(--sp-s); --col-indent: calc(var(--col-icon) + var(--col-gap)); --col-name: 136px;
+  --col-bell: 24px; --col-toggle: 36px; --col-controls: calc(var(--col-bell) + var(--col-gap) + var(--col-toggle)); }
+.src { --indent: 0px; }
+.src.dir-in { --indent: var(--col-indent); }
+.src { gap: var(--col-gap); }
+.src .lead { flex: none; width: calc(var(--col-disc) + var(--indent)); }
+.src .mono, .dir-head .mono { --s: var(--col-icon); flex: none; }
+.dir-head .icon-slot { flex: none; width: var(--col-icon); }
+.src .name b { flex: none; width: calc(var(--col-name) - var(--indent)); }
+.src .ib.bell { width: var(--col-bell); }
+.src .toggle { flex: none; width: var(--col-toggle); display: inline-flex; justify-content: flex-end; }
+.src .controls, .dir-head .controls { flex: none; width: var(--col-controls); display: inline-flex; justify-content: flex-end; }
 .src .body { flex: 1; min-width: 0; }
 .src .name { display: flex; align-items: center; gap: var(--sp-s); min-width: 0; }
 .src .name b { font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -116,12 +128,13 @@ select:focus-visible, .btn:focus-visible, .switch:focus-visible, .field:focus { 
 .dir-search #srcClear[hidden], #srcEmpty[hidden] { display: none; }
 .dir-sum .ib.text { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dir-sum .note { flex: none; }
-.dir-head { gap: var(--sp-s); cursor: default; }
+.dir-head { gap: var(--col-gap); cursor: default; }
+.dir-head .ib.disc { width: var(--col-disc); }
 .dir-head:hover { background: var(--fill); }
 .dir-head .lb { display: flex; align-items: baseline; gap: var(--sp-s); min-width: 0; }
-.dir-head .lb b { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dir-head .mono { --s: 22px; }
+.dir-head .lb b { flex: none; width: var(--col-name); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dir-head .ib .ic { transition: transform var(--dur-standard) var(--ease-enter); }
 .dir-head.open .ib.disc .ic { transform: rotate(90deg); }
 .dir-sub { font-size: var(--fs-caption); color: var(--text-2); }
-.dir-in { padding-left: var(--sp-xl); }
+.dir-note { padding-left: calc(var(--sp-m) + var(--col-disc) + var(--col-gap) + var(--col-indent)); } /* 추천 채널 소제목: 하위 줄 아이콘 자리에서 */
+.dir-head .controls .ib.text { padding-right: 0; }

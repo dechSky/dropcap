@@ -186,7 +186,7 @@ public sealed class PaywallBook
     // 다시 맛보기로 판정되면 시각만 새로 써서 30일·2,000건 정리에서 계속 맛보기인 기사가 빠지지 않게 한다.
     // 알림 미리 받기(Task.Run)와 사용자가 연 기사가 함께 부를 수 있어 고치기를 잠근다 — 잠그지 않으면 한쪽 고침이 메모리에서 사라진다
     private readonly object teaserGate = new();
-    internal Action? BeforeSwap;   // 시험 전용: 고친 사본을 바꿔 넣기 직전(경쟁 창을 넓혀 B2 를 재현)
+    internal Action? BeforeSwap;   // 시험 전용: 고친 사본을 바꿔 넣기 직전(경쟁 창을 넓혀 동시에 고친 것이 사라지는 것을 재현)
     public void RecordTeaser(NewsItem item, bool teaser)
     {
         if (item.Id == AppModel.PreviewId || item.Link.Length == 0) return;

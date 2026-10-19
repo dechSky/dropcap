@@ -4,9 +4,9 @@ import WebKit
 import Testing
 @testable import Dropcap
 
-// 보안 점검(2026-10-15) 낮음 X2 · M15
+// 보안 점검 낮음 — 여러 덩어리 모으기 상자 · 피드 본문은 같은 사이트 글에만
 @Suite(.serialized) struct SecurityLow3Tests {
-    // X2: 여러 덩어리 모으기의 상자를 살아 있는 문서(document)에 만들면 붙인 <img> 가 받기·onerror 를 돌릴 수 있다.
+    // 여러 덩어리 모으기의 상자를 살아 있는 문서(document)에 만들면 붙인 <img> 가 받기·onerror 를 돌릴 수 있다.
     // 추출 스크립트는 사본(doc·fresh)·DOMParser 문서에서만 노드를 만든다
     @Test @MainActor func extractScriptBuildsOnlyInInertDocuments() {
         let s = ArticleExtractor.script
@@ -16,7 +16,7 @@ import Testing
         #expect(s.contains("fresh.createElement('div')"))
     }
 
-    // M15: 피드 본문은 글 링크가 출처 피드와 같은 사이트일 때만
+    // 피드 본문은 글 링크가 출처 피드와 같은 사이트일 때만
     @Test func sameSiteRule() {
         #expect(FeedService.sameSite("https://arstechnica.com/ai/2026/10/x/", "https://feeds.arstechnica.com/arstechnica/index"))
         #expect(FeedService.sameSite("https://www.politico.com/news/a", "https://rss.politico.com/politics-news.xml"))

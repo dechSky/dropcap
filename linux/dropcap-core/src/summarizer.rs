@@ -47,7 +47,7 @@ pub fn local_text_model(name: &str) -> bool {
 }
 
 // /api/tags 목록에서 이 컴퓨터에서 도는 글 모델 고르기. 원격(클라우드) 모델은 이름에 cloud 가 없어도
-// 목록에 remote_host·remote_model 이 붙어 오므로 그것으로도 거른다(L5)
+// 목록에 remote_host·remote_model 이 붙어 오므로 그것으로도 거른다
 pub fn pick_local(tags: &serde_json::Value, want: Option<&str>) -> Option<String> {
     let names: Vec<String> = tags["models"]
         .as_array()?

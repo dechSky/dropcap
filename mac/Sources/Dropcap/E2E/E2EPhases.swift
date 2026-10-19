@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-// 시험 장치(M9): 디버그 빌드(swift build·swift test·e2e·clicksweep)에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
+// 시험 장치: 디버그 빌드(swift build·swift test·e2e·clicksweep)에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
 #if DEBUG
 
 // 시나리오 단계. 기대값은 분야별 알림 정책(NotifyPolicy)과 지시서의 단계 설명을 따른다.

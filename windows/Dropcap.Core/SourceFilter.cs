@@ -7,6 +7,8 @@ public sealed record SourceFilter
 {
     public IReadOnlySet<string> Hidden { get; init; } = new HashSet<string>();
     public IReadOnlySet<string>? Active { get; init; }   // null 이면 켜짐 여부를 따지지 않음(시험·예전 호 옮기기)
+    // 숨긴 출처의 이름(출처 id 없이 이름만 남은 예전 보관 기사를 거를 때)
+    public IReadOnlySet<string> HiddenNames { get; init; } = new HashSet<string>();
 
     public bool Shows(string sourceId) => !Hidden.Contains(sourceId) && (Active?.Contains(sourceId) ?? true);
     public List<NewsItem> Visible(IEnumerable<NewsItem> items) => items.Where(i => Shows(i.SourceId)).ToList();
@@ -14,8 +16,15 @@ public sealed record SourceFilter
     // 앱 상태와 출처 목록으로 만든다(순수 함수 — 시험에서 그대로 씀)
     public static SourceFilter Make(AppState state, IEnumerable<Source> sources)
     {
+        var list = sources.ToList();
         var hidden = state.HiddenSources.ToHashSet();
-        var on = sources.Select(s => s.Id).Where(id => state.Enabled.GetValueOrDefault(id) && !hidden.Contains(id)).ToHashSet();
-        return new SourceFilter { Hidden = hidden, Active = on };
+        var on = list.Select(s => s.Id).Where(id => state.Enabled.GetValueOrDefault(id) && !hidden.Contains(id)).ToHashSet();
+        return new SourceFilter { Hidden = hidden, Active = on, HiddenNames = NamesOf(hidden, list) };
+    }
+
+    public static HashSet<string> NamesOf(IEnumerable<string> ids, IEnumerable<Source> sources)
+    {
+        var set = ids.ToHashSet();
+        return sources.Where(s => set.Contains(s.Id)).Select(s => s.Name).ToHashSet();
     }
 }

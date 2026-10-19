@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-// 시험 장치(M9): 디버그 빌드(swift build·swift test·e2e·clicksweep)에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
+// 시험 장치: 디버그 빌드(swift build·swift test·e2e·clicksweep)에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
 #if DEBUG
 
 // 화면 단추 하나하나 실제 클릭 시험(DROPCAP_TEST_E2E_PHASE=clicks, mac/scripts/clicksweep.sh).

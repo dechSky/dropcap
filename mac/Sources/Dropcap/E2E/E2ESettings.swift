@@ -2,7 +2,7 @@ import AppKit
 import DropcapShared
 import SwiftUI
 
-// 시험 장치(M9): 디버그 빌드(swift build·swift test·e2e·clicksweep)에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
+// 시험 장치: 디버그 빌드(swift build·swift test·e2e·clicksweep)에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
 #if DEBUG
 
 // 시나리오 13~22: 설정과의 상호작용. 단계마다 상단바 목록·안 읽음 수·매거진 오늘 호·스토리·검색·알림 대기열·위젯 스냅숏 JSON 을 같이 본다.

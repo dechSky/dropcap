@@ -147,13 +147,27 @@ pub fn score(s: &StoredItem, cluster_size: i64, now: DateTime<Utc>, interest: &I
 }
 
 // 호를 엮을 때의 편집 조건: 관심사(점수), 숨긴 출처, 고른 분야, 문턱
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Editorial {
     pub interest: Interest,
     pub hidden: HashSet<String>,
     pub filter: crate::source_filter::SourceFilter, // 꺼진·지운·숨긴 출처를 뺀다(S-13)
     pub chosen: Option<Vec<String>>,
     pub limits: PolicyLimits,
+    pub archive_years: i64, // 지난 기사 보관 기간(0 이면 끝없이) — 호를 엮고 정리할 때
+}
+
+impl Default for Editorial {
+    fn default() -> Self {
+        Editorial {
+            interest: Default::default(),
+            hidden: Default::default(),
+            filter: Default::default(),
+            chosen: None,
+            limits: Default::default(),
+            archive_years: crate::archive::DEFAULT_YEARS,
+        }
+    }
 }
 
 pub fn make_issue(db: &Database, kind: IssueKind, from: DateTime<Utc>, to: DateTime<Utc>, id: &str, ed: &Editorial) -> Issue {
@@ -421,7 +435,7 @@ pub fn publish_due(db: &Database, interest: &Editorial, now: DateTime<Utc>) -> V
             db.save_issue(&again);
         }
     }
-    db.prune(crate::database::KEEP_ITEMS);
+    db.prune(crate::database::KEEP_ITEMS, interest.archive_years, now, &crate::sections::primary);
     archive_order(db.issues(120))
 }
 
@@ -474,7 +488,7 @@ pub fn ingest(db: &Database, items: &[NewsItem], followed: &[String]) -> Vec<(Cl
 // DB 에 넣지 못한 기사(디스크 가득·오래 잠김)를 끝없이 쌓지 않는 상한(맥 Editor.retryLimit)
 pub const RETRY_LIMIT: usize = 3000;
 
-// 못 넣은 기사를 앱을 껐다 켜도 남게 두는 파일(자료 폴더, 맥 Fix4 와 같음): NewsItem 배열 JSON, RETRY_LIMIT 건까지
+// 못 넣은 기사를 앱을 껐다 켜도 남게 두는 파일(자료 폴더, 맥과 같음): NewsItem 배열 JSON, RETRY_LIMIT 건까지
 pub const RETRY_FILE: &str = "ingest-retry.json";
 
 // 읽을 파일 크기 상한(RETRY_LIMIT 건이면 수 MB — 넘으면 앱이 쓴 파일이 아니다)
@@ -659,29 +673,33 @@ pub fn story_items(db: &Database, id: &str, filter: &crate::source_filter::Sourc
     filter.visible(&db.items_in_cluster(id).into_iter().map(|s| s.item).collect::<Vec<_>>())
 }
 
-// 스토리 카드 하나: 스토리와 보이는 보도들(카드가 DB 를 다시 묻지 않게 — 맥 Magazine.StoryCard)
+// 스토리 카드 하나: 스토리와 보이는 보도 견본(카드가 DB 를 다시 묻지 않게 — 출처마다 첫 보도 + 최근 것, 맥 Magazine.StoryCard)
 #[derive(Debug, Clone)]
 pub struct StoryCard {
     pub cluster: Cluster,
     pub items: Vec<NewsItem>,
+    pub topic: Option<(String, Option<NewsCategory>)>, // 보도들의 분야 다수결(만들 때 미리 — 카드를 그릴 때 화면 줄기에서 분야를 가리지 않게)
 }
 
 // 스토리: 최근 2주 동안 지금 보이는 출처로만 두 곳 이상이 다룬 것(출처를 끄면 그 스토리의 보도 수도 줄어 목록에서 빠질 수 있음).
-// 목록 전체를 문장 두 번(스토리 · 보도)으로 — 예전엔 스토리마다 따로 물어 기록이 쌓일수록 느려졌다
+// 목록 전체를 문장 세 번(스토리 · 출처별 수 · 보도 견본)으로 — 예전엔 스토리마다 따로 물어 기록이 쌓일수록 느려졌다.
+// 보도 수·출처 수는 DB 에서 세고, 분야 다수결은 견본으로(보도가 수천 건인 스토리에서 보도마다 분야를 가리던 것이 몇 초씩 걸렸다)
 pub fn story_list(db: &Database, now: DateTime<Utc>, filter: &crate::source_filter::SourceFilter) -> Vec<StoryCard> {
     let since = now - Duration::days(14);
+    let counts = db.story_source_counts(since);
     let mut members = db.story_members(since);
     db.recent_clusters(since)
         .into_iter()
         .filter(|c| c.size >= 2)
         .filter_map(|mut c| {
-            let items = filter.visible(&members.remove(&c.id).unwrap_or_default().into_iter().map(|s| s.item).collect::<Vec<_>>());
-            let outlets: HashSet<&str> = items.iter().map(|i| i.source_id.as_str()).collect();
-            if outlets.len() < 2 {
+            let shown: Vec<i64> = counts.get(&c.id).map(|m| m.iter().filter(|(s, _)| filter.shows(s)).map(|(_, n)| *n).collect()).unwrap_or_default();
+            if shown.len() < 2 {
                 return None;
             }
-            c.size = items.len() as i64;
-            Some(StoryCard { cluster: c, items })
+            let items = filter.visible(&members.remove(&c.id).unwrap_or_default().into_iter().map(|s| s.item).collect::<Vec<_>>());
+            c.size = shown.iter().sum();
+            let topic = story_topic(&items, crate::sections::primary);
+            Some(StoryCard { cluster: c, items, topic })
         })
         .collect()
 }

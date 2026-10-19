@@ -49,3 +49,11 @@
 - `ItemView.Watch`(지켜볼 낱말 눈 표시, ★ 와 겹치면 null). 아이콘 `eye`.
 - settings: `keywords`{must, mute, watch}, `exportBackup`·`importBackup`·`undoImport`(대화상자는 `IPlatform.SaveJsonFile`·`OpenJsonFile`), 보기 `general.backup`{intro, note, canUndo, message}.
 - magazine: 첫 지면·`go` 에 `search:<낱말>`(그 낱말로 검색 화면).
+
+## 보관함(지난 기사)에서 늘어난 것
+
+- magazine: 옆 목록 `archive` 지면(지난 호 묶음 아래). `archive`{period(day·week·month·year), anchor('yyyy-MM-dd'), section, source, limit} → 머리·◀ ▶ 가능·막대(월·연)·목록·거르기 메뉴·`dayIssue`, `archiveShift`{period, anchor, by}.
+- magazine 검색: `search` 에 `archive`(오래된 기사 포함 — 주면 기억), 답에 `archive`·`older`·`olderMore`·`olderNext`·`found`. `searchMore`{q, offset, recent, shown}.
+- 보관 기사 줄(`key` 가 `archive|<링크>`)은 `open`·`browser` 로 연다(관심사·읽음 기록에는 넣지 않음).
+- settings: 보기 `general.archiveYears`·`archiveChoices`·`archiveNote`, `set` 키 `archiveYears`(1·2·5·0).
+- 보관 기사는 숨긴·꺼진 출처를 목록·건수·거르기 메뉴·검색 모두에서 뺀다(앱이 거름).

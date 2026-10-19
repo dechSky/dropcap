@@ -53,6 +53,10 @@ public sealed class SettingsPage(AppModel model, IPlatform platform, Scrapbook? 
         ("Ctrl+,", "설정 열기 (매거진·읽기 창)"),
     ];
 
+    public const string ArchiveNote = "최근 기사 2만 건보다 오래된 기사는 날짜·제목·링크·출처만 남겨 매거진 '보관함'에 옮깁니다(1년에 약 110MB). 보관 기간이 지나면 가장 오래된 달부터 지웁니다.";
+    public const string ArchiveForeverNote = "끝없이 두면 해마다 약 120MB씩 늘고(500만 건에서 가장 오래된 것부터 지움) 검색도 조금씩 느려집니다.";
+    public static string ArchiveNoteFor(int years) => years == 0 ? ArchiveNote + " " + ArchiveForeverNote : ArchiveNote;
+
     // 쉼표·줄바꿈으로 나눠 앞뒤 빈칸을 지우고 빈 낱말은 버린다(맥 saveKeywords 와 같음)
     public static List<string> SplitKeywords(string text) =>
         text.Split([',', '\n'], StringSplitOptions.None).Select(w => w.Trim()).Where(w => w.Length > 0).ToList();
@@ -65,7 +69,7 @@ public sealed class SettingsPage(AppModel model, IPlatform platform, Scrapbook? 
     }
 
     // 기본 출처·구독 중인 채널 한 줄
-    // 번역 방식 고르기(W4 · 맥과 같은 값). 윈도우엔 기기 내 번역이 없어 '기기 내'는 맥에서 가져온 값일 때만 보인다(그때는 번역하지 않음)
+    // 번역 방식 고르기(맥과 같은 값). 윈도우엔 기기 내 번역이 없어 '기기 내'는 맥에서 가져온 값일 때만 보인다(그때는 번역하지 않음)
     public sealed record EngineOption(string Id, string Label);
     public static List<EngineOption> TranslateEngines(string current)
     {
@@ -286,7 +290,7 @@ public sealed class SettingsPage(AppModel model, IPlatform platform, Scrapbook? 
                 sound = st.Sound,
                 interval = st.IntervalMinutes,
                 intervals = StateSettings.Intervals.Select(m => new { value = m, label = $"{m}분" }).ToList(),
-                // P-02: 번역 엔진 고르기(W4). 윈도우에는 무료 기기 내 번역이 없어 자동 = Google 번역(T-05 ⊘)
+                // P-02: 번역 엔진 고르기. 윈도우에는 무료 기기 내 번역이 없어 자동 = Google 번역(T-05 ⊘)
                 translateEngine = st.TranslateEngine,
                 translateEngines = TranslateEngines(st.TranslateEngine),
                 translationNote = "번역을 켜 두면 Google 번역으로 본문 문단이 전송됩니다(외국어 기사 제목·같은 소식 묶기용 영어 번역 포함). "
@@ -313,6 +317,10 @@ public sealed class SettingsPage(AppModel model, IPlatform platform, Scrapbook? 
                     canUndo = Backup.CanUndo,
                     message = backupMessage,
                 },
+                // 지난 기사 보관 기간(맥 SettingsView 와 같은 선택지·문구)
+                archiveYears = st.ArchiveYears,
+                archiveChoices = Archive.Choices.Select(y => new { value = y, label = Archive.Label(y) }).ToList(),
+                archiveNote = ArchiveNoteFor(st.ArchiveYears),
             },
             sections = SectionsView(),
             scrapbook = ScrapbookView(),
@@ -381,6 +389,11 @@ public sealed class SettingsPage(AppModel model, IPlatform platform, Scrapbook? 
                 var m = a.Int("value");
                 if (!StateSettings.Intervals.Contains(m)) throw new ArgumentOutOfRangeException(key);
                 model.Update(s => s.IntervalMinutes = m);
+                break;
+            case "archiveYears":
+                var ay = a.Int("value", -1);
+                if (!Archive.Choices.Contains(ay)) throw new ArgumentOutOfRangeException(key);
+                model.Update(s => s.ArchiveYears = ay);
                 break;
             case "quietEnabled": var q = a.Bool("value"); model.Update(s => s.QuietEnabled = q); break;
             case "quietStart": var qs = Hour(0, 23); model.Update(s => s.QuietStart = qs); break;

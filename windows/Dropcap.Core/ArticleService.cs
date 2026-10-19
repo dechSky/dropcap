@@ -259,7 +259,7 @@ public sealed class ArticleService
     public static bool IsStale(PreparedArticle a, DateTimeOffset now)
     {
         if (a.Paywalled != true && a.Partial != true) return false;
-        // 미래 시각(시계 틀어짐·고친 파일)도 만료로 — 그대로 두면 영영 다시 받지 않는다(보안 점검 2 W10)
+        // 미래 시각(시계 틀어짐·고친 파일)도 만료로 — 그대로 두면 영영 다시 받지 않는다
         return a.SavedAt is not { } t || now - t > CutCacheLife || t > now + TimeSpan.FromMinutes(5);
     }
 

@@ -5,7 +5,7 @@ using Dropcap.Ui;
 
 namespace Dropcap.Core.Tests;
 
-// 보안 점검(2026-10-14)에서 찾은 것 — 맥 SecurityTests 와 같은 규칙:
+// 보안 점검에서 찾은 것 — 맥 SecurityTests 와 같은 규칙:
 // 바깥 HTML 정규식 되풀이 훑기(HtmlScan) · Plain 선형 꼬리표 빼기 · 사이트맵 정규식은 기본 출처만 · 16진수 IP·특수 대역 · 사진 압축 폭탄 · 가져오기 정리
 public class SecurityScanTests
 {

@@ -337,7 +337,7 @@ fn outer_only<'a>(list: Vec<NodeRef<'a>>) -> Vec<NodeRef<'a>> {
     list.into_iter().filter(|n| !n.ancestors_it(None).any(|a| ids.contains(&a.id))).collect()
 }
 
-// 캐러셀 바깥 바로 앞 형제 제목(보안 낮음 L2) — 뿌리가 앞 형제 없이 감싸여 있으면 세 겹까지 올라가 본다.
+// 캐러셀 바깥 바로 앞 형제 제목(보안 낮음) — 뿌리가 앞 형제 없이 감싸여 있으면 세 겹까지 올라가 본다.
 // 앞 형제가 제목이거나, 글이 제목 하나뿐인 상자(머리말 상자)면 그 제목
 fn head_before<'a>(r: &NodeRef<'a>) -> Option<NodeRef<'a>> {
     let mut s = r.clone();
@@ -391,7 +391,7 @@ pub fn carousel(content: &str, fresh: &Document) -> String {
         })
         .cloned()
         .collect();
-    // 칸 글 양 상한(보안 낮음 L3): 본문(캐러셀 밖 글 중 우리 본문에 있는 것) 글자의 2배, 적어도 3000자 · 칸 50개
+    // 칸 글 양 상한(보안 낮음): 본문(캐러셀 밖 글 중 우리 본문에 있는 것) 글자의 2배, 적어도 3000자 · 칸 50개
     let body_len: usize = marks.iter().filter(|m| found.contains_key(&norm(&m.text()))).map(len_of).sum();
     let cap = (body_len * 2).max(3000);
     let mut added = false;
@@ -403,7 +403,7 @@ pub fn carousel(content: &str, fresh: &Document) -> String {
         {
             continue;
         }
-        // 순서 표는 캐러셀마다 새로(보안 낮음 L5) — 앞 캐러셀을 넣으며 지운 요소를 앞뒤 글로 고르지 않게
+        // 순서 표는 캐러셀마다 새로(보안 낮음) — 앞 캐러셀을 넣으며 지운 요소를 앞뒤 글로 고르지 않게
         let corder: std::collections::HashMap<_, usize> = in_order(&cbody).iter().enumerate().map(|(i, n)| (n.id, i)).collect();
         let cbefore = |a: &NodeRef, b: &NodeRef| corder.get(&a.id).zip(corder.get(&b.id)).is_some_and(|(x, y)| x < y);
         let ro = order[&r.id];

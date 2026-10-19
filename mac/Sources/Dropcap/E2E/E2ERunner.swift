@@ -2,7 +2,7 @@ import AppKit
 import Combine
 import SwiftUI
 
-// 시험 장치(M9): 디버그 빌드(swift build·swift test·e2e·clicksweep)에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
+// 시험 장치: 디버그 빌드(swift build·swift test·e2e·clicksweep)에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
 #if DEBUG
 
 // 사용자 흐름 시나리오 시험(끝에서 끝까지). DROPCAP_TEST_E2E=<결과 폴더> 일 때만 돈다(mac/scripts/e2e/run.sh).

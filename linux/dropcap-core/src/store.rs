@@ -64,6 +64,8 @@ pub struct Settings {
     pub auto_quiet_calendar: bool, // 캘린더 일정 중(리눅스는 감지하지 않음 — 상태 파일 호환용)
     #[serde(rename = "translateEngine")]
     pub translate_engine: String, // 번역 방식 auto·apple·google·off(맥·윈도우와 같은 키·값 — 리눅스 auto = Google)
+    #[serde(rename = "archiveYears")]
+    pub archive_years: i64, // 지난 기사 보관 기간(년): 1·2·5, 0 은 끝없이(맥·윈도우와 같은 키·값)
 }
 
 impl Settings {
@@ -79,6 +81,7 @@ impl Settings {
         self.intl_threshold = self.intl_threshold.clamp(1, 10);
         self.big_threshold = self.big_threshold.clamp(2, 20);
         self.translate_engine = crate::translator::normalize_mode(&self.translate_engine).to_string(); // 모르는 값은 자동(맥과 같음)
+        self.archive_years = crate::archive::clamp_years(self.archive_years); // 모르는 값은 2년
     }
 
     pub fn limits(&self) -> crate::notify_policy::PolicyLimits {
@@ -114,6 +117,7 @@ impl Default for Settings {
             auto_quiet_sharing: true,
             auto_quiet_calendar: false,
             translate_engine: "auto".into(),
+            archive_years: crate::archive::DEFAULT_YEARS,
         }
     }
 }
@@ -160,6 +164,7 @@ impl<'de> Deserialize<'de> for Settings {
             auto_quiet_sharing: field(m, "autoQuietSharing").unwrap_or(def.auto_quiet_sharing),
             auto_quiet_calendar: field(m, "autoQuietCalendar").unwrap_or(def.auto_quiet_calendar),
             translate_engine: field(m, "translateEngine").unwrap_or(def.translate_engine), // 예전 파일엔 없음 → 자동
+            archive_years: field(m, "archiveYears").unwrap_or(def.archive_years), // 예전 파일엔 없음 → 2년
         };
         s.clamp();
         Ok(s)
@@ -341,7 +346,7 @@ pub static DIR: Lazy<PathBuf> = Lazy::new(|| {
     d
 });
 
-// 데이터 폴더는 이 사용자만(0700) — 읽은 기록·스크랩·설정이 같은 컴퓨터의 다른 사용자에게 보이지 않게(L7)
+// 데이터 폴더는 이 사용자만(0700) — 읽은 기록·스크랩·설정이 같은 컴퓨터의 다른 사용자에게 보이지 않게
 pub fn make_private_dir(d: &Path) {
     let _ = std::fs::create_dir_all(d);
     #[cfg(unix)]
@@ -473,7 +478,7 @@ pub fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
-            opts.mode(0o600); // 이 사용자만 읽기·쓰기(L7)
+            opts.mode(0o600); // 이 사용자만 읽기·쓰기
         }
         let mut f = opts.open(&tmp)?;
         #[cfg(unix)]
@@ -514,6 +519,10 @@ pub struct Prefs {
     pub mag_recent_searches: Vec<String>, // 매거진 빈 검색 화면의 최근 검색어(맥 magRecentSearches, 8개)
     #[serde(rename = "sourceLayout")]
     pub source_layout: String, // 설정 › 구독의 보기(media·section·region, source_directory::Layout)
+    #[serde(rename = "archivePeriod")]
+    pub archive_period: String, // 보관함의 기간 단추(day·week·month·year, 맥 archivePeriod)
+    #[serde(rename = "magSearchArchive")]
+    pub mag_search_archive: bool, // 매거진 검색 '오래된 기사 포함'(맥 magSearchArchive)
 }
 
 impl Default for Prefs {
@@ -531,6 +540,8 @@ impl Default for Prefs {
             scraps_copy_off: false,
             mag_recent_searches: vec![],
             source_layout: "media".into(),
+            archive_period: "month".into(),
+            mag_search_archive: true,
         }
     }
 }
@@ -553,6 +564,8 @@ impl<'de> Deserialize<'de> for Prefs {
             scraps_copy_off: field(m, "scrapsCopyOff").unwrap_or(false),
             mag_recent_searches: field::<Vec<String>>(m, "magRecentSearches").unwrap_or_default().into_iter().take(crate::magazine::RECENT_SEARCHES).collect(),
             source_layout: field(m, "sourceLayout").unwrap_or(def.source_layout),
+            archive_period: field(m, "archivePeriod").unwrap_or(def.archive_period),
+            mag_search_archive: field(m, "magSearchArchive").unwrap_or(def.mag_search_archive),
         })
     }
 }

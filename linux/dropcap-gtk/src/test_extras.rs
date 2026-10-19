@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 fn env(k: &str) -> Option<String> {
-    dropcap_core::test_hooks::var(k).filter(|s| !s.is_empty()) // 개발 빌드에서만(L8)
+    dropcap_core::test_hooks::var(k).filter(|s| !s.is_empty()) // 개발 빌드에서만
 }
 
 async fn sleep(s: u64) {

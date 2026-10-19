@@ -81,7 +81,7 @@ pub fn rgba_bytes(w: i32, h: i32) -> usize {
 }
 
 // 칸(box)을 꽉 채우는(cover) 데 필요한 만큼으로 줄인 크기. 작은 그림은 키우지 않는다.
-// 카드마다 원본(최대 1400px) 크기 Cairo 표면 사본을 두지 않게(S1) — box 는 화면 배율을 곱한 픽셀
+// 카드마다 원본(최대 1400px) 크기 Cairo 표면 사본을 두지 않게 — box 는 화면 배율을 곱한 픽셀
 pub fn cover_size(w: i32, h: i32, box_w: i32, box_h: i32) -> (i32, i32) {
     if w <= 0 || h <= 0 || box_w <= 0 || box_h <= 0 {
         return (w.max(0), h.max(0));

@@ -212,15 +212,16 @@ public class MagazineCatchupTests : IDisposable
     }
 
     [Fact]
-    public async Task PageFlipFollowsSidebarOrder() // Ctrl+[ · Ctrl+]: 오늘·이번 주·분야들·스토리·저장·스크랩북·검색·지난 호, 끝이면 경고음
+    public async Task PageFlipFollowsSidebarOrder() // Ctrl+[ · Ctrl+]: 오늘·이번 주·분야들·스토리·저장·스크랩북·검색·지난 호·보관함, 끝이면 경고음
     {
         var order = MagazinePage.PageOrder(["top", "economy"], ["daily-2026-10-13", "weekly-2026-W41"]);
-        Assert.Equal(["today", "week", "section:top", "section:economy", "stories", "saved", "scrapbook", "search", "issue:daily-2026-10-13", "issue:weekly-2026-W41"], order);
+        Assert.Equal(["today", "week", "section:top", "section:economy", "stories", "saved", "scrapbook", "search", "issue:daily-2026-10-13", "issue:weekly-2026-W41", "archive"], order);
         Assert.Equal("week", MagazinePage.Flip("today", 1, order));
         Assert.Equal("section:economy", MagazinePage.Flip("stories", -1, order));
         Assert.Equal("saved", MagazinePage.Flip("story:abc", 1, order));        // 한 스토리를 보는 중이면 '스토리' 자리에서
         Assert.Null(MagazinePage.Flip("today", -1, order));
-        Assert.Null(MagazinePage.Flip("issue:weekly-2026-W41", 1, order));
+        Assert.Equal("archive", MagazinePage.Flip("issue:weekly-2026-W41", 1, order));
+        Assert.Null(MagazinePage.Flip("archive", 1, order));
         Assert.Null(MagazinePage.Flip("section:culture", 1, order));            // 옆 목록에 없는 지면
 
         model.State.SectionsChosen = ["economy"];
@@ -228,7 +229,8 @@ public class MagazineCatchupTests : IDisposable
         Assert.Equal("today", (string?)await Run("flip", new { page = "week", back = true }));
         Assert.Equal(0, platform.Beeps);
         Assert.Null(await Run("flip", new { page = "today", back = true }));
-        Assert.Null(await Run("flip", new { page = "search" }));                 // 지난 호가 없으면 검색이 끝
+        Assert.Equal("archive", (string?)await Run("flip", new { page = "search" }));   // 지난 호가 없으면 검색 다음이 보관함
+        Assert.Null(await Run("flip", new { page = "archive" }));                // 보관함이 끝
         Assert.Equal(2, platform.Beeps);
     }
 

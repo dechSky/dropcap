@@ -115,6 +115,22 @@ enum Space {
     static let page: CGFloat = 36
 }
 
+// MARK: - 목록 열(설정 › 구독) — 모든 줄이 같은 열을 쓴다
+// [펼침 자리] [아이콘] [이름(고정 폭, 길면 말줄임)] [칩들] … [건수·모두 켜기·구독] [알림 종] [켜기 스위치]
+// 하위 줄은 한 단계(아이콘 + 간격) 들여 부모 이름 아래에서 시작하고, 이름 열을 그만큼 줄여 칩 열은 그대로 둔다.
+// 윈도우(web/settings.css)·리눅스(settings_sources.rs)도 같은 값을 쓴다.
+
+enum RowColumn {
+    static let disclosure: CGFloat = 16                 // 펼침 화살표 자리(없는 줄은 빈칸)
+    static let icon: CGFloat = 22                        // 모노그램·분야/지역 아이콘
+    static let gap: CGFloat = Space.s                    // 열 사이
+    static let indent: CGFloat = icon + gap              // 하위 줄 들여쓰기 한 단계
+    static let name: CGFloat = 136                       // 이름 열 — 칩 열이 여기서 시작
+    static let bell: CGFloat = 24                        // 알림 종
+    static let toggle: CGFloat = 36                      // 켜기 스위치(작게)
+    static let controls: CGFloat = bell + gap + toggle   // 종 + 스위치 = 묶음의 '모두 켜기'·추천의 '구독' 자리
+}
+
 // MARK: - 모서리
 
 enum Radius {

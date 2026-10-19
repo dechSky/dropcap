@@ -335,9 +335,10 @@ public class HushTests : IDisposable
         model.State.Recent = [Extras.News("1", "a", title: "Crypto coin rally"), Extras.News("2", "a", title: "Claude ships") with { Important = true }, Extras.News("3", "a", title: "GPT news")];
         model.Update(s => { s.MuteKeywords = ["crypto"]; s.MustKeywords = ["gpt"]; });
         model.ReapplyKeywords();
-        Assert.Equal(["2", "3"], model.State.Recent.Select(i => i.Id));
-        Assert.Null(model.State.Recent[0].Important);   // ★ 다시 매김
-        Assert.True(model.State.Recent[1].Important);
+        Assert.Equal(3, model.State.Recent.Count);   // '알리지 않음'은 지우지 않고 거르기만(낱말을 지우면 돌아옴)
+        Assert.Equal(["2", "3"], model.VisibleRecent.Select(i => i.Id));
+        Assert.Null(model.State.Recent[1].Important);   // ★ 다시 매김
+        Assert.True(model.State.Recent[2].Important);
     }
 }
 
@@ -671,8 +672,10 @@ public class MenuSettingsExtrasTests : IDisposable
     {
         model.State.Recent = [Extras.News("1", "a", title: "Crypto coin"), Extras.News("2", "a", title: "GPT launch")];
         await settings.Handle("keywords", A(new { must = "gpt", mute = "crypto" }));
-        Assert.Equal(["2"], model.State.Recent.Select(i => i.Id));
-        Assert.True(model.State.Recent[0].Important);
+        Assert.Equal(["2"], model.VisibleRecent.Select(i => i.Id));   // '알리지 않음'은 거르기만
+        Assert.True(model.VisibleRecent[0].Important);
+        await settings.Handle("keywords", A(new { must = "gpt", mute = "" }));
+        Assert.Equal(["1", "2"], model.VisibleRecent.Select(i => i.Id));   // 낱말을 지우면 돌아옴
     }
 }
 

@@ -2,7 +2,7 @@ import AppKit
 import Darwin
 import Foundation
 
-// 시험 장치(M9): 디버그 빌드(swift build·swift test·e2e·clicksweep)에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
+// 시험 장치: 디버그 빌드(swift build·swift test·e2e·clicksweep)에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
 #if DEBUG
 
 // 오래 켜 두기 시험(soak· scripts/e2e/soak.sh). DROPCAP_TEST_E2E_PHASE=soak 일 때만.

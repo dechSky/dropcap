@@ -292,7 +292,7 @@ enum OnboardingController {
 enum SectionStartup {
     static func run() {
         let env0 = ProcessInfo.processInfo.environment
-        #if DEBUG // 시험 장치(M9): 배포 빌드에서는 DROPCAP_TEST_* 를 읽지 않는다
+        #if DEBUG // 시험 장치: 배포 빌드에서는 DROPCAP_TEST_* 를 읽지 않는다
         let testOnboard = env0["DROPCAP_TEST_ONBOARD"] != nil
         if let d = env0["DROPCAP_TEST_PERF"] { PerfHarness.run(dir: d) } // 시험용: 메인 막힘 측정
         if let picks = env0["DROPCAP_TEST_SECTIONS"] { // 시험용: 고르기 화면 없이 분야를 고른 것으로

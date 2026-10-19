@@ -61,7 +61,7 @@ actor ImageLoader {
         return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
     }
 
-    // 풀어도 되는 사진의 크기 상한: 받은 크기(8MB)는 작아도 풀면 수백 메가픽셀인 사진(압축 폭탄)이 있다 — M11.
+    // 풀어도 되는 사진의 크기 상한: 받은 크기(8MB)는 작아도 풀면 수백 메가픽셀인 사진(압축 폭탄)이 있다.
     // 머리(가로·세로)만 읽어 보고 넘으면 풀지 않는다. 40메가픽셀 = 8000×5000 정도(보통 사진기 원본은 들어온다).
     static let maxPixels = 40_000_000
 

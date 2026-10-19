@@ -64,7 +64,22 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
 
     public sealed record SavedView(List<ItemView> Items, List<string> Archived, Dictionary<string, TopicView> Topics, int Count = 0);   // Count: 왼쪽 목록 '저장 N' 과 같은 수
     public sealed record SearchView(string Q, List<ItemView>? Items, Dictionary<string, TopicView>? Topics = null,
-        List<string>? Watch = null, List<string>? Recent = null);   // Items 가 null 이면 화면은 앞 결과를 그대로 둔다. 빈 검색이면 지켜볼 낱말·최근 검색 칩
+        List<string>? Watch = null, List<string>? Recent = null,
+        bool Archive = true, List<ArchivedRowView>? Older = null, bool OlderMore = false, int OlderNext = 0, string Found = "");   // Items 가 null 이면 화면은 앞 결과를 그대로 둔다. 빈 검색이면 지켜볼 낱말·최근 검색 칩
+    // Archive: '오래된 기사 포함' 켜짐, Older: 보관 표에서 찾은 오래된 기사(최신순 200건씩), OlderNext: '더 보기'가 이어 꺼낼 자리, Found: 'N건' 줄
+
+    // 보관함(지난 기사) 한 줄: 때 · 분야 점 · 제목 · 출처. Original: 한국어 제목이 있으면 원제목(오른쪽 클릭 메뉴)
+    public sealed record ArchivedRowView(string Key, string Id, string Title, string? Original, string Source, string Section, string SectionName,
+        string Light, string Dark, string When);
+    public sealed record PeriodView(string Id, string Label);
+    public sealed record DayBarView(string Key, string Label, int Count);   // 날짜별 건수 막대 하나(월·연). Key 는 그날 'yyyy-MM-dd'
+    public sealed record FacetView(string Id, string Label, int Count);     // 분야·출처 거르기 메뉴 한 줄
+    public sealed record DayIssueView(string Id, string Title);             // 일 보기의 '이 날의 호 보기'
+    public sealed record ArchivePageView(string Period, List<PeriodView> Periods, string Anchor, string Title, string Head,
+        bool CanPrev, bool CanNext, bool AtToday, List<ArchivedRowView> Items, bool More, int Total, int Limit,
+        List<DayBarView>? Bars, int Peak, string? BarFrom, string? BarTo,
+        string? Section, string SectionLabel, string? Source, string SourceLabel, List<FacetView> Sections, List<FacetView> Sources,
+        DayIssueView? DayIssue, string? Empty);
 
     public sealed record FolderView(string Name, int Count);
     public sealed record ScrapView(string Id, string? Quote, string? Original, string Memo, string Collection);
@@ -295,9 +310,9 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
             b.Items.Select(it => new BriefItemView(it.Key, it.Title, it.SourceName, it.Link)).ToList());
     }
 
-    // MARK: 지면 넘기기(H-04): 옆 목록 순서 — 오늘·이번 주·분야들·스토리·저장·스크랩북·검색·지난 호
+    // MARK: 지면 넘기기(H-04): 옆 목록 순서 — 오늘·이번 주·분야들·스토리·저장·스크랩북·검색·지난 호·보관함
     public static List<string> PageOrder(IEnumerable<string> chosen, IEnumerable<string> archive) =>
-        ["today", "week", .. chosen.Select(id => "section:" + id), "stories", "saved", "scrapbook", "search", .. archive.Select(id => "issue:" + id)];
+        ["today", "week", .. chosen.Select(id => "section:" + id), "stories", "saved", "scrapbook", "search", .. archive.Select(id => "issue:" + id), "archive"];
 
     // 끝이면 null(부르는 쪽이 경고음). 한 스토리를 보는 중이면 '스토리' 자리에서
     public static string? Flip(string page, int dir, IReadOnlyList<string> order)
@@ -318,7 +333,7 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
             model.AllSources.GroupBy(s => s.Id).ToDictionary(g => g.Key, g => (string?)g.First().Color));
         var (live, past) = await Task.Run(() =>
         {
-            // 스토리와 보도를 문장 두 번으로 한꺼번에, 카드에 보도를 넘긴다(스토리마다 DB 를 다시 묻지 않게)
+            // 스토리·출처별 수·보도 견본을 문장 세 번으로 한꺼번에, 카드에 보도를 넘긴다(스토리마다 DB 를 다시 묻지 않게)
             var g = Magazine.StoryCardGroups(mag.StoryCards(snap.Filter, now), now);
             List<StoryCard> Cards(List<Magazine.StoryCard> list) => list.Select(c => Card(c.Cluster, c.Items, now, snap)).ToList();
             return (Cards(g.Live), Cards(g.Past));
@@ -343,7 +358,7 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
     // 스토리의 분야 표시(M-26): 묶인 보도들의 다수결(대표 기사 하나의 AI 하위 분류를 그대로 쓰면 IT 소식이 'AI·모델'이 됐다 — 맥과 같음)
     public static TopicView? StoryTopicView(IReadOnlyList<NewsItem> items)
     {
-        if (Magazine.StoryTopic(items, i => i.Section()) is not { } t) return null;
+        if (Magazine.StoryTopic(items, it => Sections.Primary(it)) is not { } t) return null;   // 대표 분야만(칩까지 가리지 않게 — 목록을 뒤 스레드에서 만들 때)
         var ns = Sections.ById(t.Section);
         var (l, d) = Tint(t.Category is { } c ? c.Color() : ns is null ? DualColor.Gray : DualColor.Fixed(ns.Color));
         return new TopicView(t.Category is { } c2 ? "AI·" + c2.Label() : Sections.Name(t.Section), t.Category?.Glyph() ?? ns?.Icon ?? "cat.other", l, d);
@@ -411,15 +426,106 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
     }
 
     // 검색(M-16): 입력 중에는 2글자부터, Enter 면 1글자도. 비우면 결과도 비움.
-    public async Task<SearchView> SearchData(string q, bool submit)
+    // '오래된 기사 포함'(archive — 주면 기억)이 켜져 있으면 보관 표에서도 찾는다: 최근 결과와 같은 링크는 빼고 최신순 200건
+    public async Task<SearchView> SearchData(string q, bool submit, bool? archive = null)
     {
-        if (q.Length == 0) return new SearchView(q, new(), null, model.State.Settings.WatchKeywords.ToList(), RecentSearches);
-        if (q.Length < 2 && !submit) return new SearchView(q, null);
-        var list = await Task.Run(() => mag.Search(q));
+        q = Archive.TrimQuery(q);
+        if (archive is { } on) Prefs.Set(SearchArchiveKey, on);
+        var include = IncludeArchive;
+        if (q.Length == 0) return new SearchView(q, new(), null, model.State.Settings.WatchKeywords.ToList(), RecentSearches, include);
+        if (q.Length < 2 && !submit) return new SearchView(q, null, Archive: include);
+        var filter = model.SourceFilter;   // 숨긴·꺼진 출처는 보관 기사에서도 뺀다(상태는 여기서 떠 둔다)
+        var (list, older) = await Task.Run(() => (mag.Search(q), include ? mag.SearchArchive(q, 0, OlderPage, filter) : new List<ArchivedItem>()));
         if (submit) Prefs.Set(RecentKey, Magazine.RememberSearch(q, RecentSearches));   // Enter 로 찾은 낱말만 최근 검색에(입력 중 앞부분은 남기지 않음)
         var now = model.Now();
-        return new SearchView(q, list.Select(i => View(i, now)).ToList(), Topics(list));
+        var links = list.Select(i => i.Link).ToHashSet();
+        var shownOlder = older.Where(a => !links.Contains(a.Link)).ToList();
+        var more = older.Count >= OlderPage;
+        return new SearchView(q, list.Select(i => View(i, now)).ToList(), Topics(list), Archive: include,
+            Older: shownOlder.Select(a => Row(a, true)).ToList(), OlderMore: more, OlderNext: older.Count, Found: Found(list.Count, shownOlder.Count, more));
     }
+
+    // 오래된 기사 '200건 더 보기': offset 부터 다음 200건(화면이 이미 보인 줄은 Id 로 건너뜀)
+    public async Task<object> SearchMore(string q, int offset, int recent, int shownOlder)
+    {
+        q = Archive.TrimQuery(q);
+        var filter = model.SourceFilter;
+        var older = await Task.Run(() => mag.SearchArchive(q, Math.Max(0, offset), OlderPage, filter));
+        var more = older.Count >= OlderPage;
+        return new { older = older.Select(a => Row(a, true)).ToList(), olderMore = more, olderNext = offset + older.Count, found = Found(recent, shownOlder + older.Count, more) };
+    }
+
+    public const int OlderPage = 200;
+    public const string SearchArchiveKey = "magSearchArchive";   // 맥과 같은 키(화면 설정이라 prefs.json)
+    public static bool IncludeArchive => Prefs.Get(SearchArchiveKey, true);
+
+    // 'N건' 줄: 오래된 기사가 없으면 최근 건수만
+    public static string Found(int recent, int older, bool more) =>
+        older == 0 ? $"{recent}건" : $"최근 {recent}건 · 오래된 기사 {older}{(more ? "건 넘음" : "건")}";
+
+    // MARK: 보관함(지난 기사)
+    public const int ArchivePageSize = 100;
+    public const string ArchivePeriodKey = "archivePeriod";   // 맥과 같은 키 — 마지막으로 고른 기간(처음엔 월)
+
+    // 보관 기사 한 줄(누르면 읽기 창 — 화면에 보낸 것으로 기억해 다시 찾는다)
+    private ArchivedRowView Row(ArchivedItem a, bool showDay)
+    {
+        var it = a.ToNewsItem();
+        lock (shown) shown[it.Key] = it;
+        var s = Sections.ById(a.Section);
+        var (l, d) = Tint(s is null ? DualColor.Gray : DualColor.Fixed(s.Color));
+        return new ArchivedRowView(it.Key, a.Id, a.DisplayTitle, a.TitleKo is null ? null : a.Title, a.Source, a.Section, Sections.Name(a.Section), l, d, When(a.Date, showDay));
+    }
+
+    // 줄의 때: 일 보기는 시각만, 그 밖은 '월/일 시각'
+    public static string When(DateTimeOffset date, bool showDay)
+    {
+        var t = date.LocalDateTime;
+        var time = t.ToString("HH:mm", CultureInfo.InvariantCulture);
+        return showDay ? $"{t.Month}/{t.Day} {time}" : time;
+    }
+
+    // 보관함 한 기간. period·anchor('yyyy-MM-dd')가 없으면 마지막 기간·오늘. 거르기 값이 메뉴에 없는 것이어도 그대로 거른다(건수 0)
+    public async Task<ArchivePageView> ArchiveData(string? period, string? anchor, string? section, string? source, int limit, DateTime? nowOverride = null)
+    {
+        var p = Archive.ParsePeriod(period ?? Prefs.Get<string?>(ArchivePeriodKey, null));
+        if (period is not null) Prefs.Set(ArchivePeriodKey, p.Raw());
+        var nowLocal = nowOverride ?? DateTime.Now;
+        var day = Archive.ParseDay(anchor) ?? nowLocal.Date;
+        var (from, to) = Archive.Range(p, day);
+        limit = Math.Clamp(limit <= 0 ? ArchivePageSize : limit, 1, 100_000);
+        if (section is { Length: 0 }) section = null;
+        if (source is { Length: 0 }) source = null;
+        var filter = model.SourceFilter;   // 숨긴·꺼진 출처는 목록·건수·거르기 메뉴에서 뺀다(상태는 여기서 떠 둔다)
+        var (page, earliest) = await Task.Run(() => (mag.ArchivePeriod(new DateTimeOffset(from), new DateTimeOffset(to), section, source, limit, filter), mag.EarliestRecord()));
+
+        List<DayBarView>? bars = null;
+        var peak = 1;
+        if (p.ShowsBars() && page.Total > 0)
+        {
+            peak = Math.Max(1, page.DayCounts.Values.DefaultIfEmpty(0).Max());
+            bars = Archive.Days(from, to).Select(d => new DayBarView(Archive.DayKey(d), Archive.Title(Archive.Period.Day, d), page.DayCounts.GetValueOrDefault(Archive.DayKey(d)))).ToList();
+        }
+        // 건수 많은 순(분야는 같은 건수면 분야 순서, 출처는 이름 순)
+        var secs = page.Sections.OrderByDescending(kv => kv.Value).ThenBy(kv => Sections.Order(kv.Key))
+            .Select(kv => new FacetView(kv.Key, Sections.Name(kv.Key), kv.Value)).ToList();
+        var srcs = page.Sources.Where(kv => kv.Key.Length > 0).OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key, StringComparer.Ordinal)
+            .Select(kv => new FacetView(kv.Key, kv.Key, kv.Value)).ToList();
+        var dayIssue = p == Archive.Period.Day && mag.Archive.FirstOrDefault(i => i.Id == "daily-" + Magazine.DayId(from)) is { } di
+            ? new DayIssueView(di.Id, di.Title) : null;
+        var showDay = p != Archive.Period.Day;
+        return new ArchivePageView(p.Raw(), Archive.Periods.Select(x => new PeriodView(x.Raw(), x.Label())).ToList(), Archive.DayKey(from), Archive.Title(p, from),
+            $"기사 {page.Total}건" + (page.More ? $" · 최신순 {page.Items.Count}건 보는 중" : ""),
+            earliest is { } e && new DateTimeOffset(from) > e, to <= nowLocal, Archive.Range(p, nowLocal).From == from,
+            page.Items.Select(a => Row(a, showDay)).ToList(), page.More, page.Total, limit,
+            bars, peak, bars is null ? null : Archive.DayKey(from).Replace("-", ". "), bars is null ? null : Archive.DayKey(to.AddDays(-1)).Replace("-", ". "),
+            section, section is null ? "모든 분야" : Sections.Name(section), source, source ?? "모든 출처", secs, srcs, dayIssue,
+            page.Items.Count > 0 ? null : section is null && source is null ? "이 기간에는 모인 기사가 없습니다." : "거른 조건에 맞는 기사가 없습니다.");
+    }
+
+    // ◀ ▶: 한 기간 앞뒤의 기준 날('yyyy-MM-dd')
+    public static string ShiftAnchor(string? period, string? anchor, int n) =>
+        Archive.DayKey(Archive.Shift(Archive.ParsePeriod(period), Archive.ParseDay(anchor) ?? DateTime.Now.Date, n));
 
     // 최근 검색어(맥 magRecentSearches 와 같은 키 — 화면 설정이라 prefs.json)
     public const string RecentKey = "magRecentSearches";
@@ -586,7 +692,11 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
                 var r = await SaveLink.SaveAsync(model, a.Str("url"));
                 return new { ok = r.Ok, message = r.Item is { } it ? "저장함 · " + it.DisplayTitle : SaveLink.Message(r.Error ?? SaveLink.Failure.NotUrl) };
             }
-            case "search": return await SearchData(a.Str("q"), a.Bool("submit"));
+            case "search": return await SearchData(a.Str("q"), a.Bool("submit"), a["archive"] is JsonValue ? a.Bool("archive") : null);
+            case "searchMore": return await SearchMore(a.Str("q"), a.Int("offset"), a.Int("recent"), a.Int("shown"));
+            // 보관함: 기간 보기 · ◀ ▶
+            case "archive": return await ArchiveData(a.StrOrNull("period"), a.StrOrNull("anchor"), a.StrOrNull("section"), a.StrOrNull("source"), a.Int("limit", ArchivePageSize));
+            case "archiveShift": return ShiftAnchor(a.StrOrNull("period"), a.StrOrNull("anchor"), Math.Sign(a.Int("by")));
             case "clearRecentSearches": Prefs.Set(RecentKey, new List<string>()); return await SearchData("", false);
             case "scrapbook": return ScrapbookData(a.StrOrNull("folder"), a.Bool("repick"));
             case "marks": return Marks((a["keys"] as JsonArray ?? new()).Select(n => n?.GetValue<string>() ?? ""));
@@ -595,7 +705,8 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
             case "open":
             {
                 var it = await Find(a.Str("key"));
-                model.MarkOpened(it);
+                // 보관 기사는 읽기 창만(관심사·읽음 기록에 넣지 않음 — 맥 ArchiveRow 와 같음)
+                if (it.SourceId != ArchivedItem.ReaderSource) model.MarkOpened(it);
                 if (it.ItemKind.OpensExternally()) ExternalLink.Open(it.Link);
                 else
                 {

@@ -133,6 +133,14 @@ if (!(window.chrome && window.chrome.webview)) {
   let folders = [{ name: '스크랩', count: 2 }, { name: '경제 메모', count: 0 }];
   let following = false;
   let mockRecent = ['기준금리'];
+  // 보관 기사(가짜): 경제·AI 번갈아
+  let mockArchive = true;
+  const archRows = (q, offset, limit) => Array.from({ length: 260 }, (_, i) => {
+    const eco = i % 2 === 0;
+    return { key: `archive|https://old.example/${i}`, id: `https://old.example/${i}|${i}`, title: eco ? `기준금리 동결 ${i}` : `새 모델 공개 ${i}`, original: eco ? null : `New model ${i}`,
+      source: eco ? '연합뉴스' : 'The Verge', section: eco ? 'economy' : 'ai', sectionName: eco ? '경제' : 'AI', light: eco ? '#30C759' : '#BF5AF2', dark: eco ? '#30C759' : '#BF5AF2',
+      when: `9/${(i % 28) + 1} 0${i % 10}:15` };
+  }).filter((r) => !q || r.title.includes(q) || r.source.includes(q)).slice(offset, offset + limit);
   window.DropcapMock = (cmd, a) => {
     switch (cmd) {
       case 'ready': case 'sidebar':
@@ -202,8 +210,31 @@ if (!(window.chrome && window.chrome.webview)) {
         if (a.submit && a.q && a.q.length >= 2) mockRecent = [a.q, ...mockRecent.filter((x) => x !== a.q)].slice(0, 8);
         if (!a.q) return { q: '', items: [], watch: ['한국은행', '엔비디아'], recent: mockRecent };
         if (a.q.length < 2 && !a.submit) return { q: a.q };
-        return { q: a.q, items: [cover, ...top, ...economy, ...ai].filter((i) => i.title.includes(a.q) || i.source.includes(a.q)), topics };
+        if (a.archive != null) mockArchive = a.archive;
+        const items = [cover, ...top, ...economy, ...ai].filter((i) => i.title.includes(a.q) || i.source.includes(a.q));
+        const older = mockArchive ? archRows(a.q, 0, 200) : [];
+        return { q: a.q, items, topics, archive: mockArchive, older, olderMore: older.length >= 200, olderNext: older.length,
+          found: older.length ? `최근 ${items.length}건 · 오래된 기사 ${older.length}${older.length >= 200 ? '건 넘음' : '건'}` : `${items.length}건` };
       }
+      case 'searchMore': { const older = archRows(a.q, a.offset, 200); return { older, olderMore: older.length >= 200, olderNext: a.offset + older.length, found: `최근 ${a.recent}건 · 오래된 기사 ${a.shown + older.length}건` }; }
+      // 보관함: 미리 보기에서는 기간과 관계없이 같은 가짜 기사
+      case 'archive': {
+        const period = a.period || 'month';
+        const all = archRows('', 0, 260).filter((r) => (!a.section || r.section === a.section) && (!a.source || r.source === a.source));
+        const items = all.slice(0, a.limit || 100);
+        const days = period === 'year' ? 365 : period === 'month' ? 31 : 0;
+        const bars = days ? Array.from({ length: days }, (_, i) => ({ key: `2026-10-${String(i % 31 + 1).padStart(2, '0')}`, label: `10월 ${i % 31 + 1}일`, count: (i * 37) % 23 })) : null;
+        return { period, periods: [['day', '일'], ['week', '주'], ['month', '월'], ['year', '연']].map(([id, label]) => ({ id, label })), anchor: a.anchor || '2026-10-01',
+          title: { day: '2026년 10월 12일(일)', week: '2026년 10월 11일 – 10월 17일', month: '2026년 10월', year: '2026년' }[period],
+          head: `기사 ${all.length}건` + (all.length > items.length ? ` · 최신순 ${items.length}건 보는 중` : ''), canPrev: true, canNext: false, atToday: !a.anchor,
+          items, more: all.length > items.length, total: all.length, limit: a.limit || 100, bars, peak: 22, barFrom: '2026. 10. 01', barTo: '2026. 10. 31',
+          section: a.section || null, sectionLabel: a.section ? SEC[a.section][0] : '모든 분야', source: a.source || null, sourceLabel: a.source || '모든 출처',
+          sections: [['economy', 140], ['ai', 120]].map(([id, count]) => ({ id, label: SEC[id][0], count })),
+          sources: [['연합뉴스', 130], ['The Verge', 130]].map(([id, count]) => ({ id, label: id, count })),
+          dayIssue: period === 'day' ? { id: 'daily-2026-10-12', title: '10월 12일 일요일 호' } : null,
+          empty: items.length ? null : '거른 조건에 맞는 기사가 없습니다.' };
+      }
+      case 'archiveShift': return a.anchor || '2026-10-01';
       case 'scrapbook': {
         const f = folders.some((x) => x.name === a.folder) ? a.folder : '스크랩';
         // 이번 주 모은 문장(M-27): 미리 보기에서는 #weekly 이면 보임(앱은 일요일 17시부터)

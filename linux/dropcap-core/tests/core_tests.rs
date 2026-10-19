@@ -472,7 +472,7 @@ fn grouping_picks_lab_and_counts_related() {
     lab.source_name = "OpenAI".into();
     lab.date = Some(now - Duration::minutes(5));
     let mut recent = vec![];
-    let out = group_same_story(vec![press, lab], &mut recent, now);
+    let out = group_same_story(vec![press, lab], &mut recent, &Default::default(), now);
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].source_id, "openai");
     assert_eq!(out[0].related, Some(vec!["The Verge".to_string()]));
@@ -481,8 +481,13 @@ fn grouping_picks_lab_and_counts_related() {
     let mut again = item("OpenAI launches GPT-6 with reasoning features today", None, Some("ars"));
     again.source_name = "Ars Technica".into();
     again.date = Some(now);
-    let out2 = group_same_story(vec![again], &mut recent, now);
+    let out2 = group_same_story(vec![again.clone()], &mut recent, &Default::default(), now);
     assert!(out2.is_empty());
+    assert_eq!(recent[0].related_count(), 2);
+    // 숨긴 글(숨긴 출처·'알리지 않음' — 지우지 않고 거르기만 함)과는 견주지 않는다: 보이는 새 글이 묻히지 않게
+    let hidden: std::collections::HashSet<String> = recent.iter().map(|r| r.key()).collect();
+    let out3 = group_same_story(vec![again], &mut recent, &hidden, now);
+    assert_eq!(out3.len(), 1);
     assert_eq!(recent[0].related_count(), 2);
 }
 
@@ -639,7 +644,7 @@ fn ingest_clusters_stories_and_search() {
     assert_eq!(db.search("100%", 200).len(), 0);
     db.set_image(&b.key(), "https://b.com/i.jpg");
     assert_eq!(db.search("reveals", 10)[0].image.as_deref(), Some("https://b.com/i.jpg"));
-    db.prune(1);
+    db.prune(1, 2, Utc::now(), &|_| "ai".into());
     assert_eq!(db.item_count(), 1);
 }
 

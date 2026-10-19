@@ -69,6 +69,7 @@ struct AppState: Codable {
         var autoQuietSharing = true     // 화면 공유·기록 중
         var autoQuietCalendar = false   // 캘린더 일정 중(켤 때 권한을 묻는다)
         var translateEngine: Translator.Mode = .auto // 번역 방식: auto·apple·google·off(윈도우·리눅스와 같은 키·값)
+        var archiveYears = Archive.defaultYears // 지난 기사 보관 기간(년): 1·2·5, 0 은 끝없이(윈도우·리눅스와 같은 키·값)
 
         var limits: PolicyLimits {
             PolicyLimits(totalCap: totalDailyCap, krThreshold: krThreshold, intlThreshold: intlThreshold, bigThreshold: bigThreshold)
@@ -98,6 +99,7 @@ struct AppState: Codable {
             autoQuietSharing = (try? c.decodeIfPresent(Bool.self, forKey: .autoQuietSharing)) ?? true
             autoQuietCalendar = (try? c.decodeIfPresent(Bool.self, forKey: .autoQuietCalendar)) ?? false
             translateEngine = (try? c.decodeIfPresent(Translator.Mode.self, forKey: .translateEngine)) ?? .auto // 모르는 값도 자동으로
+            archiveYears = (try? c.decodeIfPresent(Int.self, forKey: .archiveYears)) ?? Archive.defaultYears
             clamp()
         }
 
@@ -112,6 +114,7 @@ struct AppState: Codable {
             krThreshold = min(max(krThreshold, 1), 10)
             intlThreshold = min(max(intlThreshold, 1), 10)
             bigThreshold = min(max(bigThreshold, 2), 20)
+            archiveYears = Archive.clampYears(archiveYears)
         }
     }
 

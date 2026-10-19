@@ -212,7 +212,7 @@ actor Translator {
         let retries = RetryBudget(Self.retryLimit)
         var pending = batches.filter { !$0.isEmpty }[...]
         await withTaskGroup(of: [(Int, String)].self) { group in
-            // 묶음은 동시에 몇 개까지만(표가 큰 기사 하나가 요청을 한꺼번에 수백 건 보내지 않게 — 보안 점검 2 X3)
+            // 묶음은 동시에 몇 개까지만(표가 큰 기사 하나가 요청을 한꺼번에 수백 건 보내지 않게)
             func next() {
                 guard !Task.isCancelled, let batch = pending.popFirst() else { return }
                 group.addTask {
@@ -412,7 +412,7 @@ actor Translator {
 
     // 번역 요청 하나의 전체 시간 상한(초). 시험에서만 줄인다
     nonisolated(unsafe) static var requestDeadline: TimeInterval = 20
-    // 시간 상한에 걸린 뒤 잠시는 구글을 부르지 않는다(문단마다 다시 보내며 상한을 수십 번 기다리지 않게 — S3-나)
+    // 시간 상한에 걸린 뒤 잠시는 구글을 부르지 않는다(문단마다 다시 보내며 상한을 수십 번 기다리지 않게)
     static let googleBackoff: TimeInterval = 60
     private static let backoffLock = NSLock()
     nonisolated(unsafe) private static var googleQuietUntil: TimeInterval = 0

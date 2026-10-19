@@ -140,7 +140,7 @@ final class ArticleService {
     }
 
     // 읽기 창이 쓸 피드 본문: 들고 온 사본에 없으면(나중에 읽기·스크랩 — 저장 때 뺌) 피드 기록 DB 에서 다시 찾고,
-    // 출처 피드와 다른 사이트 링크의 본문은 쓰지 않는다 — 받을 때도 거르지만(FeedService.sameSite) 그 전에 DB 에 들어간 것까지(보안 점검 M15)
+    // 출처 피드와 다른 사이트 링크의 본문은 쓰지 않는다 — 받을 때도 거르지만(FeedService.sameSite) 그 전에 DB 에 들어간 것까지
     // sourceURL: 출처 주소 찾기(시험이 바꿔 끼움 — 없으면 앱의 출처 목록)
     static func feedBody(for item: NewsItem, db: Database = .shared, sourceURL: ((String) -> String?)? = nil) -> String? {
         let url = sourceURL.map { $0(item.sourceId) } ?? Resources.source(item.sourceId)?.url

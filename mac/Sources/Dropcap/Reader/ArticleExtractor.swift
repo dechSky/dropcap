@@ -538,7 +538,7 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
 
     private static var compiled: [String: WKContentRuleList] = [:]
 
-    // 내부망·내 Mac 주소(M8): 느린 길은 자바스크립트가 켜져 있어 이동은 막아도 페이지 스크립트의 fetch·XHR·사진 요청이
+    // 내부망·내 Mac 주소: 느린 길은 자바스크립트가 켜져 있어 이동은 막아도 페이지 스크립트의 fetch·XHR·사진 요청이
     // 내부망으로 나갈 수 있다. 그런 주소로 가는 요청은 종류와 상관없이 막는다. WebKit 규칙 정규식은 '|'·'{n}' 를 못 써서 하나씩.
     // 10진수·16진수 IP 표기는 WebKit 이 주소를 읽을 때 점 네 칸으로 바꿔 둔다.
     nonisolated static let privateNetworkFilters: [String] = {

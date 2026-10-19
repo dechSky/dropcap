@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-// 시험 장치(M9): 디버그 빌드에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
+// 시험 장치: 디버그 빌드에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
 #if DEBUG
 
 // DROPCAP_TEST_WINDOW_MOTION=<폴더>: 창 열기 움직임을 재어 연속 장면으로 남긴다(docs/DESIGN.md '창 열기').

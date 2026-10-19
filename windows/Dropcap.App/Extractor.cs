@@ -124,7 +124,7 @@ internal sealed class Extractor(nint parent, DispatcherQueue ui) : IArticleExtra
         }
     }
 
-    // 스크립트 시간 제한(보안 점검 2 X1): 추출이 멈추는 페이지(겹친 상자 등)는 기다리지 않고 이 기사만 실패로
+    // 스크립트 시간 제한: 추출이 멈추는 페이지(겹친 상자 등)는 기다리지 않고 이 기사만 실패로
     internal static readonly TimeSpan ScriptLimit = TimeSpan.FromSeconds(8);
     private sealed class ScriptTimeout : Exception;
 

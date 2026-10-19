@@ -1,4 +1,4 @@
-// 보안 점검 L8: 시험 훅(DROPCAP_TEST_*)은 개발 빌드(debug)나 test-hooks 기능을 켠 빌드에서만 듣는다.
+// 시험 훅(DROPCAP_TEST_*)은 개발 빌드(debug)나 test-hooks 기능을 켠 빌드에서만 듣는다.
 // `cargo test --release -p dropcap-core --test test_hooks_tests` 로 배포 빌드 쪽을 확인한다.
 use chrono::{TimeZone, Utc};
 use dropcap_core::magazine::is_sunday_evening;

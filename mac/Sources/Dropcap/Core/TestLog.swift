@@ -5,7 +5,7 @@ enum TestLog {
     #if DEBUG
     static let path = ProcessInfo.processInfo.environment["DROPCAP_TEST_LOG"]
     #else
-    static let path: String? = nil // 배포 빌드는 NSLog 만(M9)
+    static let path: String? = nil // 배포 빌드는 NSLog 만
     #endif
     static func write(_ s: String) {
         NSLog("%@", s)
@@ -15,7 +15,7 @@ enum TestLog {
     }
 }
 
-// 시험용 환경 변수 DROPCAP_TEST_<이름>: 디버그 빌드에서만 읽는다. 배포 빌드에서는 늘 nil(M9 — 시험 장치가 배포 앱에서 켜지지 않게)
+// 시험용 환경 변수 DROPCAP_TEST_<이름>: 디버그 빌드에서만 읽는다. 배포 빌드에서는 늘 nil(시험 장치가 배포 앱에서 켜지지 않게)
 enum TestEnv {
     static func get(_ name: String) -> String? {
         #if DEBUG

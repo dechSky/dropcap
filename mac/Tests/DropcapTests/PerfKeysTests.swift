@@ -51,6 +51,9 @@ private func tempDB() throws -> (Database, URL) {
         #expect(r1.recentAdds[0]?.sorted() == ["VERGE", "VERGE2"])
         var withName = fresh; withName.related = ["VERGE"]
         #expect(StoryGrouper.groupForList([a], recent: [withName]).recentAdds.isEmpty)
+        // 숨긴 글(숨긴 출처·'알리지 않음' — 지우지 않고 거르기만 함)과는 견주지 않는다: 보이는 새 글이 묻히지 않게
+        let hid = StoryGrouper.groupForList([a], recent: [fresh], hidden: [fresh.key])
+        #expect(hid.kept.map(\.key) == [a.key] && hid.recentAdds.isEmpty)
     }
 
     @Test func storyForPicksFirstMatchingRepresentative() {

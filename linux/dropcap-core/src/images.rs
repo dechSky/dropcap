@@ -43,7 +43,7 @@ pub fn shrink(data: &[u8]) -> Option<Vec<u8>> {
     if data.len() >= MAX_BYTES {
         return None;
     }
-    // 압축 폭탄: 받은 크기(8MB)는 작아도 풀면 거대한 그림 — 가로·세로 8192 · 풀 때 128MB 까지만(L3)
+    // 압축 폭탄: 받은 크기(8MB)는 작아도 풀면 거대한 그림 — 가로·세로 8192 · 풀 때 128MB 까지만
     let mut reader = image::ImageReader::new(std::io::Cursor::new(data)).with_guessed_format().ok()?;
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(8192);

@@ -15,6 +15,7 @@ pub mod summarizer;
 pub mod translator;
 pub mod url_safety;
 pub mod app_model;
+pub mod archive; // 지난 기사 보관함(맥 Archive)
 pub mod article;
 pub mod images;
 pub mod system;

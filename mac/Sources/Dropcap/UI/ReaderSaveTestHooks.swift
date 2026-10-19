@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-// 시험 장치(M9): 디버그 빌드(swift build·swift test·e2e·clicksweep)에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
+// 시험 장치: 디버그 빌드(swift build·swift test·e2e·clicksweep)에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
 #if DEBUG
 
 // 시험용 환경 변수(화면 캡처 권한 없이 앱 안에서 찍기). 실제 기록을 건드리지 않게 DROPCAP_DATA_DIR 와 함께 쓴다.

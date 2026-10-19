@@ -65,7 +65,7 @@ public class SettingsPageTests : IDisposable
         Assert.Equal(["물방울 (앱이 직접 그림)", "시스템 알림 센터"], g["styles"]!.AsArray().Select(n => n!["label"]!.GetValue<string>()));
         Assert.Equal(["위쪽 가운데", "오른쪽 위"], g["positions"]!.AsArray().Select(n => n!["label"]!.GetValue<string>()));
         Assert.Equal("drop", g["style"]!.GetValue<string>());
-        Assert.Equal("auto", g["translateEngine"]!.GetValue<string>());   // 번역 엔진 고르기(W4) — 기본은 자동(= Google)
+        Assert.Equal("auto", g["translateEngine"]!.GetValue<string>());   // 번역 엔진 고르기 — 기본은 자동(= Google)
         Assert.True(g["pretendard"]!.GetValue<bool>());
 
         var s = v["sources"]!;
@@ -494,7 +494,7 @@ public class SettingsPageTests : IDisposable
     }
 }
 
-// 번역 방식 고르기(W4): 설정 › 일반 › 번역
+// 번역 방식 고르기: 설정 › 일반 › 번역
 public class SettingsTranslateEngineTests : IDisposable
 {
     private readonly TempDir tmp = new();

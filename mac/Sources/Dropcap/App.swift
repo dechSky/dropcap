@@ -75,12 +75,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             AppModel.shared.start()
             SectionStartup.run() // 첫 실행 분야 고르기 + 시험 훅
             Integrations.start() // 위젯·Spotlight(Integrations/)
-            #if DEBUG // 시험 장치(M9): 배포 빌드에는 없음
+            #if DEBUG // 시험 장치: 배포 빌드에는 없음
             // 시험용: DROPCAP_TEST_URL=<기사 주소> 면 읽기 창을, DROPCAP_TEST_TOAST=1 이면 알림 미리 보기를 바로 띄운다
             let env = ProcessInfo.processInfo.environment
             ReaderSaveTestHooks.run(env)
             ExtrasTestHooks.run(env) // 유료 표시·오늘 호·저녁 정리·사진 점수 시험(UI/ExtrasTestHooks.swift)
             DesignTestHooks.run(env) // 창 열기 움직임 연속 장면(UI/DesignTestHooks.swift · docs/DESIGN.md)
+            ArchiveTestHooks.run(env) // 보관함·오래된 기사 검색 장면(UI/ArchiveTestHooks.swift)
             ReadSweep.run(env) // 읽기 창 본문 성공률 전수 점검(Reader/ReadSweep.swift)
             if let u = env["DROPCAP_TEST_URL"] {
                 ReaderController.open(NewsItem(id: u, title: u, titleKo: nil, link: u, date: Date(), summary: "", sourceId: "openai", sourceName: "시험", tier: "lab"))

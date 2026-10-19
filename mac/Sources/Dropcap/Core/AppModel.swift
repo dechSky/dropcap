@@ -441,7 +441,9 @@ final class AppModel: ObservableObject {
     private func groupSameStory(_ items: [NewsItem]) async -> [NewsItem] {
         guard !items.isEmpty else { return [] }
         let recent = state.recent
-        let (kept, adds) = await Task.detached(priority: .userInitiated) { StoryGrouper.groupForList(items, recent: recent) }.value
+        let shown = Set(visibleRecent.map(\.key))
+        let hidden = Set(recent.map(\.key)).subtracting(shown)
+        let (kept, adds) = await Task.detached(priority: .userInitiated) { StoryGrouper.groupForList(items, recent: recent, hidden: hidden) }.value
         for (j, names) in adds where j < state.recent.count && state.recent[j].key == recent[j].key {
             for n in names where !(state.recent[j].related ?? []).contains(n) { state.recent[j].related = (state.recent[j].related ?? []) + [n] }
         }
@@ -677,7 +679,7 @@ final class AppModel: ObservableObject {
     func setRead(_ item: NewsItem, _ on: Bool) {
         if on { state.read[item.key] = Date().timeIntervalSince1970 } else { state.read.removeValue(forKey: item.key) }
         if state.read.count > 3000 {
-            var read = state.read // 한 번에(글마다 고치면 사전 전체가 그때마다 복사됨 — S6)
+            var read = state.read // 한 번에(글마다 고치면 사전 전체가 그때마다 복사됨)
             for (k, _) in read.sorted(by: { $0.value < $1.value }).prefix(read.count - 2000) { read.removeValue(forKey: k) }
             state.read = read
         }

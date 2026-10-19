@@ -94,7 +94,7 @@ struct NewsItem: Codable, Identifiable, Hashable {
 
 // NewsItem.feedBody 의 저장 규칙: 인코더 userInfo[keepFeedBody] 가 true 일 때만 글을 쓰고, 그 밖에는 null("feedBody":null).
 // 읽을 때도 같다: 디코더 userInfo[keepFeedBody] 가 true(피드 기록 DB — Database.decoder)일 때만 받고, 가져온 백업·앱 상태 파일에
-// 든 글은 버린다(보안 점검 2 M13: 고친 파일이 실제 기사 링크 아래 가짜 본문을 보여 주지 못하게).
+// 든 글은 버린다(고친 파일이 실제 기사 링크 아래 가짜 본문을 보여 주지 못하게).
 // 같음·해시는 글 전체를 비교하지 않아도 되게 길이와 앞머리로(목록 비교가 60KB 글을 훑지 않게)
 @propertyWrapper
 struct FeedBodyText: Codable, Hashable {

@@ -7,6 +7,7 @@ mod hotkeys;
 mod integrations;
 mod keynav;
 mod magazine;
+mod magazine_archive;
 mod magazine_card;
 mod magazine_issue;
 mod magazine_pages;

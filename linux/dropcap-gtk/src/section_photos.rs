@@ -16,7 +16,7 @@ use std::rc::Rc;
 
 thread_local! {
     static PHOTOS: RefCell<HashMap<String, PathBuf>> = RefCell::new(HashMap::new());
-    // 분야 사진 표면(흐린 바탕 + 원래 그림): 바이트 상한·최근 사용 순(예전엔 지우지 않음 — S1)
+    // 분야 사진 표면(흐린 바탕 + 원래 그림): 바이트 상한·최근 사용 순(예전엔 지우지 않음)
     static SURFACES: RefCell<ByteLru<Rc<(cairo::ImageSurface, cairo::ImageSurface)>>> = RefCell::new(ByteLru::new(byte_cache::SECTION_SURFACE_LIMIT));
     static LOADING: Cell<bool> = const { Cell::new(false) };
     static LISTENERS: RefCell<Vec<Box<dyn Fn() -> bool>>> = const { RefCell::new(Vec::new()) };
@@ -50,7 +50,7 @@ pub fn load() {
     if ids.is_empty() {
         return;
     }
-    // 최근 기사는 한 번만 읽어 분야마다 나눈다(예전엔 분야마다 3000건씩 다시 읽음 — S8)
+    // 최근 기사는 한 번만 읽어 분야마다 나눈다(예전엔 분야마다 3000건씩 다시 읽음)
     let core = ui().core.clone();
     bg(
         async move {

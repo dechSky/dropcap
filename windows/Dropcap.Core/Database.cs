@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Data.Sqlite;
 
 namespace Dropcap.Core;
@@ -53,6 +54,16 @@ public sealed class Database : IDisposable
           link TEXT PRIMARY KEY, updated REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS image_scores(
           url TEXT PRIMARY KEY, score REAL NOT NULL, text REAL NOT NULL, colors REAL NOT NULL, flat REAL NOT NULL, updated REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS archive(
+          date REAL NOT NULL, title TEXT NOT NULL, title_ko TEXT, link TEXT NOT NULL, source TEXT, source_id TEXT, section TEXT, story TEXT);
+        """);
+        // 출처 id 칸이 없던 보관 표(먼저 만든 판)에는 칸만 더한다(예전 줄은 null — 이름으로 거름)
+        var hasSourceId = false;
+        Run("SELECT name FROM pragma_table_info('archive')", [], r => { if (r.GetString(0) == "source_id") hasSourceId = true; });
+        if (!hasSourceId) Exec("ALTER TABLE archive ADD COLUMN source_id TEXT;");
+        Exec("""
+        DROP INDEX IF EXISTS archive_date;
+        CREATE INDEX IF NOT EXISTS archive_date_src ON archive(date, section, source, source_id);
         """);
         Exec($"PRAGMA user_version={SchemaVersion};");
         if (Recreated)
@@ -293,19 +304,48 @@ public sealed class Database : IDisposable
         return o;
     }
 
-    // 최근 스토리(보도 2건 이상)의 보도들을 한 번에 — 스토리 목록이 스토리마다 따로 묻지 않게
+    // 스토리 카드에 꺼내는 보도 수: 출처마다 첫 보도 + 최근 이만큼(보도가 수천 건인 스토리도 목록을 만들 때 전부 풀지 않게)
+    public const int StorySample = 40;
+
+    // 최근 스토리(보도 2건 이상)의 보도 견본을 한 번에 — 스토리 목록이 스토리마다 따로 묻지 않게.
+    // 견본: 출처마다 첫 보도(카드의 출처 줄·대표) + 최근 StorySample 건(분야 다수결). 보도가 그보다 적으면 전부
     public Dictionary<string, List<StoredItem>> StoryMembers(DateTimeOffset since)
     {
         var o = new Dictionary<string, List<StoredItem>>();
         Run("""
-            SELECT json, first_seen, cluster FROM items
-            WHERE cluster IN (SELECT id FROM clusters WHERE last >= ? AND size >= 2)
-            ORDER BY COALESCE(date, first_seen) ASC
-            """, [Unix(since)], r =>
+            SELECT i.json, i.first_seen, i.cluster FROM items i JOIN (
+              SELECT r FROM (
+                SELECT rowid AS r,
+                       ROW_NUMBER() OVER (PARTITION BY cluster, source ORDER BY COALESCE(date, first_seen) ASC, rowid ASC) AS rs,
+                       ROW_NUMBER() OVER (PARTITION BY cluster ORDER BY COALESCE(date, first_seen) DESC, rowid DESC) AS rn
+                FROM items WHERE cluster IN (SELECT id FROM clusters WHERE last >= ? AND size >= 2)
+              ) WHERE rs = 1 OR rn <= ?
+            ) s ON i.rowid = s.r
+            ORDER BY COALESCE(i.date, i.first_seen) ASC
+            """, [Unix(since), StorySample], r =>
             {
                 if (ReadStored(r) is not { Cluster: { } c } s) return;
                 if (!o.TryGetValue(c, out var list)) o[c] = list = new();
                 list.Add(s);
+            });
+        return o;
+    }
+
+    // 최근 스토리(보도 2건 이상)의 출처별 보도 수(보이는 보도 수·출처 수를 JSON 을 풀지 않고 세게)
+    public Dictionary<string, Dictionary<string, int>> StorySourceCounts(DateTimeOffset since)
+    {
+        var o = new Dictionary<string, Dictionary<string, int>>();
+        Run("""
+            SELECT cluster, source, COUNT(*) FROM items
+            WHERE cluster IN (SELECT id FROM clusters WHERE last >= ? AND size >= 2)
+            GROUP BY cluster, source
+            """, [Unix(since)], r =>
+            {
+                if (r.IsDBNull(0)) return;
+                var c = r.GetString(0);
+                if (!o.TryGetValue(c, out var m)) o[c] = m = new();
+                var src = r.IsDBNull(1) ? "" : r.GetString(1);
+                m[src] = m.GetValueOrDefault(src) + r.GetInt32(2);
             });
         return o;
     }
@@ -330,11 +370,213 @@ public sealed class Database : IDisposable
         get { var n = 0; Run("SELECT COUNT(*) FROM items", [], r => n = (int)r.GetInt64(0)); return n; }
     }
 
-    // 오래된 기록 정리(최근 20000건 유지)
-    public void Prune(int keep = 20000)
+    // 오래된 기록 정리(최근 keep 건 유지). 지우는 기사는 같은 트랜잭션에서 보관 표(archive)로 옮긴다 — 날짜·제목·링크·출처·분야만
+    // (사진·요약·본문은 버림, 링크로 원문을 연다). 보관 표는 archiveYears 년이 지난 달부터 지우고(0 이면 기간으로는 지우지 않음),
+    // 어느 때든 maxArchive 건을 넘으면 가장 오래된 것부터 지운다.
+    // 제목·링크가 없는 줄은 옮기지도 지우지도 않는다. 옮긴(또는 이미 있던) 기사만 지우고, 어디서든 실패하면 아무것도 바꾸지 않는다. 새로 옮긴 건수를 돌려준다.
+    public int Prune(int keep = 20000, int archiveYears = Archive.DefaultYears, DateTimeOffset? now = null, Func<NewsItem, string>? section = null,
+        int maxArchive = Archive.MaxRows)
     {
-        Run("DELETE FROM items WHERE key IN (SELECT key FROM items ORDER BY COALESCE(date, first_seen) DESC LIMIT -1 OFFSET ?)", [keep]);
-        Run("DELETE FROM clusters WHERE id NOT IN (SELECT DISTINCT cluster FROM items WHERE cluster IS NOT NULL)", []);
+        section ??= it => Sections.Primary(it);
+        lock (gate)
+        {
+            try { Raw("BEGIN IMMEDIATE"); }
+            catch (SqliteException e) { Console.Error.WriteLine($"[DB] 정리 시작 실패({e.SqliteErrorCode}) {e.Message}"); return 0; }
+            try
+            {
+                var moved = 0;
+                // 넘친 것이 없으면(확인 대부분) 정렬 질의를 건너뛴다
+                if (ItemCount > keep)
+                {
+                    // 본문 JSON 을 통째로 풀지 않고 칸만 꺼낸다(깨진 줄 하나가 정리 전체를 막지 않게)
+                    var rows = new List<(string Key, double When, NewsItem Item, string? Story)>();
+                    Run("""
+                        SELECT i.key, COALESCE(i.date, i.first_seen), json_extract(i.json,'$.title'), json_extract(i.json,'$.titleKo'), json_extract(i.json,'$.link'),
+                               json_extract(i.json,'$.sourceName'), COALESCE(json_extract(i.json,'$.sourceId'), i.source), json_extract(i.json,'$.summary'),
+                               json_extract(i.json,'$.id'), CASE WHEN c.size >= 2 THEN i.cluster END
+                        FROM items i LEFT JOIN clusters c ON c.id = i.cluster
+                        WHERE i.key IN (SELECT key FROM items ORDER BY COALESCE(date, first_seen) DESC LIMIT -1 OFFSET ?)
+                        """, [keep], r =>
+                        {
+                            string? S(int i) => r.IsDBNull(i) ? null : r.GetValue(i)?.ToString();
+                            if (S(2) is not { Length: > 0 } title || S(4) is not { Length: > 0 } link) return;   // 옮길 수 없는 줄은 그대로 둔다
+                            rows.Add((r.GetString(0), r.GetDouble(1), new NewsItem
+                            {
+                                Id = S(8) ?? "", Title = title, TitleKo = S(3), Link = link, SourceName = S(5) ?? "", SourceId = S(6) ?? "", Summary = S(7) ?? "", Tier = "",
+                            }, S(9)));
+                        });
+                    var done = new List<string>();
+                    foreach (var (key, when, it, story) in rows)
+                    {
+                        // 같은 날짜·링크가 이미 있으면 다시 넣지 않는다(지운 뒤 다시 받은 기사) — 이미 있으니 items 에서는 지운다
+                        Run("""
+                            INSERT INTO archive(date,title,title_ko,link,source,source_id,section,story) SELECT ?,?,?,?,?,?,?,?
+                            WHERE NOT EXISTS (SELECT 1 FROM archive WHERE date = ? AND link = ?)
+                            """, [when, it.Title, it.TitleKo, it.Link, it.SourceName, it.SourceId.Length > 0 ? it.SourceId : null, section(it), story, when, it.Link]);
+                        moved += Changes();
+                        done.Add(key);
+                    }
+                    foreach (var chunk in done.Chunk(400))
+                        Run($"DELETE FROM items WHERE key IN ({string.Join(",", chunk.Select(_ => "?"))})", chunk.Cast<object?>().ToArray());
+                }
+                Run("DELETE FROM clusters WHERE id NOT IN (SELECT DISTINCT cluster FROM items WHERE cluster IS NOT NULL)", []);
+                if (Archive.Cutoff(archiveYears, now ?? DateTimeOffset.Now) is { } cutoff)
+                    Run("DELETE FROM archive WHERE date < ?", [Unix(cutoff)]);
+                // 상한: 최신 maxArchive 건만 남기고 가장 오래된 것부터(모자라면 하위 질의가 null 이라 지우지 않음)
+                Run("DELETE FROM archive WHERE date < (SELECT date FROM archive ORDER BY date DESC LIMIT 1 OFFSET ?)", [Math.Max(1, maxArchive) - 1]);
+                Raw("COMMIT");
+                return moved;
+            }
+            catch (Exception e) when (e is SqliteException or InvalidOperationException)
+            {
+                Console.Error.WriteLine($"[DB] 정리 실패 — 되돌림: {e.Message}");
+                try { Raw("ROLLBACK"); } catch (SqliteException) { }
+                return 0;
+            }
+        }
+    }
+
+    // 실패하면 예외를 던지는 문장(트랜잭션 시작·끝)
+    private void Raw(string sql)
+    {
+        lock (gate)
+        {
+            using var cmd = db.CreateCommand();
+            cmd.CommandTimeout = busySeconds;
+            cmd.CommandText = sql;
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    private int Changes()
+    {
+        var n = 0;
+        Run("SELECT changes()", [], r => n = (int)r.GetInt64(0));
+        return n;
+    }
+
+    // MARK: 보관 표(지난 기사)
+    private const string ArchiveColumns = "date, title, title_ko, link, source, section, story, source_id";
+    private static ArchivedItem ReadArchived(SqliteDataReader r) => new(FromUnix(r.GetDouble(0)), r.IsDBNull(1) ? "" : r.GetString(1),
+        r.IsDBNull(2) ? null : r.GetString(2), r.IsDBNull(3) ? "" : r.GetString(3), r.IsDBNull(4) ? "" : r.GetString(4),
+        r.IsDBNull(5) ? Sections.Top : r.GetString(5), r.IsDBNull(6) ? null : r.GetString(6), r.IsDBNull(7) ? null : r.GetString(7));
+
+    // LIKE 의 % _ \ 는 글자 그대로(ESCAPE '\')
+    internal static string LikePattern(string q) => "%" + q.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
+
+    // 보이는 출처만(숨긴 출처는 빼고, 켜진 출처 목록이 있으면 그 안만). 출처 id 가 없는 예전 줄은 숨긴 출처 이름으로 거른다.
+    // 모든 보관 표 질의(목록·날짜별 건수·거르기 메뉴·검색)가 같은 조각을 쓴다
+    private static (string Sql, List<object?> Args) VisibleSources(SourceFilter? filter)
+    {
+        if (filter is null) return ("", new());
+        string Arr(IEnumerable<string> xs) => JsonSerializer.Serialize(xs.Order(StringComparer.Ordinal).ToList());
+        var active = filter.Active is null ? null : Arr(filter.Active);
+        return ("""
+             AND (CASE WHEN source_id IS NULL THEN source NOT IN (SELECT value FROM json_each(?))
+               ELSE (source_id NOT IN (SELECT value FROM json_each(?)) AND (? IS NULL OR source_id IN (SELECT value FROM json_each(?)))) END)
+            """, [Arr(filter.HiddenNames), Arr(filter.Hidden), active, active]);
+    }
+
+    // 분야·출처 거르기(null 이면 모두) + 보이는 출처
+    private static (string Sql, List<object?> Args) ArchiveFilter(string? section, string? source, SourceFilter? filter)
+    {
+        var (sql, args) = VisibleSources(filter);
+        if (section is not null) { sql += " AND section = ?"; args.Add(section); }
+        if (source is not null) { sql += " AND source = ?"; args.Add(source); }
+        return (sql, args);
+    }
+
+    public int ArchiveCount
+    {
+        get { var n = 0; Run("SELECT COUNT(*) FROM archive", [], r => n = (int)r.GetInt64(0)); return n; }
+    }
+
+    // 보관 표에서 제목·한국어 제목·출처로 찾기(FTS 없이 LIKE), 최신순. 검색어는 200글자까지.
+    // '+date': 날짜 색인을 거꾸로 훑으며 줄마다 표를 찾아가면(맞는 것이 적을 때) 느리다 — 표를 한 번 훑고 맞은 것만 정렬한다
+    public List<ArchivedItem> SearchArchive(string q, int limit = 200, int offset = 0, SourceFilter? filter = null)
+    {
+        var o = new List<ArchivedItem>();
+        var like = LikePattern(Archive.TrimQuery(q));
+        var (f, a) = VisibleSources(filter);
+        Run($"""
+            SELECT {ArchiveColumns} FROM archive
+            WHERE (title LIKE ? ESCAPE '\' OR title_ko LIKE ? ESCAPE '\' OR source LIKE ? ESCAPE '\'){f}
+            ORDER BY +date DESC LIMIT ? OFFSET ?
+            """, [like, like, like, .. a, limit, offset], r => o.Add(ReadArchived(r)));
+        return o;
+    }
+
+    // [from, to) 의 보관 기사(최신순, 날짜 색인)
+    public List<ArchivedItem> Archived(DateTimeOffset from, DateTimeOffset to, string? section = null, string? source = null, int limit = 100, int offset = 0,
+        SourceFilter? filter = null)
+    {
+        var o = new List<ArchivedItem>();
+        var (f, a) = ArchiveFilter(section, source, filter);
+        Run($"SELECT {ArchiveColumns} FROM archive WHERE date >= ? AND date < ?{f} ORDER BY date DESC LIMIT ? OFFSET ?",
+            [Unix(from), Unix(to), .. a, limit, offset], r => o.Add(ReadArchived(r)));
+        return o;
+    }
+
+    // [from, to) 보관 기사의 날짜별 건수(이 PC 의 날 기준 'yyyy-MM-dd'). 건수·거르기는 색인(date, section, source, source_id)만 읽는다
+    public Dictionary<string, int> ArchiveDayCounts(DateTimeOffset from, DateTimeOffset to, string? section = null, string? source = null, SourceFilter? filter = null)
+    {
+        var o = new Dictionary<string, int>();
+        var (f, a) = ArchiveFilter(section, source, filter);
+        Run($"SELECT date(date,'unixepoch','localtime') AS d, COUNT(*) FROM archive WHERE date >= ? AND date < ?{f} GROUP BY d",
+            [Unix(from), Unix(to), .. a], r => { if (!r.IsDBNull(0)) o[r.GetString(0)] = (int)r.GetInt64(1); });
+        return o;
+    }
+
+    // [from, to) 보관 기사의 분야별·출처별 건수(거르기 메뉴) — 한 번에 묶어 센다
+    public (Dictionary<string, int> Sections, Dictionary<string, int> Sources) ArchiveFacets(DateTimeOffset from, DateTimeOffset to, SourceFilter? filter = null)
+    {
+        var sections = new Dictionary<string, int>();
+        var sources = new Dictionary<string, int>();
+        var (f, a) = VisibleSources(filter);
+        Run($"SELECT section, source, COUNT(*) FROM archive WHERE date >= ? AND date < ?{f} GROUP BY section, source", [Unix(from), Unix(to), .. a], r =>
+        {
+            var n = (int)r.GetInt64(2);
+            var sec = r.IsDBNull(0) ? Sections.Top : r.GetString(0);
+            var src = r.IsDBNull(1) ? "" : r.GetString(1);
+            sections[sec] = sections.GetValueOrDefault(sec) + n;
+            sources[src] = sources.GetValueOrDefault(src) + n;
+        });
+        return (sections, sources);
+    }
+
+    // 기록이 있는 가장 이른 때(보관 표와 최근 기사 중) — 보관함 ◀ 의 끝
+    public DateTimeOffset? EarliestRecord()
+    {
+        DateTimeOffset? o = null;
+        Run("SELECT MIN(m) FROM (SELECT MIN(date) AS m FROM archive UNION ALL SELECT MIN(COALESCE(date, first_seen)) FROM items)", [],
+            r => { if (!r.IsDBNull(0)) o = FromUnix(r.GetDouble(0)); });
+        return o;
+    }
+
+    // 아직 items 에 있는 [from, to) 기사를 보관 표와 같은 가벼운 꼴로(본문 JSON 을 통째로 풀지 않게 칸만 꺼낸다).
+    // section: (key, 분야를 가를 만큼만 채운 기사) → 분야
+    public List<ArchivedItem> RecentLight(DateTimeOffset from, DateTimeOffset to, Func<string, NewsItem, string>? section = null)
+    {
+        section ??= (_, it) => Sections.Primary(it);
+        var o = new List<ArchivedItem>();
+        Run("""
+            SELECT COALESCE(i.date, i.first_seen), json_extract(i.json,'$.title'), json_extract(i.json,'$.titleKo'), json_extract(i.json,'$.link'),
+                   json_extract(i.json,'$.sourceName'), i.source, json_extract(i.json,'$.summary'), json_extract(i.json,'$.id'),
+                   CASE WHEN c.size >= 2 THEN i.cluster END, i.key
+            FROM items i LEFT JOIN clusters c ON c.id = i.cluster
+            WHERE COALESCE(i.date, i.first_seen) >= ? AND COALESCE(i.date, i.first_seen) < ?
+            ORDER BY COALESCE(i.date, i.first_seen) DESC
+            """, [Unix(from), Unix(to)], r =>
+            {
+                string? S(int i) => r.IsDBNull(i) ? null : r.GetValue(i)?.ToString();
+                var it = new NewsItem
+                {
+                    Id = S(7) ?? "", Title = S(1) ?? "", TitleKo = S(2), Link = S(3) ?? "", Summary = S(6) ?? "",
+                    SourceId = S(5) ?? "", SourceName = S(4) ?? "", Tier = "",
+                };
+                o.Add(new ArchivedItem(FromUnix(r.GetDouble(0)), it.Title, it.TitleKo, it.Link, it.SourceName, section(S(9) ?? it.Key, it), S(8), it.SourceId));
+            });
+        return o;
     }
 
     // MARK: 스토리

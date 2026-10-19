@@ -1,7 +1,7 @@
 import AppKit
 import ObjectiveC
 
-// 시험 장치(M9): 디버그 빌드(swift build·swift test·e2e·clicksweep)에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
+// 시험 장치: 디버그 빌드(swift build·swift test·e2e·clicksweep)에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
 #if DEBUG
 
 // 시험(DROPCAP_TEST_E2E)이 사용자 작업을 끊지 않게: 앱 활성화·Dock 아이콘·창 보이기를 막는다.

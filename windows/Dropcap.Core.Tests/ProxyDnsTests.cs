@@ -5,7 +5,7 @@ using Dropcap.Core;
 
 namespace Dropcap.Core.Tests;
 
-// 보안 점검 W6: 시스템 프록시를 거칠 때도 DNS 바꿔치기 막기.
+// 시스템 프록시를 거칠 때도 DNS 바꿔치기 막기.
 // 프록시 모드에서는 접속 IP 를 직접 볼 수 없으므로(프록시가 이름을 푼다), 보내기 직전에 목적지 이름을 기억 없이 다시 풀어
 // 공개 주소가 아니면 막는다. 프록시 응답을 출처 도메인으로 제한하지는 않는다(사진 CDN·출처 밖 기사·번역이 막히므로 — 맥에서 되돌림).
 public sealed class ProxyDnsTests : IDisposable

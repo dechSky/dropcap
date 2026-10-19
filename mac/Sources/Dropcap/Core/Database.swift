@@ -109,8 +109,22 @@ final class Database: @unchecked Sendable {
           link TEXT PRIMARY KEY, updated REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS image_scores(
           url TEXT PRIMARY KEY, score REAL NOT NULL, text REAL NOT NULL, colors REAL NOT NULL, flat REAL NOT NULL, updated REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS archive(
+          date REAL NOT NULL, title TEXT NOT NULL, title_ko TEXT, link TEXT NOT NULL, source TEXT, source_id TEXT, section TEXT, story TEXT);
+        """)
+        && addArchiveSourceID()
+        && exec("""
+        DROP INDEX IF EXISTS archive_date;
+        CREATE INDEX IF NOT EXISTS archive_date_src ON archive(date, section, source, source_id);
         """)
         && exec("PRAGMA user_version=\(Self.schemaVersion);")
+    }
+
+    // source_id 칸이 없던 보관 표(먼저 만든 판)에 칸을 더한다 — 그때 줄은 NULL(출처 이름으로 거른다)
+    private func addArchiveSourceID() -> Bool {
+        var has = false
+        run("SELECT 1 FROM pragma_table_info('archive') WHERE name='source_id'", []) { _ in has = true }
+        return has || exec("ALTER TABLE archive ADD COLUMN source_id TEXT")
     }
 
     @discardableResult
@@ -120,6 +134,9 @@ final class Database: @unchecked Sendable {
         if !ok { NSLog("[DB] %@", err.map { String(cString: $0) } ?? "?"); sqlite3_free(err) }
         return ok
     }
+
+    // 시험용: 줄을 일부러 망가뜨리기
+    func execForTests(_ sql: String) { queue.sync { _ = exec(sql) } }
 
     // MARK: 문장 실행 도우미
     enum Value { case text(String?), real(Double?), int(Int?) }
@@ -320,17 +337,43 @@ final class Database: @unchecked Sendable {
         return out
     }
 
-    // 최근 스토리(보도 2건 이상)의 보도들을 한 번에(스토리 목록 — 스토리마다 따로 묻지 않게)
+    // 스토리 카드에 꺼내는 보도 수: 출처마다 첫 보도 + 최근 이만큼(보도가 수천 건인 스토리도 목록을 만들 때 전부 풀지 않게)
+    static let storySample = 40
+
+    // 최근 스토리(보도 2건 이상)의 보도 견본을 한 번에(스토리 목록 — 스토리마다 따로 묻지 않게).
+    // 견본: 출처마다 첫 보도(카드의 출처 줄·대표) + 최근 storySample 건(분야 다수결). 보도가 그보다 적으면 전부
     func storyMembers(since: Date) -> [String: [StoredItem]] {
         var out: [String: [StoredItem]] = [:]
         queue.sync {
             run("""
-            SELECT json, first_seen, cluster FROM items
-            WHERE cluster IN (SELECT id FROM clusters WHERE last >= ? AND size >= 2)
-            ORDER BY COALESCE(date, first_seen) ASC
-            """, [.real(since.timeIntervalSince1970)]) { st in
+            SELECT i.json, i.first_seen, i.cluster FROM items i JOIN (
+              SELECT r FROM (
+                SELECT rowid AS r,
+                       ROW_NUMBER() OVER (PARTITION BY cluster, source ORDER BY COALESCE(date, first_seen) ASC, rowid ASC) AS rs,
+                       ROW_NUMBER() OVER (PARTITION BY cluster ORDER BY COALESCE(date, first_seen) DESC, rowid DESC) AS rn
+                FROM items WHERE cluster IN (SELECT id FROM clusters WHERE last >= ? AND size >= 2)
+              ) WHERE rs = 1 OR rn <= ?
+            ) s ON i.rowid = s.r
+            ORDER BY COALESCE(i.date, i.first_seen) ASC
+            """, [.real(since.timeIntervalSince1970), .int(Self.storySample)]) { st in
                 guard let c = Self.text(st, 2), let j = Self.text(st, 0), let it = try? Self.decoder.decode(NewsItem.self, from: Data(j.utf8)) else { return }
                 out[c, default: []].append(StoredItem(item: it, firstSeen: Date(timeIntervalSince1970: sqlite3_column_double(st, 1)), cluster: c))
+            }
+        }
+        return out
+    }
+
+    // 최근 스토리(보도 2건 이상)의 출처별 보도 수(보이는 보도 수·출처 수를 JSON 을 풀지 않고 세게)
+    func storySourceCounts(since: Date) -> [String: [String: Int]] {
+        var out: [String: [String: Int]] = [:]
+        queue.sync {
+            run("""
+            SELECT cluster, source, COUNT(*) FROM items
+            WHERE cluster IN (SELECT id FROM clusters WHERE last >= ? AND size >= 2)
+            GROUP BY cluster, source
+            """, [.real(since.timeIntervalSince1970)]) { st in
+                guard let c = Self.text(st, 0) else { return }
+                out[c, default: [:]][Self.text(st, 1) ?? "", default: 0] += Int(sqlite3_column_int64(st, 2))
             }
         }
         return out
@@ -359,14 +402,183 @@ final class Database: @unchecked Sendable {
         return n
     }
 
-    // 오래된 기록 정리(최근 20000건 유지)
-    func prune(keep: Int = 20000) {
+    // 오래된 기록 정리(최근 keep 건 유지). 지우는 기사는 같은 트랜잭션에서 보관 표(archive)로 옮긴다 — 날짜·제목·링크·출처·분야만
+    // (사진·요약·본문은 버림, 링크로 원문을 연다). 보관 표는 archiveYears 년이 지난 달부터 지운다(0 이면 달로는 지우지 않음),
+    // 어느 경우든 archiveRowCap 건을 넘으면 가장 오래된 것부터 지운다.
+    // 옮긴 기사만 지운다 — 고르기가 실패하면 아무것도 지우지 않고, 제목·링크를 읽지 못한 줄은 남긴다. 옮긴 건수를 돌려준다.
+    static let archiveRowCap = 5_000_000
+    @discardableResult
+    func prune(keep: Int = 20000, archiveYears: Int = Archive.defaultYears, now: Date = Date(), rowCap: Int = Database.archiveRowCap,
+               section: (NewsItem) -> String = { Sections.primary($0) }) -> Int {
+        queue.sync {
+            guard exec("BEGIN IMMEDIATE") else { return 0 }
+            var moved = 0, ok = true, count = 0
+            var rows: [(key: String, item: NewsItem, when: Double, story: String?)] = []
+            ok = run("SELECT COUNT(*) FROM items", []) { st in count = Int(sqlite3_column_int64(st, 0)) }
+            // 넘친 것이 없으면(확인 대부분) 정렬 질의를 건너뛴다. 본문 JSON 을 통째로 풀지 않고 칸만 꺼낸다
+            if ok, count > keep {
+                ok = run("""
+                SELECT i.key, COALESCE(i.date, i.first_seen), CASE WHEN c.size >= 2 THEN i.cluster END,
+                       json_extract(i.json,'$.title'), json_extract(i.json,'$.titleKo'), json_extract(i.json,'$.link'),
+                       json_extract(i.json,'$.sourceName'), i.source, json_extract(i.json,'$.summary'), json_extract(i.json,'$.id')
+                FROM items i LEFT JOIN clusters c ON c.id = i.cluster
+                WHERE i.key IN (SELECT key FROM items ORDER BY COALESCE(date, first_seen) DESC LIMIT -1 OFFSET ?)
+                """, [.int(keep)]) { st in
+                    guard let key = Self.text(st, 0), let title = Self.text(st, 3), let link = Self.text(st, 5) else { return }
+                    let it = NewsItem(id: Self.text(st, 9) ?? "", title: title, titleKo: Self.text(st, 4), link: link, date: nil,
+                                      summary: Self.text(st, 8) ?? "", sourceId: Self.text(st, 7) ?? "", sourceName: Self.text(st, 6) ?? "", tier: "")
+                    rows.append((key, it, sqlite3_column_double(st, 1), Self.text(st, 2)))
+                }
+            }
+            var done: [String] = []
+            for r in rows where ok {
+                // 같은 날짜·링크가 이미 있으면 다시 넣지 않는다(지운 뒤 다시 받은 기사) — 이미 보관된 것이므로 items 에선 지운다
+                ok = run("""
+                INSERT INTO archive(date,title,title_ko,link,source,source_id,section,story) SELECT ?1,?2,?3,?4,?5,?6,?7,?8
+                WHERE NOT EXISTS (SELECT 1 FROM archive WHERE date = ?1 AND link = ?4)
+                """, [.real(r.when), .text(r.item.title), .text(r.item.titleKo), .text(r.item.link), .text(r.item.sourceName),
+                      .text(r.item.sourceId), .text(section(r.item)), .text(r.story)])
+                if ok { moved += Int(sqlite3_changes(db)); done.append(r.key) }
+            }
+            for chunk in stride(from: 0, to: done.count, by: 400).map({ Array(done[$0..<min($0 + 400, done.count)]) }) where ok {
+                ok = run("DELETE FROM items WHERE key IN (\(Array(repeating: "?", count: chunk.count).joined(separator: ",")))", chunk.map { .text($0) })
+            }
+            ok = ok && run("DELETE FROM clusters WHERE id NOT IN (SELECT DISTINCT cluster FROM items WHERE cluster IS NOT NULL)", [])
+            if let cutoff = Archive.cutoff(years: archiveYears, now: now) {
+                ok = ok && run("DELETE FROM archive WHERE date < ?", [.real(cutoff.timeIntervalSince1970)])
+            }
+            // 줄 수 안전 상한('끝없이'여도) — 날짜 색인으로 rowCap 번째 날짜를 찾아 그보다 이른 것을 지운다
+            ok = ok && run("DELETE FROM archive WHERE date < (SELECT date FROM archive ORDER BY date DESC LIMIT 1 OFFSET ?)", [.int(max(rowCap - 1, 0))]) // rowCap 번째 줄의 날짜보다 이른 것
+            guard ok, exec("COMMIT") else { exec("ROLLBACK"); return 0 }
+            return moved
+        }
+    }
+
+    // MARK: 보관 표(지난 기사)
+    private static let archiveColumns = "date, title, title_ko, link, source, section, story, source_id"
+    private static func archived(_ st: OpaquePointer) -> ArchivedItem {
+        ArchivedItem(date: Date(timeIntervalSince1970: sqlite3_column_double(st, 0)), title: text(st, 1) ?? "", titleKo: text(st, 2),
+                     link: text(st, 3) ?? "", source: text(st, 4) ?? "", section: text(st, 5) ?? Sections.top, story: text(st, 6),
+                     sourceId: text(st, 7))
+    }
+    private static func likePattern(_ q: String) -> String {
+        "%" + q.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "%", with: "\\%").replacingOccurrences(of: "_", with: "\\_") + "%"
+    }
+    private static func json(_ list: some Sequence<String>) -> String {
+        String(decoding: (try? JSONEncoder().encode(Array(list).sorted())) ?? Data("[]".utf8), as: UTF8.self)
+    }
+    // 숨긴·끈·해지한 출처 빼기(기존 매거진 검색과 같은 기준 — SourceFilter). 출처 id 가 없는 줄은 숨긴 출처 이름으로
+    private static func hideFilter(_ hide: Archive.Hide) -> (String, [Value]) {
+        let active = hide.filter.active.map { json($0) }
+        return ("""
+         AND (CASE WHEN source_id IS NULL THEN source NOT IN (SELECT value FROM json_each(?))
+              ELSE (source_id NOT IN (SELECT value FROM json_each(?)) AND (? IS NULL OR source_id IN (SELECT value FROM json_each(?)))) END)
+        """, [.text(json(hide.hiddenNames)), .text(json(hide.filter.hidden)), .text(active), .text(active)])
+    }
+    // 분야·출처 거르기(nil 이면 모두) + 숨긴 출처 빼기
+    private static func archiveFilter(_ section: String?, _ source: String?, _ hide: Archive.Hide) -> (String, [Value]) {
+        var (sql, args) = hideFilter(hide)
+        if let section { sql += " AND section = ?"; args.append(.text(section)) }
+        if let source { sql += " AND source = ?"; args.append(.text(source)) }
+        return (sql, args)
+    }
+
+    var archiveCount: Int {
+        var n = 0
+        queue.sync { run("SELECT COUNT(*) FROM archive", []) { st in n = Int(sqlite3_column_int64(st, 0)) } }
+        return n
+    }
+
+    // 보관 표에서 제목·한국어 제목·출처로 찾기(FTS 없이 LIKE — 1년치 약 0.2초), 최신순. 검색어는 Archive.queryLimit 자까지.
+    // '+date': 날짜 색인을 거꾸로 훑으며 줄마다 표를 찾아가면(맞는 것이 적을 때) 1년치 2초 — 표를 한 번 훑고 맞은 것만 정렬한다
+    func searchArchive(_ q: String, limit: Int = 200, offset: Int = 0, hide: Archive.Hide = .init()) -> [ArchivedItem] {
+        var out: [ArchivedItem] = []
+        let (f, a) = Self.hideFilter(hide)
         queue.sync {
             run("""
-            DELETE FROM items WHERE key IN (SELECT key FROM items ORDER BY COALESCE(date, first_seen) DESC LIMIT -1 OFFSET ?)
-            """, [.int(keep)])
-            run("DELETE FROM clusters WHERE id NOT IN (SELECT DISTINCT cluster FROM items WHERE cluster IS NOT NULL)", [])
+            SELECT \(Self.archiveColumns) FROM archive
+            WHERE (title LIKE ? ESCAPE '\\' OR title_ko LIKE ? ESCAPE '\\' OR source LIKE ? ESCAPE '\\')\(f)
+            ORDER BY +date DESC LIMIT ? OFFSET ?
+            """, Array(repeating: .text(Self.likePattern(Archive.trimQuery(q))), count: 3) + a + [.int(limit), .int(offset)]) { st in
+                out.append(Self.archived(st))
+            }
         }
+        return out
+    }
+
+    // [from, to) 의 보관 기사(최신순, 날짜 색인)
+    func archived(from: Date, to: Date, section: String? = nil, source: String? = nil, hide: Archive.Hide = .init(),
+                  limit: Int = 100, offset: Int = 0) -> [ArchivedItem] {
+        var out: [ArchivedItem] = []
+        let (f, a) = Self.archiveFilter(section, source, hide)
+        queue.sync {
+            run("SELECT \(Self.archiveColumns) FROM archive WHERE date >= ? AND date < ?\(f) ORDER BY date DESC LIMIT ? OFFSET ?",
+                [.real(from.timeIntervalSince1970), .real(to.timeIntervalSince1970)] + a + [.int(limit), .int(offset)]) { st in out.append(Self.archived(st)) }
+        }
+        return out
+    }
+
+    // [from, to) 보관 기사의 날짜별 건수(이 Mac 의 날 기준 'YYYY-MM-DD'). 건수·거르기는 색인(date, section, source, source_id)만 읽는다
+    func archiveDayCounts(from: Date, to: Date, section: String? = nil, source: String? = nil, hide: Archive.Hide = .init()) -> [String: Int] {
+        var out: [String: Int] = [:]
+        let (f, a) = Self.archiveFilter(section, source, hide)
+        queue.sync {
+            run("SELECT date(date,'unixepoch','localtime') AS d, COUNT(*) FROM archive WHERE date >= ? AND date < ?\(f) GROUP BY d",
+                [.real(from.timeIntervalSince1970), .real(to.timeIntervalSince1970)] + a) { st in
+                if let d = Self.text(st, 0) { out[d] = Int(sqlite3_column_int64(st, 1)) }
+            }
+        }
+        return out
+    }
+
+    // [from, to) 보관 기사의 분야별·출처별 건수(거르기 메뉴)
+    func archiveFacets(from: Date, to: Date, hide: Archive.Hide = .init()) -> (sections: [String: Int], sources: [String: Int]) {
+        var sections: [String: Int] = [:], sources: [String: Int] = [:]
+        let (f, a) = Self.hideFilter(hide)
+        queue.sync {
+            run("SELECT section, source, COUNT(*) FROM archive WHERE date >= ? AND date < ?\(f) GROUP BY section, source",
+                [.real(from.timeIntervalSince1970), .real(to.timeIntervalSince1970)] + a) { st in
+                let n = Int(sqlite3_column_int64(st, 2))
+                sections[Self.text(st, 0) ?? Sections.top, default: 0] += n
+                sources[Self.text(st, 1) ?? "", default: 0] += n
+            }
+        }
+        return (sections, sources)
+    }
+
+    // 기록이 있는 가장 이른 때(보관 표와 최근 기사 중) — 보관함 ◀ 의 끝
+    func earliestRecord() -> Date? {
+        var out: Double?
+        queue.sync {
+            run("SELECT MIN(m) FROM (SELECT MIN(date) AS m FROM archive UNION ALL SELECT MIN(COALESCE(date, first_seen)) FROM items)", []) { st in
+                if sqlite3_column_type(st, 0) != SQLITE_NULL { out = sqlite3_column_double(st, 0) }
+            }
+        }
+        return out.map { Date(timeIntervalSince1970: $0) }
+    }
+
+    // 아직 items 에 있는 [from, to) 기사를 보관 표와 같은 가벼운 꼴로(본문 JSON 을 통째로 풀지 않게 칸만 꺼낸다). 숨긴 출처는 뺀다
+    func recentLight(from: Date, to: Date, filter: SourceFilter = SourceFilter(),
+                     section: @escaping (NewsItem) -> String = { Sections.primary($0) }) -> [ArchivedItem] {
+        var out: [ArchivedItem] = []
+        queue.sync {
+            run("""
+            SELECT COALESCE(i.date, i.first_seen), json_extract(i.json,'$.title'), json_extract(i.json,'$.titleKo'), json_extract(i.json,'$.link'),
+                   json_extract(i.json,'$.sourceName'), i.source, json_extract(i.json,'$.summary'), json_extract(i.json,'$.id'),
+                   CASE WHEN c.size >= 2 THEN i.cluster END
+            FROM items i LEFT JOIN clusters c ON c.id = i.cluster
+            WHERE COALESCE(i.date, i.first_seen) >= ? AND COALESCE(i.date, i.first_seen) < ?
+            ORDER BY COALESCE(i.date, i.first_seen) DESC
+            """, [.real(from.timeIntervalSince1970), .real(to.timeIntervalSince1970)]) { st in
+                let sid = Self.text(st, 5) ?? ""
+                guard filter.shows(sid) else { return }
+                let it = NewsItem(id: Self.text(st, 7) ?? "", title: Self.text(st, 1) ?? "", titleKo: Self.text(st, 2), link: Self.text(st, 3) ?? "",
+                                  date: nil, summary: Self.text(st, 6) ?? "", sourceId: sid, sourceName: Self.text(st, 4) ?? "", tier: "")
+                out.append(ArchivedItem(date: Date(timeIntervalSince1970: sqlite3_column_double(st, 0)), title: it.title, titleKo: it.titleKo,
+                                        link: it.link, source: it.sourceName, section: section(it), story: Self.text(st, 8), sourceId: sid))
+            }
+        }
+        return out
     }
 
     // MARK: 스토리

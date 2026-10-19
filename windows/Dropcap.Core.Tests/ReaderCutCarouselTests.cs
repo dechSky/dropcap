@@ -82,7 +82,7 @@ public class ReaderCutCarouselTests
         Assert.True(At(b, Para(8)) >= 0);
     }
 
-    // 보안 낮음 L2: 추천 머리말이 캐러셀 바깥 바로 앞 형제(또는 한 겹 감싼 상자의 앞 형제)이고 칸에 링크가 없어도(onclick 카드) 화면 밖 칸을 넣지 않는다
+    // 보안 낮음: 추천 머리말이 캐러셀 바깥 바로 앞 형제(또는 한 겹 감싼 상자의 앞 형제)이고 칸에 링크가 없어도(onclick 카드) 화면 밖 칸을 넣지 않는다
     [JsFact]
     public async Task RecommendHeadOutsideRoot()
     {
@@ -96,7 +96,7 @@ public class ReaderCutCarouselTests
         Assert.True(At(b, SlideText(7)) >= 0, "추천이 아닌 앞 제목은 그대로");
     }
 
-    // 보안 낮음 L3: 칸 수(50)·칸 글 양(본문 글자 2배, 적어도 3000자) 상한
+    // 보안 낮음: 칸 수(50)·칸 글 양(본문 글자 2배, 적어도 3000자) 상한
     [JsFact]
     public async Task SlideCap()
     {

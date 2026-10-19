@@ -71,6 +71,9 @@
     $('#undoImport').hidden = !g.backup.canUndo;
     $('#backupMsg').hidden = !g.backup.message;
     $('#backupMsg').textContent = g.backup.message || '';
+    // 지난 기사 보관 기간(1·2·5년·끝없이)
+    fillSelect('archiveYears', g.archiveChoices, g.archiveYears);
+    $('#archiveNote').textContent = g.archiveNote;
     fillSelect('translateEngine', g.translateEngines, g.translateEngine);
     $('#engineNote').textContent = g.translationNote;
     $('#summary').textContent = g.summary;
@@ -185,11 +188,12 @@
       html += box('기본 출처', d.groups.map((g) => {
         if (g.single) return sourceRow(g.rows[0]);
         const open = isOpen(g.id, d);
-        const mono = d.layout === 'media' ? `<span class="mono" style="--c:${esc(g.color)}">${esc(g.initial)}</span>` : '';
+        // 아이콘 자리는 매체가 아니어도 비워 둔다(이름 열이 한 줄 출처와 같은 자리)
+        const mono = d.layout === 'media' ? `<span class="mono" style="--c:${esc(g.color)}">${esc(g.initial)}</span>` : '<span class="icon-slot"></span>';
         return `<div class="row dir-head${open ? ' open' : ''}" data-gid="${esc(g.id)}">
           ${disc(g.id, open)}${mono}
           <span class="lb"><b>${esc(g.title)}</b><span class="dir-sub">${esc(g.countLabel)}</span></span>
-          <button class="ib text" data-act="bulk" title="${esc(g.bulkHelp)}">${esc(g.bulk)}</button>
+          <span class="controls"><button class="ib text" data-act="bulk" title="${esc(g.bulkHelp)}">${esc(g.bulk)}</button></span>
         </div>${open ? g.rows.map((r) => sourceRow(r, true)).join('') : ''}`;
       }).join(''));
     }
@@ -197,8 +201,8 @@
     if (rec.count) {
       const open = isOpen('catalog', d);
       html += `<h3>추천 채널</h3><div class="group"><div class="row dir-head${open ? ' open' : ''}" data-gid="catalog">
-          ${disc('catalog', open)}<span class="lb"><b>${esc(rec.label)}</b></span></div>${open ? rec.groups.map((g) =>
-          `<div class="row note dir-in">${esc(g.label)}</div>${g.rows.map(catalogRow).join('')}`).join('') : ''}</div>`;
+          ${disc('catalog', open)}<span class="icon-slot"></span><span class="lb"><b>${esc(rec.label)}</b></span></div>${open ? rec.groups.map((g) =>
+          `<div class="row note dir-note">${esc(g.label)}</div>${g.rows.map(catalogRow).join('')}`).join('') : ''}</div>`;
     }
     $('#sourceLists').innerHTML = html;
   }
@@ -206,17 +210,19 @@
   const badge = (r) => r.kindLabel ? `<span class="badge">${ic('kind.' + r.kind)}${esc(r.kindLabel)}</span>` : '';
 
   // 줄: 이름(묶음 안에서는 짧은 이름) · 분야 칩 · 국내/해외 · 유료 자물쇠 · 알림 종 · 켜기 스위치
+  // 열(settings.css --col-*, 맥 RowColumn 과 같음): [펼침 자리] [아이콘] [이름] [칩들] … [해지] [종] [스위치]. 묶음 안 줄(dir-in)은 한 단계 들임
   function sourceRow(r, inGroup = false) {
     const name = inGroup ? r.shortName : r.name;
     return `<div class="row src${inGroup ? ' dir-in' : ''}" data-id="${esc(r.id)}">
+      <span class="lead"></span>
       <span class="mono" style="--c:${esc(r.color)}">${esc(r.initial)}</span>
       <div class="body">
         <div class="name"><b title="${esc(r.name)}">${esc(name)}</b>${r.sectionName ? `<span class="badge">${esc(r.sectionName)}</span>` : ''}${r.region ? `<span class="ai">${esc(r.region)}</span>` : ''}${ui.lock(r)}${badge(r)}${r.aiOnly ? '<span class="ai">AI 글만</span>' : ''}${r.error ? `<span class="warn" title="${esc(r.error)}">${sic('warn')}</span>` : ''}</div>
         ${r.sub ? `<div class="sub" title="${esc(r.sub)}">${esc(r.sub)}</div>` : ''}
       </div>
-      <button class="ib${r.notify ? ' on' : ''}" data-act="notify" title="${esc(r.notifyHelp)}"${r.enabled ? '' : ' disabled'}>${sic(r.notify ? 'bell.fill' : 'bell.slash')}</button>
-      <input type="checkbox" class="switch small" data-act="enable"${r.enabled ? ' checked' : ''} title="${r.enabled ? '켜짐' : '꺼짐'}">
       ${r.removable ? `<button class="ib del" data-act="remove" title="구독 해지">${ic('trash')}</button>` : ''}
+      <button class="ib bell${r.notify ? ' on' : ''}" data-act="notify" title="${esc(r.notifyHelp)}"${r.enabled ? '' : ' disabled'}>${sic(r.notify ? 'bell.fill' : 'bell.slash')}</button>
+      <span class="toggle"><input type="checkbox" class="switch small" data-act="enable"${r.enabled ? ' checked' : ''} title="${r.enabled ? '켜짐' : '꺼짐'}"></span>
     </div>`;
   }
 
@@ -224,13 +230,14 @@
     const right = r.subscribed
       ? `<span class="subbed">${sic('check.circle')}구독 중</span>`
       : `<button class="btn small" data-act="subscribe"${r.subscribing ? ' disabled' : ''}>${r.subscribing ? '확인 중…' : '구독'}</button>`;
-    return `<div class="row src" data-id="${esc(r.id)}">
+    return `<div class="row src dir-in" data-id="${esc(r.id)}">
+      <span class="lead"></span>
       <span class="mono" style="--c:${esc(r.color)}">${esc(r.initial)}</span>
       <div class="body">
-        <div class="name"><b>${esc(r.name)}</b>${badge(r)}</div>
+        <div class="name"><b title="${esc(r.name)}">${esc(r.name)}</b>${badge(r)}</div>
         <div class="sub">${esc(r.sub)}</div>
       </div>
-      ${right}
+      <span class="controls">${right}</span>
     </div>`;
   }
 

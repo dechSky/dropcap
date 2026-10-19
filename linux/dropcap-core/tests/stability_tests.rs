@@ -1,5 +1,5 @@
-// 오래 켜 두기·멈춤·실패 처리(맥~S8 · Tests/DropcapTests/StabilityTests.swift 를 옮긴 것).
-// 모두 임시 폴더·견본 기사로 돌고 바깥 요청을 하지 않는다. (S2 의 느린 서버 시험은 net.rs 안 단위 시험)
+// 오래 켜 두기·멈춤·실패 처리(맥 Tests/DropcapTests/StabilityTests.swift 를 옮긴 것).
+// 모두 임시 폴더·견본 기사로 돌고 바깥 요청을 하지 않는다. (느린 서버 시험은 net.rs 안 단위 시험)
 use chrono::{Duration, Utc};
 use dropcap_core::app_model::{self, AppModel};
 use dropcap_core::byte_cache::{cover_size, ByteLru};
@@ -20,7 +20,7 @@ fn article(src: &str, id: &str, title: &str) -> NewsItem {
     it
 }
 
-// S1: 사진 메모리 캐시는 장 수가 아니라 바이트로 묶는다(최근 사용 순) — 맥 imageMemoryCacheIsBoundedInBytes
+// 사진 메모리 캐시는 장 수가 아니라 바이트로 묶는다(최근 사용 순) — 맥 imageMemoryCacheIsBoundedInBytes
 #[test]
 fn image_memory_cache_is_bounded_in_bytes() {
     let mb = 1 << 20;
@@ -44,7 +44,7 @@ fn image_memory_cache_is_bounded_in_bytes() {
     assert_eq!(c.bytes(), 5 * mb);
 }
 
-// S1: 카드 사진은 그릴 칸(화면 배율 포함) 크기로 줄여 둔다 — 카드마다 원본 크기 Cairo 표면 사본을 두지 않게
+// 카드 사진은 그릴 칸(화면 배율 포함) 크기로 줄여 둔다 — 카드마다 원본 크기 Cairo 표면 사본을 두지 않게
 #[test]
 fn card_surface_is_scaled_to_the_box() {
     assert_eq!(cover_size(1400, 933, 240, 160), (240, 160)); // 꽉 차게(cover): 짧은 쪽이 칸에 맞음
@@ -52,7 +52,7 @@ fn card_surface_is_scaled_to_the_box() {
     assert_eq!(cover_size(100, 80, 240, 160), (100, 80)); // 작은 사진은 키우지 않음
 }
 
-// S2: 확인 한 번은 출처 하나가 끝나지 않아도 상한에서 끝난다(나머지 출처 결과는 그대로)
+// 확인 한 번은 출처 하나가 끝나지 않아도 상한에서 끝난다(나머지 출처 결과는 그대로)
 #[tokio::test]
 async fn check_is_bounded_when_one_source_hangs() {
     use futures::future::BoxFuture;
@@ -84,7 +84,7 @@ fn silent_google(calls: Arc<AtomicUsize>) -> GoogleCall {
     })
 }
 
-// S3: 응답 없는 번역 서버 — 상한에서 원문 그대로(맥 silentTranslateServerFallsBackToOriginal)
+// 응답 없는 번역 서버 — 상한에서 원문 그대로(맥 silentTranslateServerFallsBackToOriginal)
 #[tokio::test]
 async fn silent_translate_server_falls_back_to_original() {
     let calls = Arc::new(AtomicUsize::new(0));
@@ -94,7 +94,7 @@ async fn silent_translate_server_falls_back_to_original() {
     assert_eq!(out, texts);
 }
 
-// S3: 묶음이 상한에 걸리면 문단마다 다시 보내며 상한을 곱으로 기다리지 않고, 1분 동안은 부르지 않는다(맥 silentServerDoesNotMultiplyWaits)
+// 묶음이 상한에 걸리면 문단마다 다시 보내며 상한을 곱으로 기다리지 않고, 1분 동안은 부르지 않는다(맥 silentServerDoesNotMultiplyWaits)
 #[tokio::test]
 async fn silent_server_does_not_multiply_waits() {
     let calls = Arc::new(AtomicUsize::new(0));
@@ -112,7 +112,7 @@ async fn silent_server_does_not_multiply_waits() {
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 
-// S4: 시계가 앞서 있을 때 켠 잠시 끄기(이틀보다 먼 끝)는 풀린 것으로, 1분 점검이 지운다(맥 snoozeFromFutureClockIsReleased)
+// 시계가 앞서 있을 때 켠 잠시 끄기(이틀보다 먼 끝)는 풀린 것으로, 1분 점검이 지운다(맥 snoozeFromFutureClockIsReleased)
 #[test]
 fn snooze_from_future_clock_is_released() {
     let now = Utc::now();
@@ -135,7 +135,7 @@ fn snooze_from_future_clock_is_released() {
     assert!(core.state().snooze_until.is_some());
 }
 
-// S5: 스토리 목록 전체를 문장 두 번으로(스토리마다 묻지 않음), 카드에 보도를 넘긴다(맥 storyListAsksDatabaseOnce)
+// 스토리 목록 전체를 문장 세 번으로(스토리마다 묻지 않음), 카드에 보도를 넘긴다(맥 storyListAsksDatabaseOnce)
 #[test]
 fn story_list_asks_database_once() {
     let db = Database::in_memory();
@@ -151,9 +151,37 @@ fn story_list_asks_database_once() {
     let asked = db.statements() - before;
     assert_eq!(live.len() + past.len(), 300);
     assert!(live.iter().all(|c| c.items.len() == 2 && c.cluster.size == 2));
-    assert_eq!(asked, 2, "스토리 300개에 문장 {asked}번");
+    assert_eq!(asked, 3, "스토리 300개에 문장 {asked}번");
     // 예전 함수(스토리 화면 밖에서 쓰는 것)도 같은 결과
     assert_eq!(magazine::stories(&db, &Default::default()).len(), 300);
+}
+
+// 보도가 아주 많은 스토리: 수는 전부 세되 카드에는 견본만(출처마다 첫 보도 + 최근 것) 꺼낸다(맥 bigStoryCardTakesSample)
+#[test]
+fn big_story_card_takes_sample() {
+    let db = Database::in_memory();
+    let now = Utc::now();
+    db.save_cluster(&Cluster { id: "big".into(), title: "big story".into(), tokens: Default::default(), first: now - Duration::hours(2), last: now, size: 600 });
+    for i in 0..600 {
+        let src = if i < 3 { format!("src{i}") } else { "src0".into() }; // 출처 셋, 거의 다 src0
+        let mut it = article(&src, &format!("b{i}"), &format!("big story {i}"));
+        it.date = Some(now - Duration::hours(2) + Duration::seconds(i));
+        db.upsert(&it, Some("big"), now);
+    }
+    let cards = magazine::story_list(&db, now, &Default::default());
+    assert_eq!(cards.len(), 1);
+    let c = &cards[0];
+    assert_eq!(c.cluster.size, 600);
+    assert!(c.items.len() <= dropcap_core::database::STORY_SAMPLE as usize + 3, "견본 {}건", c.items.len());
+    let srcs: std::collections::HashSet<&str> = c.items.iter().map(|i| i.source_id.as_str()).collect();
+    assert_eq!(srcs.len(), 3); // 출처 줄은 그대로
+    assert_eq!(c.items[0].title, "big story 0"); // 첫 보도
+    assert!(c.items.iter().any(|i| i.title == "big story 599")); // 최근 보도
+    assert!(c.topic.is_some());
+    // 숨긴 출처는 세지 않는다
+    let hid = dropcap_core::source_filter::SourceFilter { hidden: ["src0".to_string()].into_iter().collect(), active: None };
+    let h = magazine::story_list(&db, now, &hid);
+    assert!(h.len() == 1 && h[0].cluster.size == 2 && h[0].items.len() == 2);
 }
 
 fn titles(n: usize, tag: &str) -> Vec<NewsItem> {
@@ -161,7 +189,7 @@ fn titles(n: usize, tag: &str) -> Vec<NewsItem> {
     (0..n).map(|i| article("srcA", &format!("{tag}{i}"), &format!("{} {} unveils {}", words[i % 10], tag, words[(i * 3 + 1) % 10]))).collect()
 }
 
-// S7: DB 가 잠겨 못 넣은 글은 잃지 않고 다음 받아 넣기에 먼저 넣는다. 한 번 실패하면 나머지는 기다리지 않고 바로 미룬다(맥 failedIngestIsRetried)
+// DB 가 잠겨 못 넣은 글은 잃지 않고 다음 받아 넣기에 먼저 넣는다. 한 번 실패하면 나머지는 기다리지 않고 바로 미룬다(맥 failedIngestIsRetried)
 #[test]
 fn failed_ingest_is_retried() {
     let dir = tempfile::tempdir().unwrap();
@@ -185,7 +213,7 @@ fn failed_ingest_is_retried() {
     assert_eq!(sizes, 8);
 }
 
-// S7: 다시 넣을 목록은 끝없이 쌓이지 않는다(오래된 것부터 버림)
+// 다시 넣을 목록은 끝없이 쌓이지 않는다(오래된 것부터 버림)
 #[test]
 fn retry_list_is_capped() {
     let dir = tempfile::tempdir().unwrap();
@@ -212,7 +240,7 @@ fn oversized_retry_file_is_ignored() {
     assert_eq!(magazine::load_retry(&file).len(), 1);
 }
 
-// S7: 잠깐(0.3초) 잠긴 것은 기다렸다가 넣는다(맥 shortLockIsWaitedOut)
+// 잠깐(0.3초) 잠긴 것은 기다렸다가 넣는다(맥 shortLockIsWaitedOut)
 #[test]
 fn short_lock_is_waited_out() {
     let dir = tempfile::tempdir().unwrap();
@@ -234,7 +262,7 @@ fn short_lock_is_waited_out() {
     assert!(retry.is_empty());
 }
 
-// S7: 앱 핵심 — 확인에서 받은 글이 DB 잠김으로 빠져도 다음 받아 넣기에서 매거진에 들어간다
+// 앱 핵심 — 확인에서 받은 글이 DB 잠김으로 빠져도 다음 받아 넣기에서 매거진에 들어간다
 #[test]
 fn app_ingest_retries_after_lock() {
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -251,7 +279,7 @@ fn app_ingest_retries_after_lock() {
     assert_eq!(core.db.item_count(), 4);
 }
 
-// S8: 분야 사진 고르기 — 최근 기사를 분야마다 따로 읽지 않고 한 번 읽어 나눈다
+// 분야 사진 고르기 — 최근 기사를 분야마다 따로 읽지 않고 한 번 읽어 나눈다
 #[test]
 fn section_photos_read_recent_once() {
     let db = Database::in_memory();
@@ -293,7 +321,7 @@ fn story_seen_drops_deleted_stories() {
     assert!(!saved.contains_key("gone"));
 }
 
-// S7(맥 Fix4): 못 넣은 글은 앱을 껐다 켜도 남는다 — 자료 폴더 ingest-retry.json, 다음 실행에서 먼저 넣고 비면 파일을 지운다
+// 못 넣은 글은 앱을 껐다 켜도 남는다 — 자료 폴더 ingest-retry.json, 다음 실행에서 먼저 넣고 비면 파일을 지운다
 #[test]
 fn retry_outlives_restart() {
     let rt = tokio::runtime::Runtime::new().unwrap();

@@ -20,7 +20,7 @@ private func fixture(_ name: String) -> String {
 }
 
 @MainActor @Suite(.serialized) struct ReaderCutExtractTests {
-    // 보안 점검 2 X1: 형제 상자 안에 본문 상자와 같은 class 가 N겹 — 겹마다 하위 전체를 복사해 N²(Chromium 800겹 80초) → 바깥 상자만
+    // 형제 상자 안에 본문 상자와 같은 class 가 N겹 — 겹마다 하위 전체를 복사해 N²(Chromium 800겹 80초) → 바깥 상자만
     @Test func nestedCoreClassGatheredOnce() async {
         let body = (1...6).map { "<p>\(para($0))</p>" }.joined()
         let html = "<html><head><title>t</title></head><body><article><div class=\"x\">\(body)</div><section class=\"y\">"

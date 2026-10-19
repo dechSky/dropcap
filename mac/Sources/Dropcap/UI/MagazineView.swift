@@ -4,7 +4,7 @@ import SwiftUI
 // 매거진: 오늘 호 · 이번 주 · 스토리 · 저장 · 검색 · 지난 호
 struct MagazineView: View {
     enum Page: Hashable {
-        case today, week, stories, saved, search, scrapbook
+        case today, week, stories, saved, search, scrapbook, archive
         case section(String)   // 오늘 호의 한 분야
         case issue(Issue)
         case story(String)
@@ -74,6 +74,11 @@ struct MagazineView: View {
                         Text(g.id == "this" ? "지난 호 · 이번 주" : g.title)
                     }
                 }
+                // 지난 호 묶음 맨 아래: 호에 실리지 않은 기사까지 기간으로 찾아보는 보관함
+                Section {
+                    Label("보관함", systemImage: "archivebox").tag(Page.archive)
+                        .help("지난 기사를 일·주·월·연으로 찾아봅니다")
+                }
             }
             // 맨 아래 '설정' 줄: 지면이 아니라 설정 창(⌘, 와 같은 길). 목록 바닥에 고정 — 지난 호가 길어도 늘 보인다.
             // 목록 안의 줄(고르는 줄·단추 줄 모두)로 두면 눌러도 아무 일이 없었다(클릭 순회 '설정 열기')
@@ -131,6 +136,7 @@ struct MagazineView: View {
         case .saved: SavedView()
         case .scrapbook: ScrapbookView()
         case .search: SearchView()
+        case .archive: ArchiveView { go(.issue($0)) }
         }
     }
 
@@ -138,7 +144,7 @@ struct MagazineView: View {
 
     // 옆 목록 순서대로 지면 넘기기(⌘[ · ⌘])
     private var pageOrder: [Page] {
-        [.today, .week] + app.chosenSections.map { .section($0) } + [.stories, .saved, .scrapbook, .search] + mag.archive.map { .issue($0) }
+        [.today, .week] + app.chosenSections.map { .section($0) } + [.stories, .saved, .scrapbook, .search] + mag.archive.map { .issue($0) } + [.archive]
     }
     private func flip(_ d: Int) {
         let list = pageOrder
@@ -165,6 +171,7 @@ struct MagazineView: View {
         case .scrapbook: return 5
         case .search: return 7
         case .issue(let i): return 100 + (mag.archive.firstIndex(of: i) ?? 0)
+        case .archive: return 100_000
         }
     }
 }
@@ -919,7 +926,7 @@ struct StoriesView: View {
 // 스토리 카드: 대표 사진 · 분야 · 다룬 출처들 · 시작/최근 · 새 보도 · 팔로우 표시
 private struct StoryListCard: View {
     let cluster: Database.Cluster
-    let items: [NewsItem] // 보이는 보도들(목록을 만들 때 함께 꺼냄)
+    let items: [NewsItem] // 보이는 보도 견본(출처마다 첫 보도 + 최근 것 — 목록을 만들 때 함께 꺼냄)
     let topic: (section: String, category: NewsCategory?)? // 분야 다수결(목록을 만들 때 화면 줄기 밖에서)
     let big: Bool
     let onOpen: () -> Void
@@ -1173,8 +1180,12 @@ struct SavedView: View {
 }
 
 struct SearchView: View {
-    @State private var q = MagazineController.pendingSearch ?? ""
+    @State private var q: String
+    init(initial: String? = nil) { _q = State(initialValue: initial ?? MagazineController.pendingSearch ?? "") }
     @State private var results: [NewsItem] = []
+    @State private var older: [ArchivedItem] = []   // 보관 표에서 찾은 오래된 기사(최신순 200건씩)
+    @State private var olderMore = false
+    @AppStorage("magSearchArchive") private var includeArchive = true
     @AppStorage("magRecentSearches") private var recentRaw = ""
     private var recent: [String] { recentRaw.split(separator: "\n").map(String.init) }
     private func remember(_ t: String) { recentRaw = Magazine.rememberSearch(t, in: recent).joined(separator: "\n") }
@@ -1185,21 +1196,32 @@ struct SearchView: View {
                 HStack {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                     TextField("모든 기록에서 제목·출처·요약 검색", text: $q).textFieldStyle(.plain).font(.app(15))
-                        .onSubmit { remember(q); Task { results = await Magazine.shared.search(q) } }
-                        .task(id: q) { // 입력이 멈추면(0.25초) 찾는다
-                            guard q.count >= 2 else { if q.isEmpty { results = [] }; return }
+                        .onSubmit { remember(q); Task { await find(q) } }
+                        .task(id: q + (includeArchive ? "|a" : "")) { // 입력이 멈추면(0.25초) 찾는다
+                            guard q.count >= 2 else { if q.isEmpty { results = []; older = []; olderMore = false }; return }
                             try? await Task.sleep(for: .milliseconds(250))
-                            if !Task.isCancelled { let r = await Magazine.shared.search(q); if !Task.isCancelled { results = r } }
+                            if !Task.isCancelled { await find(q) }
                         }
+                    Toggle("오래된 기사 포함", isOn: $includeArchive).toggleStyle(.checkbox).font(.dsCallout).fixedSize()
+                        .help("보관함에 옮겨 둔 지난 기사(제목·출처)에서도 찾습니다")
                 }
                 .padding(Space.m)
                 .background(.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
                 .onReceive(NotificationCenter.default.publisher(for: .magazineSearch)) { n in if let w = n.object as? String { q = w } }
                 .onDisappear { MagazineController.pendingSearch = nil; if !results.isEmpty { remember(q) } }
-                if !q.isEmpty { Text("\(results.count)건").foregroundStyle(.secondary) }
+                if !q.isEmpty { Text(older.isEmpty ? "\(results.count)건" : "최근 \(results.count)건 · 오래된 기사 \(older.count)\(olderMore ? "건 넘음" : "건")").foregroundStyle(.secondary) }
                 if q.isEmpty { emptyState }
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 230, maximum: 360), spacing: Space.l)], alignment: .leading, spacing: Space.xl) {
                     ForEach(Array(results.enumerated()), id: \.element.key) { i, it in StoryCard(item: it, order: i) }
+                }
+                if !older.isEmpty {
+                    Text("오래된 기사").font(.dsHeading).padding(.top, Space.l)
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(older) { it in ArchiveRow(item: it); Divider().opacity(0.5) }
+                    }
+                    if olderMore {
+                        Button("200건 더 보기") { Task { await more() } }.buttonStyle(.link).font(.dsBody)
+                    }
                 }
             }
             .padding(.horizontal, Space.xxl).padding(.bottom, Space.xxxl)
@@ -1208,6 +1230,31 @@ struct SearchView: View {
 }
 
 extension SearchView {
+    static let olderPage = 200
+
+    // 최근 기사(items) + 보관 표(켜져 있으면). 보관 표는 최근 결과와 같은 링크를 빼고 최신순 200건.
+    // 검색어는 200자까지, 찾는 사이 검색어가 바뀌었으면 결과를 버린다
+    func find(_ word: String) async {
+        let w = Archive.trimQuery(word)
+        let r = await Magazine.shared.search(w)
+        let o = includeArchive ? await Magazine.shared.searchArchive(w) : []
+        guard !Task.isCancelled, word == q else { return }
+        let links = Set(r.map(\.link))
+        results = r
+        older = o.filter { !links.contains($0.link) }
+        olderMore = o.count >= Self.olderPage
+    }
+
+    // 더 보기: 그사이 검색어가 바뀌었으면 붙이지 않는다(다른 검색어 결과가 섞이지 않게)
+    func more() async {
+        let word = q
+        let o = await Magazine.shared.searchArchive(Archive.trimQuery(word), offset: older.count)
+        guard word == q else { return }
+        let have = Set(older.map(\.id))
+        older += o.filter { !have.contains($0.id) }
+        olderMore = o.count >= Self.olderPage
+    }
+
     // 빈 검색 화면: 지켜볼 낱말·최근 검색어를 눌러 바로 찾기, 무엇을 찾는지 안내
     @ViewBuilder var emptyState: some View {
         let watch = AppModel.shared.state.settings.watchKeywords
@@ -1218,7 +1265,7 @@ extension SearchView {
                 Button("최근 검색 지우기") { recentRaw = "" }.buttonStyle(.link).font(.dsCallout)
             }
             VStack(alignment: .leading, spacing: Space.xs) {
-                Text("이 Mac 에 모인 모든 기사(지난 호 포함)의 제목·출처·요약에서 찾습니다.")
+                Text("이 Mac 에 모인 최근 기사(지난 호 포함)의 제목·출처·요약에서 찾고, '오래된 기사 포함'을 켜 두면 보관함의 지난 기사 제목·출처에서도 찾습니다.")
                 Text("회사·인물 이름이나 출처 이름(예: 연합뉴스)으로도 찾을 수 있습니다. ⌘F 로 언제든 이 화면을 엽니다.")
                 if watch.isEmpty { Text("설정 › 거르기의 '지켜볼 낱말'을 넣으면 여기서 바로 누를 수 있습니다.") }
             }

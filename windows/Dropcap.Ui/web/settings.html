@@ -57,6 +57,8 @@
       <div class="row"><button class="btn" id="exportBackup">내 기록 내보내기…</button><button class="btn" id="importBackup">가져오기…</button><button class="btn" id="undoImport" hidden title="가져오기 전에 자동으로 남긴 기록으로 되돌립니다">마지막 가져오기 되돌리기</button></div>
       <div class="row note" id="backupNote"></div>
       <div class="row note" id="backupMsg" hidden></div>
+      <label class="row"><span class="lb">지난 기사 보관 기간</span><select data-set="archiveYears"></select></label>
+      <div class="row note" id="archiveNote"></div>
     </div>
     <h3>시작</h3>
     <div class="group">
@@ -84,11 +86,11 @@
     <h3>채널 추가</h3>
     <div class="group">
       <form class="row add" id="addForm">
-        <input id="newURL" placeholder="언론사·블로그 주소 또는 youtube.com/@채널 · r/이름 · github.com/소유자/저장소" autocomplete="off" spellcheck="false">
+        <input id="newURL" placeholder="사이트·뉴스레터·YouTube·GitHub·Reddit 주소" autocomplete="off" spellcheck="false">
         <button class="btn" id="addBtn" type="submit">구독</button>
       </form>
       <div class="row err" id="addError" hidden></div>
-      <div class="row note">웹사이트·뉴스레터(Substack·Medium)·YouTube 채널·GitHub 릴리스·Reddit·arXiv·팟캐스트 주소를 넣으면 알맞은 피드를 찾아 구독합니다.</div>
+      <div class="row note">웹사이트·뉴스레터(Substack·Medium)·YouTube(youtube.com/@채널)·GitHub 릴리스(github.com/소유자/저장소)·Reddit(r/이름)·arXiv·팟캐스트 주소를 넣으면 알맞은 피드를 찾아 구독합니다.</div>
     </div>
     <!-- 출처 찾기·보기·상태(설정 › 구독 정리, 규칙은 Core/SourceDirectory.cs) -->
     <h3>출처 찾기</h3>

@@ -108,6 +108,7 @@ public class BackupTests : IDisposable
             "economy"
           ],
           "settings" : {
+            "archiveYears" : 2,
             "autoQuietCalendar" : false,
             "autoQuietFullscreen" : true,
             "autoQuietSharing" : true,

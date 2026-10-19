@@ -138,7 +138,7 @@ fn general() -> adw::PreferencesPage {
     )));
     page.add(&g);
 
-    // 번역(P-02 · L4): 번역 방식 고르기(translateEngine — 맥·윈도우와 같은 키·값). 리눅스에는 무료 기기 내 번역이 없다(T-05 ⊘)
+    // 번역(P-02): 번역 방식 고르기(translateEngine — 맥·윈도우와 같은 키·값). 리눅스에는 무료 기기 내 번역이 없다(T-05 ⊘)
     let g = adw::PreferencesGroup::builder().title("번역").build();
     let opts = translator::engine_options(&st.translate_engine);
     let labels: Vec<String> = opts.iter().map(|(_, l)| l.to_string()).collect();
@@ -174,8 +174,28 @@ fn general() -> adw::PreferencesPage {
     }
     page.add(&g);
 
-    // 내 기록 내보내기·가져오기(P-08)
-    page.add(&crate::backup_ui::group());
+    // 내 기록 내보내기·가져오기(P-08) · 지난 기사 보관 기간(archiveYears — 맥·윈도우와 같은 키·값)
+    let g = crate::backup_ui::group();
+    {
+        use dropcap_core::archive;
+        let labels: Vec<String> = archive::CHOICES.iter().map(|y| archive::label(*y)).collect();
+        let sel = archive::CHOICES.iter().position(|y| *y == st.archive_years).unwrap_or(1);
+        // '끝없이'를 고르면 크기 안내를 더한다
+        const NOTE: &str = "최근 기사 2만 건보다 오래된 기사는 날짜·제목·링크·출처만 남겨 매거진 '보관함'에 옮깁니다(1년에 약 110MB). 보관 기간이 지나면 가장 오래된 달부터 지웁니다.";
+        const FOREVER: &str = "끝없이 두면 해마다 약 120MB씩 늘고(500만 건에서 가장 오래된 것부터 지움) 검색도 조금씩 느려집니다.";
+        let text = |y: i64| if y == 0 { format!("{NOTE} {FOREVER}") } else { NOTE.to_string() };
+        let note = caption(&text(st.archive_years));
+        {
+            let note = note.clone();
+            g.add(&combo("지난 기사 보관 기간", &labels, sel, move |i| {
+                let y = archive::CHOICES[i];
+                note.set_text(&text(y));
+                ui().core.update(|s| s.archive_years = y);
+            }));
+        }
+        g.add(&note);
+    }
+    page.add(&g);
 
     // 시작(P-05)
     let g = adw::PreferencesGroup::builder().title("시작").build();

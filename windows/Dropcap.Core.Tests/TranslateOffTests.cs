@@ -2,7 +2,7 @@ using Dropcap.Core;
 
 namespace Dropcap.Core.Tests;
 
-// 보안 점검 W4 · 번역 방식 고르기(맥과 같은 설정 키 translateEngine: auto · apple · google · off).
+// 번역 방식 고르기(맥과 같은 설정 키 translateEngine: auto · apple · google · off).
 // 윈도우엔 기기 내 번역이 없어 auto = Google, apple(맥에서 가져온 '기기 내만')은 보내지 않음.
 // '번역 안 함'이면 기사·제목·스토리 비교용 영어 번역까지 아무것도 바깥으로 보내지 않는다.
 public class TranslateOffTests

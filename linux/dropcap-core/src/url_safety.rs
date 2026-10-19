@@ -231,7 +231,7 @@ pub fn external_link(link: &str) -> Option<String> {
     }
 }
 
-// 기사 추리기용 숨은 웹 보기가 응답을 들일까(L1): 웹 보기가 보여 줄 수 있는 종류이고, 첨부(내려받기)로 온 것이 아닐 때만.
+// 기사 추리기용 숨은 웹 보기가 응답을 들일까: 웹 보기가 보여 줄 수 있는 종류이고, 첨부(내려받기)로 온 것이 아닐 때만.
 // 그 밖의 응답을 들이면 WebKitGTK 기본 동작으로 사용자 확인 없이 내려받기가 시작될 수 있다
 pub fn web_response_allowed(mime_supported: bool, content_disposition: Option<&str>) -> bool {
     mime_supported && !content_disposition.map(|d| d.trim().to_ascii_lowercase().starts_with("attachment")).unwrap_or(false)

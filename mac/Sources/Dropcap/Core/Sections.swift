@@ -90,10 +90,25 @@ enum Sections {
         var strong: String? = nil   // 출처 분야와 다른데 낱말이 강하게 걸린 분야(목록에 칩을 하나 더 보임)
     }
 
+    // 대표 분야만(place 의 primary 와 같음). 칩·강한 분야를 가리지 않아 훨씬 가볍다 — 보관함·스토리 목록처럼 많은 글을 볼 때.
+    // 기본 출처 정보면 이미 정해 둔 자리부터 본다
+    static func primary(_ it: NewsItem, meta m: [String: SourceMeta]? = nil) -> String {
+        if m == nil {
+            cacheLock.lock()
+            let hit = cache[cacheKey(it)]
+            cacheLock.unlock()
+            if let hit { return hit.primary }
+        }
+        return primary(it, text: "\(it.title) \(it.titleKo ?? "") \(it.summary)", meta: m ?? meta)
+    }
+    private static func primary(_ it: NewsItem, text: String, meta m: [String: SourceMeta]) -> String {
+        let s = section(ofSource: it.sourceId, meta: m)
+        return s == nil || s == top ? classify(text) ?? s ?? top : s!
+    }
+
     static func place(_ it: NewsItem, meta m: [String: SourceMeta] = meta, aiRegex: NSRegularExpression? = Resources.aiRegex) -> Placement {
         let text = "\(it.title) \(it.titleKo ?? "") \(it.summary)"
-        var primary = section(ofSource: it.sourceId, meta: m)
-        if primary == nil || primary == top { primary = classify(text) ?? primary ?? top }
+        var primary: String? = primary(it, text: text, meta: m)
         var chips = [primary!]
         if primary != ai, let re = aiRegex, re.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil { chips.append(ai) }
         if primary != top, let g = classify(text), g != primary, !chips.contains(g), g != ai { chips.append(g) }
@@ -112,8 +127,9 @@ enum Sections {
 
     nonisolated(unsafe) private static var cache: [String: Placement] = [:]
     private static let cacheLock = NSLock()
+    private static func cacheKey(_ it: NewsItem) -> String { it.key + "\u{1}" + (it.titleKo ?? "") }
     static func cachedPlace(_ it: NewsItem) -> Placement {
-        let k = it.key + "\u{1}" + (it.titleKo ?? "")
+        let k = cacheKey(it)
         cacheLock.lock()
         if let p = cache[k] { cacheLock.unlock(); return p }
         cacheLock.unlock()

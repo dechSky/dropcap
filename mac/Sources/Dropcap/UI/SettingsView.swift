@@ -68,6 +68,10 @@ struct SettingsView: View {
                 Text("다른 Mac 으로 옮길 때: 저장·스크랩과 폴더·구독·분야·알림 설정·낱말·숨긴 출처를 JSON 파일 하나로 내보내고, 다른 Mac 에서 가져오면 없는 것만 더합니다(같은 것은 건너뜀). 기사 캐시·사진은 담지 않습니다. 가져오기 전 기록은 자동으로 남겨 되돌릴 수 있습니다.")
                     .font(.caption).foregroundStyle(.secondary)
                 if let m = backup.lastMessage { Text(m).font(.caption).foregroundStyle(.secondary) }
+                Picker("지난 기사 보관 기간", selection: Binding(get: { model.state.settings.archiveYears }, set: { v in model.update { $0.archiveYears = v } })) {
+                    ForEach(Archive.choices, id: \.self) { Text(Archive.label($0)).tag($0) }
+                }
+                Text(Archive.settingsNote(model.state.settings.archiveYears)).font(.caption).foregroundStyle(.secondary)
             }
             Section("회의·발표 중에는 조용히") {
                 Toggle("전체 화면 앱을 쓰는 중", isOn: Binding(get: { model.state.settings.autoQuietFullscreen }, set: { v in model.update { $0.autoQuietFullscreen = v } }))
@@ -134,13 +138,14 @@ struct SettingsView: View {
         let searching = !SourceDirectory.fold(sourceQuery).isEmpty
         return Form {
             Section {
-                HStack {
-                    TextField("언론사·블로그 주소 또는 youtube.com/@채널 · r/이름 · github.com/소유자/저장소", text: $newURL)
-                        .onSubmit(addChannel)
+                // 칸 이름을 숨겨 안내 글이 왼쪽 이름 자리에서 두 줄로 접히지 않게(안내는 칸 안 자리표시·아래 설명으로)
+                HStack(spacing: Space.s) {
+                    TextField("채널 주소", text: $newURL, prompt: Text("사이트·뉴스레터·YouTube·GitHub·Reddit 주소"))
+                        .labelsHidden().onSubmit(addChannel)
                     Button(adding ? "찾는 중…" : "구독", action: addChannel).disabled(adding || newURL.isEmpty)
                 }
                 if let e = addError { Text(e).font(.caption).foregroundStyle(.red) }
-                Text("웹사이트·뉴스레터(Substack·Medium)·YouTube 채널·GitHub 릴리스·Reddit·arXiv·팟캐스트 주소를 넣으면 알맞은 피드를 찾아 구독합니다.")
+                Text("웹사이트·뉴스레터(Substack·Medium)·YouTube(youtube.com/@채널)·GitHub 릴리스(github.com/소유자/저장소)·Reddit(r/이름)·arXiv·팟캐스트 주소를 넣으면 알맞은 피드를 찾아 구독합니다.")
                     .font(.caption).foregroundStyle(.secondary)
             } header: { Text("채널 추가") }
 
@@ -190,12 +195,10 @@ struct SettingsView: View {
                         if sourceLayout == .media && g.total == 1, let s = g.sources.first {
                             sourceRow(s, removable: false)
                         } else {
-                            // 모두 켜기/끄기는 펼침 줄 밖에 둔다: 줄 안에 두면 손쉬운 사용 '누름'(VoiceOver)이 펼치는 대신 그 단추를 눌러 묶음을 다 켰다
-                            HStack(alignment: .firstTextBaseline, spacing: Space.s) {
-                                DisclosureGroup(isExpanded: expandBinding(g.id, auto: searching)) {
-                                    ForEach(g.sources) { s in sourceRow(s, removable: false, media: sourceLayout == .media ? g.title : nil) }
-                                } label: { tapToToggle(groupLabel(g), id: g.id, auto: searching) }
-                                groupBulkButton(g)
+                            // 묶음 줄과 하위 줄을 따로 그려 모든 줄이 같은 열(RowColumn)을 쓴다 — 하위 줄의 종·스위치가 한 줄 출처와 같은 자리
+                            disclosureRow(g.title, count: "\(g.on)/\(g.total) 켬", id: g.id, auto: searching) { groupIcon(g) } trailing: { groupBulkButton(g) }
+                            if expandBinding(g.id, auto: searching).wrappedValue {
+                                ForEach(g.sources) { s in sourceRow(s, removable: false, media: sourceLayout == .media ? g.title : nil, child: true) }
                             }
                         }
                     }
@@ -204,15 +207,18 @@ struct SettingsView: View {
 
             if !catalog.isEmpty {
                 Section {
-                    DisclosureGroup(isExpanded: expandBinding("catalog", auto: searching)) {
+                    disclosureRow("추천 채널", count: "\(catalog.count)", id: "catalog", auto: searching) {
+                        Image(systemName: "sparkles").foregroundStyle(.secondary)
+                    } trailing: { EmptyView() }
+                    if expandBinding("catalog", auto: searching).wrappedValue {
                         ForEach(ChannelCatalog.groups, id: \.self) { g in
                             let list = catalog.filter { $0.group == g }
                             if !list.isEmpty {
-                                Text(g).font(.caption).foregroundStyle(.secondary)
+                                Text(g).font(.caption).foregroundStyle(.secondary).padding(.leading, RowColumn.disclosure + RowColumn.gap + RowColumn.indent)
                                 ForEach(list) { s in catalogRow(s) }
                             }
                         }
-                    } label: { tapToToggle(Text("추천 채널 \(catalog.count)"), id: "catalog", auto: searching) }
+                    }
                 }
             }
             OPMLSection()
@@ -231,25 +237,39 @@ struct SettingsView: View {
                 })
     }
 
-    // 묶음 줄 어디를 눌러도 펼치고 접는다(펼침 삼각형만이 아니라. 줄 안 단추는 단추대로)
-    private func tapToToggle<V: View>(_ label: V, id: String, auto: Bool) -> some View {
+    // 묶음 줄: [펼침 화살표] [아이콘] [이름] [건수] … [오른쪽 단추(종+스위치 자리)].
+    // 화살표~건수 전체가 펼침 단추라 줄 어디를 눌러도(손쉬운 사용 '누름'도) 펼치고 접는다.
+    // 모두 켜기/끄기는 그 단추 밖에 둔다: 안에 두면 '누름'(VoiceOver)이 펼치는 대신 그 단추를 눌러 묶음을 다 켰다
+    private func disclosureRow<Icon: View, Trailing: View>(_ title: String, count: String, id: String, auto: Bool,
+                                                           @ViewBuilder icon: () -> Icon, @ViewBuilder trailing: () -> Trailing) -> some View {
         let b = expandBinding(id, auto: auto)
-        return label.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-            .onTapGesture { withMotion(Motion.snap) { b.wrappedValue.toggle() } }
+        return HStack(spacing: RowColumn.gap) {
+            Button { withMotion(Motion.snap) { b.wrappedValue.toggle() } } label: {
+                HStack(spacing: RowColumn.gap) {
+                    Image(systemName: "chevron.right").font(.dsChip).foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(b.wrappedValue ? 90 : 0))
+                        .frame(width: RowColumn.disclosure)
+                    icon().font(.dsBody).frame(width: RowColumn.icon, height: RowColumn.icon)
+                    Text(title).lineLimit(1).frame(width: RowColumn.name, alignment: .leading)
+                    Text(count).font(.caption).foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(title), \(count)")
+            .accessibilityValue(b.wrappedValue ? "펼침" : "접힘")
+            trailing().frame(width: RowColumn.controls, alignment: .trailing)
+        }
     }
 
-    // 묶음 줄: 이름 · 'N/M 켬'
-    @ViewBuilder private func groupLabel(_ g: SourceDirectory.Group) -> some View {
-        HStack(spacing: Space.m) {
-            if g.id.hasPrefix("media:"), let s = g.sources.first {
-                Monogram(letter: String(g.title.replacingOccurrences(of: "The ", with: "").prefix(1)).uppercased(), color: Color(hex: s.color), size: 22)
-            } else if g.id.hasPrefix("section:"), let sec = Sections.byID(String(g.id.dropFirst("section:".count))) {
-                Image(systemName: sec.symbol).foregroundStyle(sec.tint).frame(width: 22)
-            } else {
-                Image(systemName: g.id == "region:kr" ? "house" : "globe").foregroundStyle(.secondary).frame(width: 22)
-            }
-            Text(g.title)
-            Text("\(g.on)/\(g.total) 켬").font(.caption).foregroundStyle(.secondary)
+    @ViewBuilder private func groupIcon(_ g: SourceDirectory.Group) -> some View {
+        if g.id.hasPrefix("media:"), let s = g.sources.first {
+            Monogram(letter: String(g.title.replacingOccurrences(of: "The ", with: "").prefix(1)).uppercased(), color: Color(hex: s.color), size: RowColumn.icon)
+        } else if g.id.hasPrefix("section:"), let sec = Sections.byID(String(g.id.dropFirst("section:".count))) {
+            Image(systemName: sec.symbol).foregroundStyle(sec.tint)
+        } else {
+            Image(systemName: g.id == "region:kr" ? "house" : "globe").foregroundStyle(.secondary)
         }
     }
 
@@ -281,13 +301,16 @@ struct SettingsView: View {
         }
     }
 
-    // 줄: 이름(매체 묶음 안에서는 짧은 이름) · 분야 칩 · 국내/해외 · 유료 자물쇠 · 알림 · 켜기
-    @ViewBuilder private func sourceRow(_ s: Source, removable: Bool, media: String? = nil) -> some View {
-        HStack(spacing: Space.m) {
-            Monogram(letter: String(s.name.replacingOccurrences(of: "The ", with: "").prefix(1)).uppercased(), color: Color(hex: s.color), size: 22)
+    // 줄: 이름(매체 묶음 안에서는 짧은 이름) · 분야 칩 · 국내/해외 · 유료 자물쇠 · 알림 · 켜기 — 열은 RowColumn, 하위 줄(child)은 한 단계 들임
+    @ViewBuilder private func sourceRow(_ s: Source, removable: Bool, media: String? = nil, child: Bool = false) -> some View {
+        let indent = child ? RowColumn.indent : 0
+        HStack(spacing: RowColumn.gap) {
+            Color.clear.frame(width: RowColumn.disclosure + indent, height: 1)
+            Monogram(letter: String(s.name.replacingOccurrences(of: "The ", with: "").prefix(1)).uppercased(), color: Color(hex: s.color), size: RowColumn.icon)
             VStack(alignment: .leading, spacing: Space.xxs) {
                 HStack(spacing: Space.s) {
                     Text(media.map { SourceDirectory.shortName(s, media: $0) } ?? s.name).lineLimit(1)
+                        .frame(width: RowColumn.name - indent, alignment: .leading).help(s.name)
                     chip(Sections.name(s.sectionID), tint: Palette.section(s.sectionID))
                     chip(SourceDirectory.regionLabel(s))
                     if let p = s.paywall.flatMap(PaywallKind.init(rawValue:)), p == .hard || p == .metered {
@@ -305,40 +328,48 @@ struct SettingsView: View {
                     Text(h).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                 }
             }
-            Spacer()
+            Spacer(minLength: 0)
+            // 해지 단추는 종 앞에 둔다 — 종·스위치 열은 모든 줄에서 오른쪽 끝 같은 자리
+            if removable {
+                Button(role: .destructive) { model.removeCustomSource(s.id) } label: { Image(systemName: "trash") }
+                    .buttonStyle(.borderless).help("구독 해지")
+            }
             Toggle(isOn: Binding(get: { model.notifies(s.id) }, set: { model.setNotify(s.id, $0) })) {
                 Image(systemName: model.notifies(s.id) ? "bell.fill" : "bell.slash")
             }
             .toggleStyle(.button).buttonStyle(.borderless)
             .help(model.notifies(s.id) ? "새 글 알림 켜짐 (끄면 매거진에만 실림)" : "알림 꺼짐 — 매거진에만 실림")
             .disabled(model.state.enabled[s.id] != true)
+            .frame(width: RowColumn.bell)
             Toggle("", isOn: Binding(get: { model.state.enabled[s.id] == true }, set: { model.setEnabled(s.id, $0) }))
                 .labelsHidden().toggleStyle(.switch).controlSize(.small)
-            if removable {
-                Button(role: .destructive) { model.removeCustomSource(s.id) } label: { Image(systemName: "trash") }
-                    .buttonStyle(.borderless).help("구독 해지")
-            }
+                .frame(width: RowColumn.toggle, alignment: .trailing)
         }
     }
 
+    // 추천 채널 줄: '추천 채널' 묶음의 하위 줄 — 출처 줄과 같은 열, 구독 단추는 종+스위치 자리
     @ViewBuilder private func catalogRow(_ s: Source) -> some View {
-        HStack(spacing: Space.m) {
-            Monogram(letter: String(s.name.prefix(1)).uppercased(), color: Color(hex: s.color), size: 22)
+        HStack(spacing: RowColumn.gap) {
+            Color.clear.frame(width: RowColumn.disclosure + RowColumn.indent, height: 1)
+            Monogram(letter: String(s.name.prefix(1)).uppercased(), color: Color(hex: s.color), size: RowColumn.icon)
             VStack(alignment: .leading, spacing: Space.xxs) {
                 HStack(spacing: Space.s) {
-                    Text(s.name)
+                    Text(s.name).lineLimit(1).frame(width: RowColumn.name - RowColumn.indent, alignment: .leading).help(s.name)
                     if s.itemKind != .article { KindBadge(kind: s.itemKind) }
                 }
                 Text(s.notifyDefault == false ? "글이 많아 알림 없이 매거진에만 실림" : "새 글이 오면 알림")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Spacer()
-            if model.isSubscribed(s) {
-                Label("구독 중", systemImage: "checkmark.circle.fill").foregroundStyle(.green).labelStyle(.titleAndIcon).font(.caption)
-            } else {
-                Button(model.subscribing.contains(s.url) ? "확인 중…" : "구독") { Task { addError = await model.subscribe(s) } }
-                    .controlSize(.small).disabled(model.subscribing.contains(s.url))
+            Spacer(minLength: 0)
+            Group {
+                if model.isSubscribed(s) {
+                    Label("구독 중", systemImage: "checkmark.circle.fill").foregroundStyle(.green).labelStyle(.titleAndIcon).font(.caption)
+                } else {
+                    Button(model.subscribing.contains(s.url) ? "확인 중…" : "구독") { Task { addError = await model.subscribe(s) } }
+                        .controlSize(.small).disabled(model.subscribing.contains(s.url))
+                }
             }
+            .frame(width: RowColumn.controls, alignment: .trailing)
         }
     }
 }

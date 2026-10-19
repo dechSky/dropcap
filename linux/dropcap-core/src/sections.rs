@@ -169,14 +169,30 @@ pub struct Placement {
     pub strong: Option<String>, // 출처 분야와 다른데 낱말이 강하게 걸린 분야(목록에 칩을 하나 더 보임)
 }
 
+// 대표 분야만(place 의 primary 와 같음). 칩·강한 분야를 가리지 않아 훨씬 가볍다 — 보관함·스토리 목록처럼 많은 글을 볼 때.
+// 이미 정해 둔 자리부터 본다
+pub fn primary(it: &NewsItem) -> String {
+    if let Some(p) = CACHE.lock().unwrap().get(&cache_key(it)) {
+        return p.primary.clone();
+    }
+    primary_in(it, &primary_text(it), &META)
+}
+
+fn primary_text(it: &NewsItem) -> String {
+    format!("{} {} {}", it.title, it.title_ko.as_deref().unwrap_or(""), it.summary)
+}
+
+fn primary_in(it: &NewsItem, text: &str, meta: &HashMap<String, SourceMeta>) -> String {
+    match section_of_source(&it.source_id, meta) {
+        Some(s) if s != TOP => s,
+        s => classify(text).or(s).unwrap_or_else(|| TOP.into()),
+    }
+}
+
 // 출처의 분야가 1순위, 출처가 '주요'·모름이면 낱말 규칙으로 보충. AI 는 다른 분야 글에서도 끌어온다(aiPattern).
 pub fn place(it: &NewsItem, meta: &HashMap<String, SourceMeta>, ai_regex: Option<&Regex>) -> Placement {
-    let text = format!("{} {} {}", it.title, it.title_ko.as_deref().unwrap_or(""), it.summary);
-    let mut primary = section_of_source(&it.source_id, meta);
-    if primary.is_none() || primary.as_deref() == Some(TOP) {
-        primary = classify(&text).or(primary).or_else(|| Some(TOP.into()));
-    }
-    let primary = primary.unwrap();
+    let text = primary_text(it);
+    let primary = primary_in(it, &text, meta);
     let mut chips = vec![primary.clone()];
     if primary != AI {
         if let Some(re) = ai_regex {
@@ -211,8 +227,12 @@ pub fn place(it: &NewsItem, meta: &HashMap<String, SourceMeta>, ai_regex: Option
 
 static CACHE: Lazy<Mutex<HashMap<String, Placement>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
+fn cache_key(it: &NewsItem) -> String {
+    format!("{}\u{1}{}", it.key(), it.title_ko.as_deref().unwrap_or(""))
+}
+
 pub fn cached_place(it: &NewsItem) -> Placement {
-    let k = format!("{}\u{1}{}", it.key(), it.title_ko.as_deref().unwrap_or(""));
+    let k = cache_key(it);
     if let Some(p) = CACHE.lock().unwrap().get(&k) {
         return p.clone();
     }

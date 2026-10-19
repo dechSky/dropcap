@@ -277,7 +277,7 @@ mod tests {
         assert!(!accepted.load(std::sync::atomic::Ordering::SeqCst), "연결이 나가면 안 됨");
     }
 
-    // S2: 아주 천천히 흘러나오는 서버 하나가 요청을 오래 묶지 않는다 — 요청 전체(리다이렉트·본문까지) 시간 상한(맥 slowDripFeedIsCutByDeadline)
+    // 아주 천천히 흘러나오는 서버 하나가 요청을 오래 묶지 않는다 — 요청 전체(리다이렉트·본문까지) 시간 상한(맥 slowDripFeedIsCutByDeadline)
     #[tokio::test]
     async fn slow_drip_is_cut_by_deadline() {
         use std::io::{Read, Write};

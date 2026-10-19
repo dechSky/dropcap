@@ -23,6 +23,7 @@ pub enum Page {
     Saved,
     Search,
     Scrapbook,
+    Archive, // 보관함(지난 기사를 기간으로)
 }
 
 impl Page {
@@ -37,6 +38,7 @@ impl Page {
             Page::Scrapbook => 5,
             Page::Search => 7,
             Page::Issue(i) => 100 + archive.iter().position(|a| a == i).unwrap_or(0) as i64,
+            Page::Archive => 100_000,
         }
     }
 }
@@ -48,6 +50,7 @@ pub struct Magazine {
     page: RefCell<Page>,
     rows: RefCell<Vec<(gtk::ListBoxRow, Page)>>,
     current_issue: RefCell<Option<Rc<IssuePage>>>,
+    current_archive: RefCell<Option<Rc<crate::magazine_archive::ArchivePage>>>,
     current_scroll: RefCell<Option<gtk::ScrolledWindow>>,
     serial: Cell<u64>,
     syncing: Cell<bool>,
@@ -121,6 +124,7 @@ fn initial_page() -> Page {
         Some("saved") => Page::Saved,
         Some("search") => Page::Search,
         Some("week") => Page::Week,
+        Some("archive") => Page::Archive,
         Some(p) if p.starts_with("section:") => Page::Section(p["section:".len()..].to_string()),
         Some(p) if p.starts_with("story:") => Page::Story(p["story:".len()..].to_string()),
         _ => Page::Today,
@@ -174,6 +178,7 @@ fn build(first: Page) -> Rc<Magazine> {
         page: RefCell::new(Page::Today),
         rows: RefCell::new(vec![]),
         current_issue: RefCell::new(None),
+        current_archive: RefCell::new(None),
         current_scroll: RefCell::new(None),
         serial: Cell::new(0),
         syncing: Cell::new(false),
@@ -247,6 +252,11 @@ fn build(first: Page) -> Rc<Magazine> {
             let ip = m.current_issue.borrow().clone();
             if let Some(ip) = ip {
                 ip.on_event(e);
+            }
+            // 보관함: 새 기사가 들어오면 지금 기간을 다시 읽는다
+            let ap = m.current_archive.borrow().clone();
+            if let Some(ap) = ap.filter(|_| matches!(e, UiEvent::Magazine)) {
+                ap.refresh();
             }
         });
     }
@@ -344,6 +354,12 @@ impl Magazine {
                 self.sidebar.append(&r);
             }
         }
+        // 지난 호 묶음 맨 아래: 호에 실리지 않은 기사까지 기간으로 찾아보는 보관함
+        self.sidebar.append(&header(""));
+        add(self, "package-x-generic-symbolic", "보관함", None, Page::Archive);
+        if let Some((r, _)) = self.rows.borrow().last() {
+            r.set_tooltip_text(Some("지난 기사를 일·주·월·연으로 찾아봅니다"));
+        }
         // 맨 아래 '설정' 줄: 지면이 아니라 설정 창을 연다(고를 수 없는 줄 — 고른 지면은 그대로, row-activated 에서 받음)
         self.sidebar.append(&header(""));
         add(self, "emblem-system-symbolic", "설정", None, Page::Today);
@@ -397,6 +413,7 @@ impl Magazine {
             }
         });
         *self.current_issue.borrow_mut() = None;
+        *self.current_archive.borrow_mut() = None;
         let (widget, scroll): (gtk::Widget, gtk::ScrolledWindow) = match &p {
             Page::Today | Page::Week | Page::Section(_) | Page::Issue(_) => {
                 let (src, focus) = match &p {
@@ -426,6 +443,16 @@ impl Magazine {
             Page::Saved => magazine_pages::saved(),
             Page::Search => magazine_pages::search(),
             Page::Scrapbook => magazine_pages::scrapbook(&self.window),
+            Page::Archive => {
+                let weak = Rc::downgrade(self);
+                let (w, s, ap) = crate::magazine_archive::page(Rc::new(move |i: Issue| {
+                    if let Some(m) = weak.upgrade() {
+                        m.go(Page::Issue(i));
+                    }
+                }));
+                *self.current_archive.borrow_mut() = Some(ap);
+                (w, s)
+            }
         };
         *self.current_scroll.borrow_mut() = Some(scroll);
         let n = self.serial.get() + 1;
@@ -501,12 +528,13 @@ impl Magazine {
         });
     }
 
-    // 옆 목록 순서: 오늘·이번 주·분야들·스토리·저장·스크랩북·검색·지난 호
+    // 옆 목록 순서: 오늘·이번 주·분야들·스토리·저장·스크랩북·검색·지난 호·보관함
     fn page_order(&self) -> Vec<Page> {
         let mut v = vec![Page::Today, Page::Week];
         v.extend(ui().core.chosen_sections().into_iter().map(Page::Section));
         v.extend([Page::Stories, Page::Saved, Page::Scrapbook, Page::Search]);
         v.extend(ui().core.archive().into_iter().map(Page::Issue));
+        v.push(Page::Archive);
         v
     }
 
@@ -539,7 +567,7 @@ fn sidebar_key(p: &Page) -> Page {
 }
 
 pub fn tint(w: &impl IsA<gtk::Widget>, hex: &str) {
-    // 색 값은 출처(가져온 기록·상태 파일)에서 올 수 있으므로 #16진수·글자 이름만 CSS 에 넣는다(L6)
+    // 색 값은 출처(가져온 기록·상태 파일)에서 올 수 있으므로 #16진수·글자 이름만 CSS 에 넣는다
     let safe = (hex.starts_with('#') && (4..=9).contains(&hex.len()) && hex[1..].chars().all(|c| c.is_ascii_hexdigit()))
         || (!hex.is_empty() && hex.len() <= 20 && hex.chars().all(|c| c.is_ascii_alphabetic()));
     if !safe {

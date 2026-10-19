@@ -34,12 +34,13 @@ enum StoryGrouper {
     // 알림 목록용: 이번에 들어온 소식을 공식 발표 > 언론 > 국내, 그다음 최신 순으로 보며
     // ① 이번 묶음 안에 같은 소식이 있으면 그 대표에 '외 N곳'으로 붙이고
     // ② 36시간 안의 최근 목록에 같은 소식이 있으면 알리지 않고 그 소식에 출처만 더한다(이미 있는 이름·같은 출처는 빼고).
+    //    숨긴 글(hidden — 숨긴 출처·'알리지 않음' 낱말, 지우지 않고 거르기만 함)은 견주지 않는다: 보이는 새 글이 그 글에 묻혀 알리지 않게 되던 것
     // 돌려주는 것: 남길 소식(최신 순)과 최근 목록의 칸 → 더할 출처 이름
-    static func groupForList(_ items: [NewsItem], recent: [NewsItem], now: Date = Date()) -> (kept: [NewsItem], recentAdds: [Int: [String]]) {
+    static func groupForList(_ items: [NewsItem], recent: [NewsItem], hidden: Set<String> = [], now: Date = Date()) -> (kept: [NewsItem], recentAdds: [Int: [String]]) {
         let rank = ["lab": 0, "press": 1, "kr": 2]
         let sorted = items.sorted { (rank[$0.tier] ?? 3, $1.date ?? .distantPast) < (rank[$1.tier] ?? 3, $0.date ?? .distantPast) }
         let cutoff = now.addingTimeInterval(-36 * 3600)
-        let recentKeys = recent.map { ($0.date ?? .distantPast) > cutoff ? StoryKey($0) : nil }
+        let recentKeys = recent.map { ($0.date ?? .distantPast) > cutoff && !hidden.contains($0.key) ? StoryKey($0) : nil }
         var kept: [NewsItem] = [], keptKeys: [StoryKey] = []
         var adds: [Int: [String]] = [:]
         for it in sorted {

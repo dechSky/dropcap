@@ -107,12 +107,24 @@ public static class Sections
     // Strong: 출처 분야와 다른데 낱말이 강하게 걸린 분야(목록에 칩을 하나 더 보임)
     public sealed record Placement(string Primary, List<string> Chips, string? Strong = null);
 
+    // 대표 분야만(Place 의 Primary 와 같음). 칩·강한 분야를 가리지 않아 훨씬 가볍다 — 보관함·스토리 목록처럼 많은 글을 볼 때.
+    // 기본 출처 정보면 이미 정해 둔 자리부터 본다
+    public static string Primary(NewsItem it, Dictionary<string, SourceMeta>? m = null)
+    {
+        if (m is null && placeCache.TryGetValue(CacheKey(it), out var p)) return p.Primary;
+        return Primary(it, $"{it.Title} {it.TitleKo ?? ""} {it.Summary}", m);
+    }
+    private static string Primary(NewsItem it, string text, Dictionary<string, SourceMeta>? m)
+    {
+        var s = SectionOfSource(it.SourceId, m);
+        return s is null || s == Top ? Classify(text) ?? s ?? Top : s;
+    }
+
     public static Placement Place(NewsItem it, Dictionary<string, SourceMeta>? m = null, Regex? aiRegex = null)
     {
         aiRegex ??= Resources.AiRegex;
         var text = $"{it.Title} {it.TitleKo ?? ""} {it.Summary}";
-        var primary = SectionOfSource(it.SourceId, m);
-        if (primary is null || primary == Top) primary = Classify(text) ?? primary ?? Top;
+        var primary = Primary(it, text, m);
         var chips = new List<string> { primary };
         if (primary != Ai && aiRegex.IsMatch(text)) chips.Add(Ai);
         if (primary != Top && Classify(text) is { } g && g != primary && !chips.Contains(g) && g != Ai) chips.Add(g);
@@ -134,9 +146,10 @@ public static class Sections
 
     // 기사마다 한 번만 정해 기억한다(목록·지면을 그릴 때마다 다시 계산하지 않게)
     private static readonly ConcurrentDictionary<string, Placement> placeCache = new();
+    private static string CacheKey(NewsItem it) => it.Key + "\u0001" + (it.TitleKo ?? "");
     public static Placement CachedPlace(NewsItem it)
     {
-        var k = it.Key + "\u0001" + (it.TitleKo ?? "");
+        var k = CacheKey(it);
         if (placeCache.TryGetValue(k, out var p)) return p;
         p = Place(it);
         if (placeCache.Count > 20000) placeCache.Clear();

@@ -39,7 +39,7 @@ public class StabilityTests : IDisposable
         return enc.ToArray();
     }
 
-    // MARK: S1 사진 메모리
+    // MARK: 사진 메모리
     // 그리기용 사진 기억은 풀린 크기(바이트)로 묶는다 — 장 수(160)만으로는 큰 사진 수십 장이 수백 MB 를 붙들었다
     [Fact]
     public async Task ImageMemoryCacheIsBoundedInBytes()
@@ -84,7 +84,7 @@ public class StabilityTests : IDisposable
         Assert.True(ImageLoader.LastDecode.Width >= 1400);   // 줄인 결과보다 작게 풀지는 않는다(흐려지지 않게)
     }
 
-    // MARK: S3 번역
+    // MARK: 번역
     // 대답하지 않는 번역 서버: 요청마다 상한에 걸려 원문 그대로(확인이 번역을 기다리다 멈추지 않게)
     [Fact]
     public async Task SilentTranslateServerFallsBackToOriginal()
@@ -120,7 +120,7 @@ public class StabilityTests : IDisposable
         Assert.Equal(before, calls);
     }
 
-    // MARK: S4 잠시 끄기
+    // MARK: 잠시 끄기
     // 시계가 앞서 있던 때 켠 잠시 끄기(이틀보다 먼 끝)는 풀린 것으로 보고, 1분 점검이 지운다
     [Fact]
     public void SnoozeFromFutureClockIsReleased()
@@ -138,7 +138,7 @@ public class StabilityTests : IDisposable
         Assert.NotNull(model.State.SnoozeUntil);
     }
 
-    // MARK: S5 스토리 목록
+    // MARK: 스토리 목록
     private void SeedStories(Magazine mag, int n)
     {
         var items = new List<NewsItem>();
@@ -161,7 +161,28 @@ public class StabilityTests : IDisposable
         var before = db.Statements;
         var stories = mag.Stories();
         Assert.Equal(30, stories.Count);
-        Assert.True(db.Statements - before <= 2, $"문장 {db.Statements - before}번");
+        Assert.True(db.Statements - before <= 3, $"문장 {db.Statements - before}번");
+    }
+
+    // 보도가 아주 많은 스토리: 수는 전부 세되 카드에는 견본만(출처마다 첫 보도 + 최근 것) 꺼낸다(맥 bigStoryCardTakesSample)
+    [Fact]
+    public void BigStoryCardTakesSample()
+    {
+        var db = Db();
+        var mag = new Magazine(db);
+        db.SaveCluster(new Database.Cluster("big", "big story", new(), now.AddHours(-2), now, 600));
+        for (var i = 0; i < 600; i++)
+            db.Upsert(It($"b{i}", $"big story {i}", i < 3 ? $"src{i}" : "src0", 120 - i / 10.0), "big"); // 출처 셋, 거의 다 src0
+        var c = Assert.Single(mag.StoryCards(new SourceFilter(), now));
+        Assert.Equal(600, c.Cluster.Size);
+        Assert.True(c.Items.Count <= Database.StorySample + 3, $"견본 {c.Items.Count}건");
+        Assert.Equal(3, c.Items.Select(i => i.SourceId).Distinct().Count());   // 출처 줄은 그대로
+        Assert.Equal("big story 0", c.Items[0].Title);                        // 첫 보도
+        Assert.Contains(c.Items, i => i.Title == "big story 599");            // 최근 보도
+        // 숨긴 출처는 세지 않는다
+        var h = Assert.Single(mag.StoryCards(new SourceFilter { Hidden = new HashSet<string> { "src0" } }, now));
+        Assert.Equal(2, h.Cluster.Size);
+        Assert.Equal(2, h.Items.Count);
     }
 
     // 스토리 화면도: 카드에 보도를 넘겨 카드가 DB 를 다시 묻지 않는다
@@ -177,11 +198,11 @@ public class StabilityTests : IDisposable
         var before = db.Statements;
         var view = await page.StoriesData();
         Assert.Equal(30, view.Live.Count + view.Past.Count);
-        Assert.True(db.Statements - before <= 2, $"문장 {db.Statements - before}번");
+        Assert.True(db.Statements - before <= 3, $"문장 {db.Statements - before}번");
         Assert.Contains(view.Live, c => c.Fresh == 1);   // 본 뒤 붙은 보도 수는 그대로
     }
 
-    // MARK: S7 DB 쓰기 실패
+    // MARK: DB 쓰기 실패
     private static SqliteConnection Lock(string file)
     {
         var c = new SqliteConnection($"Data Source={file};Pooling=False");
@@ -251,7 +272,7 @@ public class StabilityTests : IDisposable
         Assert.Equal(0, new Magazine(db, retryFile: file).RetryCount);
     }
 
-    // MARK: S8 분야 사진
+    // MARK: 분야 사진
     // 분야 사진은 최근 기록을 한 번 읽어 분야마다 나눠 쓴다(분야마다 3000건씩 읽지 않게)
     [Fact]
     public async Task SectionPhotosReadRecordOnce()

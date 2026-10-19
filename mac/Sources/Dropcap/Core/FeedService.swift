@@ -34,7 +34,7 @@ actor FeedService {
         session = Self.makeSession(resourceTimeout: resourceTimeout)
     }
     #else
-    init() { allowLocal = false; session = Self.makeSession(resourceTimeout: 60) } // 배포 빌드에는 시험 서버 허용 스위치가 없다(M9)
+    init() { allowLocal = false; session = Self.makeSession(resourceTimeout: 60) } // 배포 빌드에는 시험 서버 허용 스위치가 없다
     #endif
 
     func fetch(_ url: String, conditional: Bool = false, limit: FetchLimit = .feed) async throws -> Data? {
@@ -154,7 +154,7 @@ actor FeedService {
     }
 
     // 피드 본문 전문은 글 링크가 출처 피드와 같은 사이트(같은 등록 도메인)일 때만 받는다. 남의 링크에 본문을 실은
-    // 집계 피드면 사이트 추출이 실패했을 때 그 글이 링크한 기사처럼 읽기 창에 보일 수 있다(보안 점검 M15)
+    // 집계 피드면 사이트 추출이 실패했을 때 그 글이 링크한 기사처럼 읽기 창에 보일 수 있다
     nonisolated static func sameSite(_ link: String, _ feed: String) -> Bool {
         guard let a = URL(string: link)?.host, let b = URL(string: feed)?.host else { return false }
         return siteKey(a) == siteKey(b)

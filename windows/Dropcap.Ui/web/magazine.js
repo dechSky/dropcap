@@ -12,6 +12,8 @@
     'doc.rich': '<path d="M6.5 3.5h7l4 4v13h-11z"/><path d="M13.5 3.5v4h4"/><circle cx="10" cy="11" r="1.3"/><path d="M8.5 17l2.5-2.5 2 2 1.5-1.5 1.5 2"/>',
     'arrow.up': '<path d="M12 19V5M6 11l6-6 6 6"/>',
     'chevron.left': '<path d="M15 5l-7 7 7 7"/>',
+    'chevron.right': '<path d="M9 5l7 7-7 7"/>',
+    archivebox: '<rect x="3.5" y="4.5" width="17" height="4.5" rx="1"/><path d="M5 9v9.5a1.5 1.5 0 0 0 1.5 1.5h11a1.5 1.5 0 0 0 1.5-1.5V9M10 13h4"/>',
     'doc.text': '<path d="M6.5 3.5h7l4 4v13h-11z"/><path d="M13.5 3.5v4h4M9 12h6M9 15.5h6"/>',
     'folder.fill': '<path fill="currentColor" d="M3.5 7a1.5 1.5 0 0 1 1.5-1.5h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5v8.5A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z"/>',
     kept: '<circle cx="12" cy="12" r="9" fill="currentColor" stroke="none"/><path stroke="var(--paper,#fff)" d="M12 7.5v8M8.5 12.5l3.5 3.5 3.5-3.5"/>',
@@ -42,7 +44,7 @@
 
   // MARK: 지면 상태
   let side = null;              // 옆 목록(저장 수·스크랩 수·분야·지난 호)
-  let page = 'today';           // today · week · section:<id> · stories · story:<id> · saved · scrapbook · search · issue:<id>
+  let page = 'today';           // today · week · section:<id> · stories · story:<id> · saved · scrapbook · search · issue:<id> · archive
   let current = null;           // 지금 지면의 DOM(.page)
   let view = null;              // 지금 지면의 데이터
   let seen = { revision: 0, imageRevision: 0, layoutRevision: 0 };
@@ -66,6 +68,7 @@
     if (p.startsWith('section:')) return 1;
     if (p.startsWith('story:')) return 3;
     if (p.startsWith('issue:')) return 100 + Math.max(0, (side ? side.archive : []).findIndex((a) => a.id === p.slice(6)));
+    if (p === 'archive') return 100000;
     return 0;
   }
 
@@ -150,6 +153,7 @@
       else if (p === 'saved') drawSaved(el, await bridge.send('saved'), fresh, my);
       else if (p === 'search') drawSearch(el, fresh);
       else if (p === 'scrapbook') drawScrapbook(el, await bridge.send('scrapbook', { folder, repick: !fresh }), fresh, my);
+      else if (p === 'archive') await drawArchive(el, fresh, my, !fresh);
     } catch (e) { console.error(e); }
   }
 
@@ -609,30 +613,60 @@
     if (!fresh && $('.searchbox', el)) { runSearch(false); return; }
     el.innerHTML = `<div class="wrap" style="padding:0 32px 40px">
       <h1 class="h1">검색</h1>
-      <label class="searchbox">${ic('search')}<input id="sq" placeholder="모든 기록에서 제목·출처·요약 검색" autocomplete="off" spellcheck="false"></label>
+      <div class="searchbox">${ic('search')}<input id="sq" maxlength="200" placeholder="모든 기록에서 제목·출처·요약 검색" autocomplete="off" spellcheck="false">
+        <label class="incl" title="보관함에 옮겨 둔 지난 기사(제목·출처)에서도 찾습니다"><input type="checkbox" id="sqa"${searchArchive === false ? '' : ' checked'}>오래된 기사 포함</label></div>
       <div class="found" hidden></div>
       <div class="search-empty"></div>
-      <div class="grid results"></div></div>`;
+      <div class="grid results"></div>
+      <div class="older"></div></div>`;
     const input = $('#sq', el);
     input.value = query;
+    $('#sqa', el).addEventListener('change', (e) => { searchArchive = e.target.checked; runSearch(false, searchArchive); });
     input.addEventListener('input', () => { query = input.value; clearTimeout(typing); typing = setTimeout(() => runSearch(false), 250); if (!query) runSearch(false); });
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { clearTimeout(typing); runSearch(true); } });
     setTimeout(() => input.focus(), 30);
     if (query) runSearch(false);
   }
-  async function runSearch(submit) {
+  // archive: '오래된 기사 포함'을 바꿨을 때만(앱이 기억)
+  async function runSearch(submit, archive) {
     const el = current, q = query;
-    const r = await bridge.send('search', { q, submit });
-    if (page !== 'search' || el !== current || q !== query || !r.items) return;
+    const r = await bridge.send('search', archive == null ? { q, submit } : { q, submit, archive });
+    if (page !== 'search' || el !== current || q !== query) return;
+    searchArchive = r.archive;
+    const box = $('#sqa', el); if (box) box.checked = !!r.archive;
+    if (!r.items) return;
     remember(r.items);
     drawSearchEmpty(el, r);
     const f = $('.found', el);
     f.hidden = !q;
-    f.textContent = `${r.items.length}건`;
+    f.textContent = r.found || `${r.items.length}건`;
     const g = $('.results', el);
     g.innerHTML = r.items.map((it, i) => card(it, i, '', { topic: (r.topics || {})[it.key] })).join('');
     wireImages(g);
     watch(g);
+    // 오래된 기사(보관 표 — 최근 결과와 같은 링크는 앱이 뺌): 최신순 200건씩
+    (r.older || []).forEach((x) => arcRows.set(x.key, x));
+    older = { q, next: r.olderNext || 0, recent: r.items.length, ids: new Set((r.older || []).map((x) => x.id)), count: (r.older || []).length };
+    $('.older', el).innerHTML = r.older && r.older.length
+      ? `<div class="sec-h older-h"><b>오래된 기사</b></div><div class="arc-list">${r.older.map(arow).join('')}</div>${r.olderMore ? '<button class="linkbtn more" data-omore>200건 더 보기</button>' : ''}`
+      : '';
+  }
+  let searchArchive = null;   // '오래된 기사 포함'(앱이 처음 답할 때 알려 줌, 기본 켜짐)
+  let older = null;           // 오래된 기사 더 보기 자리
+  async function moreOlder(btn) {
+    const el = current, o = older;
+    if (!o || o.q !== query) return;
+    btn.disabled = true;
+    const r = await bridge.send('searchMore', { q: o.q, offset: o.next, recent: o.recent, shown: o.count });
+    // 기다리는 사이 검색어가 바뀌었으면(새 결과) 붙이지 않는다
+    if (page !== 'search' || el !== current || older !== o || o.q !== query) return;
+    const add = r.older.filter((x) => !o.ids.has(x.id));
+    add.forEach((x) => { o.ids.add(x.id); arcRows.set(x.key, x); });
+    o.next = r.olderNext;
+    o.count += add.length;
+    $('.older .arc-list', el).insertAdjacentHTML('beforeend', add.map(arow).join(''));
+    $('.found', el).textContent = r.found;
+    if (r.olderMore) btn.disabled = false; else btn.remove();
   }
 
   // 빈 검색 화면: 지켜볼 낱말·최근 검색어를 눌러 바로 찾기, 무엇을 찾는지 안내(맥 SearchView.emptyState)
@@ -654,6 +688,87 @@
     const clr = $('#clearRecent', box);
     if (clr) clr.addEventListener('click', async () => { drawSearchEmpty(el, await bridge.send('clearRecentSearches', {})); });
   }
+
+  // MARK: 보관함(지난 기사): 일·주·월·연과 ◀ ▶ 로 기간을 고르고 그 기간의 기사를 최신순으로(분야·출처 거르기, 100건씩 더 보기).
+  // 월·연은 날짜별 건수 막대를 먼저(누르면 그날로), 그날 지난 호가 있으면 맨 위에 '이 날의 호 보기'. 거르기·건수·기간 계산은 앱이 한다
+  const arc = { period: null, anchor: null, section: null, source: null, limit: 100 };   // period·anchor 가 null 이면 앱이 마지막 기간·오늘로
+  let arcView = null;
+  // 보관 기사 한 줄(검색의 오래된 기사와 같음): 때 · 분야 점 · 제목 · 출처. 누르면 읽기 창
+  const arow = (r) => `<button class="arow" data-open="${esc(r.key)}" data-arow="${esc(r.key)}">
+      <span class="aw">${esc(r.when)}</span><span class="adot tint" style="${tint(r)}" title="${esc(r.sectionName)}"></span>
+      <span class="at">${esc(r.title)}</span><span class="as">${esc(r.source)}</span></button>`;
+  const arcRows = new Map();   // key → 줄(오른쪽 클릭 메뉴의 원제목)
+  function barsHtml(v) {
+    const compact = v.period === 'year';
+    return `<div class="bars${compact ? ' compact' : ''}"><div class="bcols">${v.bars.map((b) =>
+      `<button class="bar" data-aday="${esc(b.key)}"${b.count ? '' : ' disabled'} title="${esc(b.label)} · ${b.count}건"><i${b.count ? '' : ' class="zero"'} style="height:${b.count ? Math.max(3, 72 * b.count / v.peak) : 2}px"></i></button>`).join('')}</div>
+      <div class="bfoot"><span>${esc(v.barFrom)}</span><span>하루 많게는 ${v.peak}건</span><span>${esc(v.barTo)}</span></div></div>`;
+  }
+  async function drawArchive(el, fresh, my, keepScroll) {
+    if (fresh) {
+      // 새로 열면 오늘이 든 기간부터, 거르기 없이(기간 종류는 앱이 기억)
+      Object.assign(arc, { anchor: null, section: null, source: null, limit: 100 });
+      el.innerHTML = '<div class="wrap arc"><div class="arc-wait"><span class="spinner"></span></div></div>';
+    }
+    const v = await bridge.send('archive', arc);
+    if (my !== gen || el !== current) return;
+    arcView = v;
+    arc.period = v.period; arc.anchor = v.anchor; arc.limit = v.limit; arc.section = v.section || null; arc.source = v.source || null;
+    v.items.forEach((r) => arcRows.set(r.key, r));
+    const scroll = el.scrollTop;
+    el.classList.toggle('calm', !fresh);
+    el.innerHTML = `<div class="wrap arc">
+      <div class="arc-kick">보관함</div>
+      <h1 class="h1">${esc(v.title)}</h1>
+      <p class="lead">${esc(v.head)}</p>
+      <div class="arc-ctl">
+        <div class="seg">${v.periods.map((p) => `<button data-ap="${esc(p.id)}" class="${p.id === v.period ? 'on' : ''}">${esc(p.label)}</button>`).join('')}</div>
+        <button class="hb" data-ash="-1"${v.canPrev ? '' : ' disabled'} title="이전 기간" aria-label="이전 기간">${ic('chevron.left')}</button>
+        <button class="hb" data-ash="1"${v.canNext ? '' : ' disabled'} title="다음 기간" aria-label="다음 기간">${ic('chevron.right')}</button>
+        <button class="btn" data-atoday${v.atToday ? ' disabled' : ''}>오늘</button>
+        <span class="grow"></span>
+        <button class="btn" data-afilter="section">${esc(v.sectionLabel)}${ic('chevronDown')}</button>
+        <button class="btn" data-afilter="source">${esc(v.sourceLabel)}${ic('chevronDown')}</button>
+      </div>
+      ${v.dayIssue ? `<button class="arc-issue" data-aissue="${esc(v.dayIssue.id)}">${ic('doc.rich')}<span>이 날의 호 보기 — ${esc(v.dayIssue.title)}</span></button>` : ''}
+      ${v.bars ? barsHtml(v) : ''}
+      ${v.empty ? `<div class="note">${esc(v.empty)}</div>` : `<div class="arc-list">${v.items.map(arow).join('')}</div>`}
+      ${v.more ? '<button class="linkbtn more" data-amore>100건 더 보기</button>' : ''}
+    </div>`;
+    el.scrollTop = keepScroll ? scroll : 0;
+  }
+  function reloadArchive(keepScroll = false) { const my = ++gen; drawArchive(current, false, my, keepScroll).catch((e) => console.error(e)); }
+  function arcFilter(btn, kind) {
+    const v = arcView; if (!v) return;
+    const list = kind === 'section' ? v.sections : v.sources;
+    const cur = arc[kind];
+    const pick = (id) => { arc[kind] = id; arc.limit = 100; reloadArchive(); };
+    popUnder(btn, [{ label: '전체', on: !cur, run: () => pick(null) }, 'sep',
+      ...list.map((f) => ({ label: `${f.label}  ${f.count}`, on: cur === f.id, run: () => pick(f.id) }))]);
+  }
+  detail.addEventListener('click', async (e) => {
+    if (page === 'search') { const m = e.target.closest('[data-omore]'); if (m) moreOlder(m); return; }
+    if (page !== 'archive') return;
+    const t = e.target.closest('[data-ap],[data-ash],[data-atoday],[data-aday],[data-amore],[data-afilter],[data-aissue]');
+    if (!t || t.disabled) return;
+    const d = t.dataset;
+    if (d.ap) { if (d.ap === arc.period) return; arc.period = d.ap; arc.limit = 100; reloadArchive(); }
+    else if (d.ash) { arc.anchor = await bridge.send('archiveShift', { period: arc.period, anchor: arc.anchor, by: Number(d.ash) }); arc.limit = 100; reloadArchive(); }
+    else if ('atoday' in d) { arc.anchor = null; arc.limit = 100; reloadArchive(); }
+    else if (d.aday) { arc.period = 'day'; arc.anchor = d.aday; arc.limit = 100; reloadArchive(); }
+    else if ('amore' in d) { arc.limit += 100; reloadArchive(true); }
+    else if (d.afilter) arcFilter(t, d.afilter);
+    else if (d.aissue) go('issue:' + d.aissue);
+  });
+  // 보관 기사 오른쪽 클릭: 브라우저에서 열기 · 원제목(한국어 제목으로 보일 때)
+  detail.addEventListener('contextmenu', (e) => {
+    const b = e.target.closest('[data-arow]');
+    if (!b) return;
+    e.preventDefault();
+    const r = arcRows.get(b.dataset.arow);
+    popMenu(e.clientX, e.clientY, [{ label: '브라우저에서 열기', run: () => bridge.send('browser', { key: b.dataset.arow }) },
+      ...(r && r.original ? ['sep', { header: r.original }] : [])]);
+  });
 
   // MARK: 스크랩북(M-17·M-18)
   function drawScrapbook(el, v, fresh, my) {

@@ -281,6 +281,9 @@ public class MenuPageTests : IDisposable
         await Do("hideSource", new { key = "openai|gpt" });
         Assert.Contains("openai", model.State.HiddenSources);
         Assert.DoesNotContain("gpt", Ids(await View(new { tab = "all" })));
-        await Assert.ThrowsAsync<KeyNotFoundException>(() => Do("hideSource", new { key = "openai|gpt" }));
+        await Do("hideSource", new { key = "openai|gpt" });                  // 지우지 않으므로 다시 숨겨도 그대로
+        Assert.Equal(1, model.State.HiddenSources.Count(s => s == "openai"));
+        model.UnhideSource("openai");                                        // 풀면 목록에 돌아옴
+        Assert.Contains("gpt", Ids(await View(new { tab = "all" })));
     }
 }

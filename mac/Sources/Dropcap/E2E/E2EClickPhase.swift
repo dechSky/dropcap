@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-// 시험 장치(M9): 디버그 빌드(swift build·swift test·e2e·clicksweep)에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
+// 시험 장치: 디버그 빌드(swift build·swift test·e2e·clicksweep)에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
 #if DEBUG
 
 // 클릭 시험 단계: 견본 자료를 채운 뒤 화면마다(분야 고르기·상단바·매거진 지면들·읽기 창·설정 탭·물방울) 누를 것을 모두 누른다.
@@ -188,7 +188,7 @@ enum E2EClickPhase {
         if quick { magWindow()?.close(); return }
         // 다른 지면(기본 크기·위)
         var pages: [(String, MagazineView.Page)] = [("이번주", .week), ("경제", .section("economy")), ("스토리", .stories), ("저장", .saved),
-                                                    ("스크랩북", .scrapbook), ("검색", .search)]
+                                                    ("스크랩북", .scrapbook), ("검색", .search), ("보관함", .archive)]
         if let st = r.storyOf(S.big) { pages.append(("스토리상세", .story(st))) }
         if let past = Magazine.shared.archive.first { pages.append(("지난호", .issue(past))) }
         for (name, page) in pages {
@@ -401,22 +401,25 @@ enum E2EClickPhase {
             let saved = UserDefaults.standard.string(forKey: key) ?? "(없음)"
             let shown = texts(w)
             let expect = layout == .section ? "경제" : layout == .region ? "해외" : "연합뉴스"
-            let ok = i != nil && saved == layout.rawValue && shown.contains(expect)
+            // 묶음 줄 이름은 '<묶음>, N/M 켬'
+            let seen = shown.contains { $0 == expect || $0.hasPrefix("\(expect), ") }
+            let ok = i != nil && saved == layout.rawValue && seen
             row("보기 고르기 '\(layout.label)'", "AXRadioGroup", ok,
-                i == nil ? "칸을 찾지 못함" : "기억값 \(saved) · 묶음 '\(expect)' \(shown.contains(expect) ? "보임" : "안 보임")")
+                i == nil ? "칸을 찾지 못함" : "기억값 \(saved) · 묶음 '\(expect)' \(seen ? "보임" : "안 보임")")
             r.note("[클릭] 구독 보기 \(r.windowShot({ $0 === w }, "sources-pick-\(layout.rawValue)"))")
         }
 
         // 2) 묶음 펼치기: 보이는 맨 위 묶음 줄을 손쉬운 사용 누름(VoiceOver 길)·창 직접 클릭으로 번갈아 펼치고 접는다 → 출처 줄(알림 단추) 수.
         //    누름이 묶음을 켜면 안 된다(전에는 줄 안 '모두 켜기'가 같이 눌림)
         let rows = { texts(w).filter { $0 == "알림" }.count }
-        let group = { sw.targets(w).filter { $0.role == "AXDisclosureTriangle" && $0.label.contains("켬") }.max { $0.frame.maxY < $1.frame.maxY } }
+        //    묶음 줄은 펼침 단추(AXButton, 이름 '<묶음>, N/M 켬')
+        let group = { sw.targets(w).filter { $0.role == "AXButton" && $0.label.hasSuffix(" 켬") }.max { $0.frame.maxY < $1.frame.maxY } }
         if let g = group() {
-            let name = g.label.components(separatedBy: ", ").dropFirst().first ?? g.label
+            let name = g.label.components(separatedBy: ", ").first ?? g.label
             let on0 = r.model.state.enabled
             var n = rows()
             for (i, direct) in [false, true, true, false].enumerated() {
-                guard let t = sw.targets(w).first(where: { $0.role == "AXDisclosureTriangle" && $0.label.contains(", \(name), ") }) ?? group() else { break }
+                guard let t = sw.targets(w).first(where: { $0.role == "AXButton" && $0.label.hasPrefix("\(name), ") }) ?? group() else { break }
                 if direct { sw.directClick(w, NSPoint(x: t.frame.minX + 120, y: t.frame.midY)) } else { _ = await sw.press(w, t) }
                 await r.sleep(0.8)
                 let m = rows(), open = i % 2 == 0
@@ -427,7 +430,7 @@ enum E2EClickPhase {
                 n = m
             }
         } else {
-            row("묶음 펼치기", "AXDisclosureTriangle", false, "보이는 묶음 줄을 찾지 못함")
+            row("묶음 펼치기", "AXButton", false, "보이는 묶음 줄을 찾지 못함")
         }
 
         // 3) 찾기: '연합뉴스 경제' → 걸린 수 '…곳 중 …곳' · 그 묶음이 저절로 펼쳐져 짧은 이름 '경제' 줄이 보임

@@ -291,7 +291,11 @@ impl IssuePage {
             return magazine::section_subtitle(id, d.r.issue.count, &shown);
         }
         let n = cover.is_some() as i64 + pages.iter().map(|(_, i)| i.len() as i64).sum::<i64>();
-        magazine::subtitle(d.r.issue.count, n, pages.iter().filter(|(s, _)| s.kind.is_none()).count(), "소식")
+        let head = magazine::subtitle(d.r.issue.count, n, pages.iter().filter(|(s, _)| s.kind.is_none()).count(), "소식");
+        match &self.source {
+            IssueSource::Fixed(i) => magazine::thin_reason(i).map(|why| format!("{head} · {why}")).unwrap_or(head),
+            _ => head,
+        }
     }
 
     fn render(self: &Rc<Self>) {
@@ -743,7 +747,7 @@ fn empty_issue(live: bool) -> gtk::Box {
         sp.set_halign(gtk::Align::Start);
         v.append(&sp);
         v.append(&label("첫 호를 엮는 중…", 20.0, 600, &["dc-display"]));
-        v.append(&label("구독한 출처에서 최근 사흘 소식을 모으고 번역하고 있어요. 잠시면 됩니다.", 13.0, 400, &["dc-secondary"]));
+        v.append(&label("구독한 출처에서 최근 일주일 소식을 모으고 번역하고 있어요. 잠시면 됩니다.", 13.0, 400, &["dc-secondary"]));
     } else {
         let i = widgets::icon("x-office-document-symbolic", 34);
         i.set_halign(gtk::Align::Start);

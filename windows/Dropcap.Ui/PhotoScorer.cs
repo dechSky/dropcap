@@ -53,27 +53,53 @@ public sealed class SectionPhotos
 
     public IReadOnlyDictionary<string, string> All { get { lock (gate) return new Dictionary<string, string>(chosen); } }
 
-    // 분야마다 한 번씩 찾는다(이미 찾았거나 찾는 중이면 건너뜀)
+    // 시험에서 바꿔 끼우는 자리: 최근 기록 읽기 · 사진 고르기 · 그 분야 피드 받기
+    internal Func<List<NewsItem>> Recent { get; set; } = () => Database.Shared.Items(DateTimeOffset.Now.AddDays(-3), limit: 3000).Select(x => x.Item).ToList();
+    internal Func<IEnumerable<NewsItem>, Task<string?>> Pick { get; set; } = items => PickAsync(items);
+    internal Func<string, Task<List<NewsItem>>> Feed { get; set; } = FeedItemsAsync;
+
+    // 분야마다 한 번씩 찾는다(이미 찾았거나 찾는 중이면 건너뜀).
+    // 최근 기록(3000건)은 한 번만 읽어 분야마다 나눠 쓴다 — 예전엔 분야마다(11번) 3000건씩 읽고 풀었다
     public void Load(IEnumerable<string> sections)
     {
+        var want = new List<string>();
         foreach (var s in sections)
+            lock (gate) { if (!chosen.ContainsKey(s) && loading.Add(s)) want.Add(s); }
+        if (want.Count == 0) return;
+        _ = Task.Run(async () =>
         {
-            lock (gate) { if (chosen.ContainsKey(s) || !loading.Add(s)) continue; }
-            _ = Task.Run(async () =>
+            Dictionary<string, List<NewsItem>> bySection;
+            try { bySection = Candidates(Recent(), want); }
+            catch { bySection = new(); }
+            await Task.WhenAll(want.Select(s => Task.Run(async () =>
             {
                 try
                 {
-                    var recent = Database.Shared.Items(DateTimeOffset.Now.AddDays(-3), limit: 3000).Select(x => x.Item).Where(i => i.InSection(s)).ToList();
-                    var url = await PickAsync(recent);
-                    if (url is null) url = await PickAsync(await FeedItemsAsync(s));
+                    var url = await Pick(bySection.GetValueOrDefault(s) ?? new());
+                    if (url is null) url = await Pick(await Feed(s));
                     if (url is null) return;
                     lock (gate) chosen[s] = url;
                     Changed?.Invoke();
                 }
                 catch { }
                 finally { lock (gate) loading.Remove(s); }
-            });
-        }
+            })));
+        });
+    }
+
+    // 분야마다 그 분야 칩이 달린 최근 기사(기록 순서 그대로)
+    internal static Dictionary<string, List<NewsItem>> Candidates(IEnumerable<NewsItem> recent, IReadOnlyCollection<string> sections)
+    {
+        var want = sections.ToHashSet();
+        var o = new Dictionary<string, List<NewsItem>>();
+        foreach (var it in recent)
+            foreach (var c in it.SectionChips())
+                if (want.Contains(c))
+                {
+                    if (!o.TryGetValue(c, out var list)) o[c] = list = new();
+                    list.Add(it);
+                }
+        return o;
     }
 
     // 앞의 사진들을 재 가며(최대 limit 장) 기준을 넘는 첫 사진. 잰 점수는 DB 에 남긴다. 기준 밑 사진은 대신 쓰지 않는다.

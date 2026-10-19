@@ -14,7 +14,7 @@ public class SecurityLow3Tests
         Assert.Contains("fresh.createElement('div')", js);
     }
 
-    // 행동으로도(review-3 시험 빈틈 T3): CSP 를 뺀 페이지에서 여러 덩어리 모으기(같은 class 형제 상자)를 돌려도
+    // 행동으로도: CSP 를 뺀 페이지에서 여러 덩어리 모으기(같은 class 형제 상자)를 돌려도
     // 추출하는 동안 그림 받기·onerror 가 일어나지 않는다. 고치기 전(document.createElement) 코드는 요청 2건·onerror 실행
     [JsFact]
     public async Task GatheringDoesNotLoadImagesWithoutCsp()

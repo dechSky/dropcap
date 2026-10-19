@@ -181,6 +181,12 @@ public sealed class ToastEngine
         }
     }
 
+    // 창을 다시 놓을지(맥 ToastCenter.needsPlace): 숨어 있었거나 위치 설정이 놓을 때와 달라졌으면.
+    // 예전엔 위치 설정을 보지 않아 알림이 떠 있는 동안 '오른쪽 위'로 바꾸면 다음 알림도 가운데에 떨어졌다.
+    // 커서가 다른 모니터로 가도 이미 뜬 알림은 옮기지 않는다(모니터 구성이 바뀔 때만 Replace).
+    public static bool NeedsPlace(bool shown, ToastPosition? placedAt, ToastPosition wanted) =>
+        !shown || placedAt != wanted;
+
     public static void Spring(ref float x, ref float v, float target, double dt, double response, double damping)
     {
         var w = 2 * Math.PI / response;

@@ -5,7 +5,7 @@ using Dropcap.Ui;
 
 namespace Dropcap.Core.Tests;
 
-// 맥 mac/Tests/DropcapTests/Extras2Tests.swift 를 옮긴 것(남은 개선 2차 — mac/EXTRAS.md 2차):
+// 맥 mac/Tests/DropcapTests/Extras2Tests.swift 를 옮긴 것(남은 개선 2차):
 // 받는 크기 상한(S-12) · 번역 엔진 표시·긴 문단(T-08) · 지켜볼 낱말(N-27) · Ollama 고르기(클라우드 모델 제외)
 
 public class FetchLimitTests

@@ -146,7 +146,7 @@ enum Sections {
     }
     // 분야마다 걸린 낱말 수(서로 다른 낱말)
     // 한국어 낱말은 글자 그대로(.literal) 찾는다 — 기본 contains 는 유니코드 동치까지 따져 6배쯤 느려, 기록이 많으면
-    // 분야를 나누는 데만 화면이 몇 초씩 멈췄다(STABILITY.md S8). 글은 먼저 NFC 로 맞춰 결과는 같게
+    // 분야를 나누는 데만 화면이 몇 초씩 멈췄다. 글은 먼저 NFC 로 맞춰 결과는 같게
     static func normalized(_ text: String) -> String { text.lowercased().precomposedStringWithCanonicalMapping }
     static func hits(_ text: String) -> [String: Int] {
         let t = normalized(text)

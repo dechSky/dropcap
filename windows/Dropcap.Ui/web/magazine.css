@@ -395,3 +395,15 @@ body { display: flex; width: 100%; height: 100%; min-width: 860px; min-height: 6
 .se-help { font-size: var(--fs-body); color: var(--text-2); line-height: 1.6; }
 .se-help p { margin: 0; }
 .linkbtn { align-self: flex-start; background: none; border: 0; padding: 0; color: var(--accent); font-size: var(--fs-callout); cursor: pointer; }
+
+/* 지난 호 묶음(접기)·빈 날 줄 */
+.ag > summary { cursor: default; list-style: none; }
+.ag > summary::before { content: '▾'; display: inline-block; margin-right: var(--sp-xs); }
+.ag:not([open]) > summary::before { content: '▸'; }
+.ag > summary::-webkit-details-marker { display: none; }
+.nav.empty { color: var(--text-2); opacity: .55; cursor: default; }
+/* 새로 고침(창 오른쪽 위 — 도구 막대 자리): 확인 중엔 돌고 눌리지 않음 */
+.mag-refresh { position: fixed; top: var(--sp-s); right: var(--sp-l); z-index: 5; display: inline-flex; align-items: center; gap: var(--sp-s); font-size: var(--fs-caption); color: var(--text-2); }
+#check.spin .ic { animation: spin 0.9s linear infinite; }
+.mag-refresh .hb { width: 26px; height: 26px; border-radius: var(--r-control); display: inline-flex; align-items: center; justify-content: center; font-size: var(--fs-body); color: var(--text-2); }
+.mag-refresh .hb:hover { background: var(--fill); }

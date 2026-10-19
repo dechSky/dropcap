@@ -5,7 +5,7 @@ import SwiftUI
 
 // 피드에서 온 사진 주소는 믿지 않으므로 AsyncImage 대신 이것을 쓴다:
 // 공개 주소만(FeedService 의 안전 검사), 8MB 까지, 줄여서(최대 1400px) 메모리·디스크에 담아 둔다.
-// 메모리에는 풀린 그림 크기로 64MB 까지만(오래된 것부터 버림) — 예전엔 장 수(160장)로만 묶어 큰 사진이면 수백 MB 를 붙들었다(STABILITY.md S1).
+// 메모리에는 풀린 그림 크기로 64MB 까지만(오래된 것부터 버림) — 예전엔 장 수(160장)로만 묶어 큰 사진이면 수백 MB 를 붙들었다.
 actor ImageLoader {
     static let shared = ImageLoader()
     static let memoryLimitBytes = 64 << 20

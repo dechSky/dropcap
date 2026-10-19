@@ -245,4 +245,15 @@ public class ToastTests
         Assert.EndsWith("…", lines[1]);
         Assert.All(lines, l => Assert.True(f.MeasureText(l) <= 200.5f));
     }
+
+    // 알림 위치를 바꾸면 떠 있는 창도 다음 알림에서 다시 놓는다(맥 SettingsQATests 와 같은 표)
+    [Fact]
+    public void PositionChangeReplacesShownWindow()
+    {
+        Assert.True(ToastEngine.NeedsPlace(true, ToastPosition.Center, ToastPosition.Right));
+        Assert.True(ToastEngine.NeedsPlace(true, ToastPosition.Right, ToastPosition.Center));
+        Assert.False(ToastEngine.NeedsPlace(true, ToastPosition.Right, ToastPosition.Right)); // 커서가 다른 모니터여도 그대로
+        Assert.True(ToastEngine.NeedsPlace(false, ToastPosition.Right, ToastPosition.Right));
+        Assert.True(ToastEngine.NeedsPlace(true, null, ToastPosition.Center));
+    }
 }

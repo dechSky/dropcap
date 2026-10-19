@@ -61,13 +61,32 @@ pub struct AppModel {
     subscribing: Mutex<std::collections::HashSet<String>>,
     grown: Mutex<Vec<(crate::database::Cluster, NewsItem)>>, // 이번에 팔로우한 스토리에 붙은 새 보도(알림 뒤 비움)
     enrich_tried: Mutex<std::collections::HashSet<String>>,   // 이번 실행에서 이미 사진을 찾아본 기사
+    retry: Mutex<Vec<NewsItem>>, // DB 에 넣지 못한 기사(잠김·디스크 가득) — 다음 받아 넣기 때 먼저(S7)
     digest_cache: Mutex<std::collections::HashMap<String, (i64, Vec<String>)>>,
+    pending_fill: Mutex<std::collections::HashSet<String>>, // 켰지만 아직 매거진을 채우지 못한 출처(다음 확인에서 7일치를 넣음)
     pub paywall: Arc<crate::paywall::PaywallBook>, // 유료 기사 표시·무료 보도(G-14·G-15)
     weak: Mutex<std::sync::Weak<AppModel>>,
 }
 
 pub fn words(list: &[String]) -> Vec<String> {
     list.iter().map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty()).collect()
+}
+
+// 고인 소식 가운데 지금 설정으로도 묶음에 낼 것만(맥 AppModel.prunePending)
+pub fn prune_pending(
+    pending: &[crate::store::PendingItem],
+    mute: &[String],
+    notifies: impl Fn(&str) -> bool,
+    magazine_only: impl Fn(&str) -> bool,
+) -> Vec<crate::store::PendingItem> {
+    pending
+        .iter()
+        .filter(|p| {
+            let text = format!("{} {} {}", p.item.title, p.item.title_ko.as_deref().unwrap_or(""), p.item.summary).to_lowercase();
+            !mute.iter().any(|w| text.contains(w)) && notifies(&p.item.source_id) && !magazine_only(&p.section)
+        })
+        .cloned()
+        .collect()
 }
 
 // '알리지 않음' 낱말이 든 소식은 빼고, '꼭 알림' 낱말이 든 소식은 중요 표시(번역 뒤 제목·한국어 제목·요약)
@@ -191,6 +210,17 @@ pub fn preview_item() -> NewsItem {
     it
 }
 
+// 매거진 채우기(업데이트 뒤 한 번·처음 켠 출처): 피드가 이미 준 글 중 최근 days 일치를 새것부터 cap 건.
+// 날짜 없는 글은 어느 날 호인지 몰라 뺀다. 예전엔 출처당 25건·3일로 잘라 많이 쓰는 곳은 어제 글부터 빠졌다(맥 magazineFill 과 같은 규칙)
+pub const MAGAZINE_FILL_VERSION: i64 = 2;
+pub fn magazine_fill(items: &[NewsItem], now: DateTime<Utc>, cap: usize, days: i64) -> Vec<NewsItem> {
+    let cut = now - Duration::days(days);
+    let mut v: Vec<NewsItem> = items.iter().filter(|i| i.date.map(|d| d > cut && d <= now + Duration::hours(1)).unwrap_or(false)).cloned().collect();
+    v.sort_by(|a, b| b.date.cmp(&a.date));
+    v.truncate(cap);
+    v
+}
+
 // 처음 켠 출처는 기존 글을 조용히 기억만, 피드에 다시 보이면 시각 갱신, 3일보다 오래된 글은 빼기
 pub fn fresh_items(state: &mut AppState, items: Vec<NewsItem>, src: &Source, now: DateTime<Utc>) -> Vec<NewsItem> {
     let first_time = !state.seeded.contains(&src.id);
@@ -213,6 +243,54 @@ pub fn fresh_items(state: &mut AppState, items: Vec<NewsItem>, src: &Source, now
         state.seeded.push(src.id.clone());
     }
     out
+}
+
+// 잠시 끄기는 길어야 '내일 아침 8시'(32시간 안). 이틀보다 먼 끝은 시계가 앞서 있던 때 켠 것으로 보고 풀린 것으로 본다
+// (맥 AppModel.snoozeActive · 시계를 바로잡은 뒤에도 며칠 동안 알림이 꺼져 있던 문제)
+pub const SNOOZE_MAX_SECS: i64 = 48 * 3600;
+pub fn snooze_active(until: Option<DateTime<Utc>>, now: DateTime<Utc>) -> bool {
+    until.is_some_and(|u| u > now && (u - now).num_seconds() <= SNOOZE_MAX_SECS)
+}
+
+// 확인 한 번의 출처 하나 상한: 요청 하나 60초(net::REQUEST_DEADLINE) + 잠깐 오류 다시 시도까지. 끝나지 않는 출처 하나가
+// 확인 전체를 묶어 '확인 중'이 풀리지 않고 그 뒤 확인이 모두 건너뛰어지지 않게
+pub const SOURCE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(90);
+
+// 모든 일을 동시에 돌리되, 일마다 deadline 안에 끝나지 않으면 '시간 초과'로(순서 그대로)
+pub async fn gather_within<T, F>(jobs: Vec<F>, deadline: std::time::Duration) -> Vec<Result<T, crate::net::FeedError>>
+where
+    F: std::future::Future<Output = Result<T, crate::net::FeedError>>,
+{
+    join_all(jobs.into_iter().map(|f| async move {
+        tokio::time::timeout(deadline, f).await.unwrap_or_else(|_| Err(crate::net::FeedError::Net("시간 초과".into())))
+    }))
+    .await
+}
+
+// 사이트맵 글 제목 채우기(글마다 쪽을 따로 받음, 한 번에 60초까지)는 end 까지만. 넘으면 남은 글은 주소로 지은 제목으로
+// (서버가 느리면 한 번 확인이 수십 분 '확인 중'에 묶이지 않게)
+pub async fn fill_titles_until<F, Fut>(items: Vec<NewsItem>, end: tokio::time::Instant, fill: F) -> Vec<NewsItem>
+where
+    F: Fn(NewsItem) -> Fut,
+    Fut: std::future::Future<Output = NewsItem>,
+{
+    let mut out = Vec::with_capacity(items.len());
+    for mut it in items {
+        if tokio::time::Instant::now() < end {
+            if let Ok(done) = tokio::time::timeout_at(end, fill(it.clone())).await {
+                out.push(done);
+                continue;
+            }
+        }
+        it.title = crate::feed_parser::plain::title_from_slug(&it.link);
+        out.push(it);
+    }
+    out
+}
+
+async fn fill_title(mut it: NewsItem) -> NewsItem {
+    FEEDS.fill_title(&mut it).await;
+    it
 }
 
 pub fn set_read_in(state: &mut AppState, key: &str, on: bool, now: f64) {
@@ -239,6 +317,7 @@ impl AppModel {
         let db = Arc::new(Database::open(&store.dir));
         let articles = ArticleService::new(store.dir.clone());
         let archive = magazine::archive_order(db.issues(120));
+        let retry = magazine::load_retry(&store.dir.join(magazine::RETRY_FILE)); // 지난 실행에서 못 넣은 기사(S7)
         let paywall = Arc::new(crate::paywall::PaywallBook::new(db.clone()));
         let me = Arc::new(AppModel {
             store,
@@ -256,7 +335,9 @@ impl AppModel {
             subscribing: Mutex::new(Default::default()),
             grown: Mutex::new(vec![]),
             enrich_tried: Mutex::new(Default::default()),
+            retry: Mutex::new(retry),
             digest_cache: Mutex::new(Default::default()),
+            pending_fill: Mutex::new(Default::default()),
             paywall,
             weak: Mutex::new(std::sync::Weak::new()),
         });
@@ -273,7 +354,7 @@ impl AppModel {
         let book = me.paywall.clone();
         let weak = Arc::downgrade(&me);
         me.articles.set_teaser_recorder(Arc::new(move |it, teaser| {
-            // 표시가 바뀌면 열린 목록·카드의 자물쇠를 다시 그림(맥 @Published · 윈도우 TeasersChanged 와 같음, review-3 B1)
+            // 표시가 바뀌면 열린 목록·카드의 자물쇠를 다시 그림(맥 @Published · 윈도우 TeasersChanged 와 같음)
             if book.record_teaser(it, teaser) {
                 if let Some(m) = weak.upgrade() {
                     m.send(UiEvent::Paywall);
@@ -324,10 +405,6 @@ impl AppModel {
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                 m3.recluster_if_needed();
             });
-            if !me.state().magazine_backfilled {
-                let m2 = me.clone();
-                tokio::spawn(async move { m2.backfill_magazine().await });
-            }
         });
         self.restart_loop();
         // 1분마다: 아침 브리핑 시각인지, 잠시 끄기가 끝났는지, 지난 호 발행
@@ -395,17 +472,41 @@ impl AppModel {
         }
         self.send(UiEvent::Checking(true));
         self.check_inner(manual).await;
+        // 확인 도중에 켠 출처는 이번에 받지 못했으니 곧바로 한 번 더(다음 주기까지 기다리지 않게 — 스스로 다시 부르지 않고 여기서 되풀이)
+        while self.fill_pending() {
+            self.check_inner(false).await;
+        }
         crate::source_health::BOOK.save_if_dirty();
         self.checking.store(false, Ordering::SeqCst);
         self.send(UiEvent::Checking(false));
     }
 
+    fn fill_pending(&self) -> bool {
+        let en = self.state().enabled;
+        self.pending_fill.lock().unwrap().iter().any(|id| en.get(id) == Some(&true))
+    }
+
     async fn check_inner(self: &Arc<Self>, manual: bool) {
         let enabled = self.state().enabled;
         let active: Vec<Source> = self.all_sources().into_iter().filter(|s| enabled.get(&s.id) == Some(&true)).collect();
-        let results = join_all(active.iter().map(|src| async move { (src.clone(), FEEDS.items(src, true).await) })).await;
+        // 매거진 채우기: 업데이트 뒤 한 번(전부)·처음 켠 출처·다시 켠 출처는 피드가 준 최근 7일치를 매거진에만 넣는다(추가 요청 없음).
+        // 이 출처들은 304(바뀐 것 없음)로 빈손이 되지 않게 조건 없이 받는다 — 요청 수는 같다(맥 AppModel.checkAll 과 같은 규칙)
+        let filling: std::collections::HashSet<String> = {
+            let st = self.state();
+            let pending = self.pending_fill.lock().unwrap().clone();
+            let all = st.magazine_fill < MAGAZINE_FILL_VERSION;
+            active.iter().map(|s| s.id.clone()).filter(|id| all || pending.contains(id) || !st.seeded.contains(id)).collect()
+        };
+        let preparing = !self.state().magazine_backfilled && !filling.is_empty();
+        if preparing {
+            self.preparing.store(true, Ordering::SeqCst);
+            self.send(UiEvent::Preparing(true));
+        }
+        let fetched = gather_within(active.iter().map(|src| FEEDS.items(src, !filling.contains(&src.id))).collect(), SOURCE_DEADLINE).await;
+        let results: Vec<(Source, _)> = active.iter().cloned().zip(fetched).collect();
         let now = Utc::now();
         let mut candidates: Vec<(Source, Vec<NewsItem>)> = vec![];
+        let mut fill: Vec<(Source, Vec<NewsItem>)> = vec![];
         {
             let mut st = self.state.lock().unwrap();
             for (src, res) in results {
@@ -413,6 +514,9 @@ impl AppModel {
                     Ok(items) => {
                         st.errors.remove(&src.id);
                         if let Some(items) = items {
+                            if filling.contains(&src.id) {
+                                fill.push((src.clone(), magazine_fill(&items, now, if src.is_sitemap() { 10 } else { 120 }, 7)));
+                            }
                             let f = fresh_items(&mut st, items, &src, now);
                             candidates.push((src, f));
                         }
@@ -424,11 +528,10 @@ impl AppModel {
             }
         }
         let mut found: Vec<NewsItem> = vec![];
+        let titles_end = tokio::time::Instant::now() + SOURCE_DEADLINE;
         for (src, items) in candidates {
-            for mut it in items {
-                if src.is_sitemap() {
-                    FEEDS.fill_title(&mut it).await;
-                }
+            let items = if src.is_sitemap() { fill_titles_until(items, titles_end, fill_title).await } else { items };
+            for it in items {
                 if src.ai_only && !resources::ai_match(&format!("{} {}", it.title, it.summary)) {
                     continue;
                 }
@@ -448,6 +551,54 @@ impl AppModel {
         let hidden: std::collections::HashSet<String> = self.state().hidden_sources.into_iter().collect();
         found.retain(|it| !hidden.contains(&it.source_id)); // 숨긴 출처는 스토리 대표로도 다시 나오지 않게 처음부터 뺀다
         add_english_titles(&mut found).await;
+        // 채울 글 중 이미 매거진에 있거나 이번 새 글인 것은 빼고(제목 번역을 다시 하지 않게)
+        let new_keys: std::collections::HashSet<String> = found.iter().map(|i| i.key()).collect();
+        let fill_keys: Vec<String> = fill.iter().flat_map(|(_, v)| v.iter().map(|i| i.key())).filter(|k| !new_keys.contains(k)).collect();
+        let existing = self.db.existing(&fill_keys);
+        let mut quiet_items: Vec<NewsItem> = vec![];
+        let titles_end = tokio::time::Instant::now() + SOURCE_DEADLINE;
+        for (src, items) in &fill {
+            let items: Vec<NewsItem> = items.iter().filter(|i| !new_keys.contains(&i.key()) && !existing.contains(&i.key())).cloned().collect();
+            let items = if src.is_sitemap() { fill_titles_until(items, titles_end, fill_title).await } else { items };
+            for it in items {
+                if src.ai_only && !resources::ai_match(&format!("{} {}", it.title, it.summary)) {
+                    continue;
+                }
+                quiet_items.push(it);
+            }
+        }
+        {
+            // 받다가 실패한 출처도 뺀다(곧바로 다시 확인을 되풀이하지 않게 — 처음 켠 출처는 다음 확인에서 다시 채움)
+            let mut p = self.pending_fill.lock().unwrap();
+            for id in &filling {
+                p.remove(id);
+            }
+        }
+        if !quiet_items.is_empty() {
+            // 채운 글: 알림·목록 없이 매거진에만, 오래된 것부터(스토리가 시간 순으로 묶이게)
+            let titles = TR.translate_many(&quiet_items.iter().map(|i| i.title.clone()).collect::<Vec<_>>()).await;
+            for (i, t) in titles.into_iter().enumerate() {
+                if t != quiet_items[i].title {
+                    quiet_items[i].title_ko = Some(t);
+                }
+            }
+            let mut q = apply_keywords(quiet_items, &self.settings());
+            q.retain(|it| !hidden.contains(&it.source_id));
+            add_english_titles(&mut q).await;
+            q.sort_by(|a, b| a.date_or_past().cmp(&b.date_or_past()));
+            log::info!("[매거진] 피드가 준 지난 글 {}건을 채웠습니다(출처 {}곳)", q.len(), fill.len());
+            self.ingest(&q);
+        }
+        if !fill.is_empty() {
+            self.mutate(|s| {
+                s.magazine_fill = MAGAZINE_FILL_VERSION;
+                s.magazine_backfilled = true;
+            });
+        }
+        if preparing {
+            self.preparing.store(false, Ordering::SeqCst);
+            self.send(UiEvent::Preparing(false));
+        }
         self.ingest(&found); // 매거진에는 묶이기 전 전부(여러 시각 비교용)
         self.notify_grown_stories();
         // 알림을 끈 채널(논문·커뮤니티 등)은 매거진에만 싣고, 목록·알림에는 넣지 않는다
@@ -469,7 +620,7 @@ impl AppModel {
             // 저장 파일만이 아니라 메모리의 기억도 정리(오래 켜 두면 끝없이 커지고 저장마다 정렬하던 문제)
             crate::store::trim_seen(&mut st.seen, crate::store::SEEN_LIMIT);
             // 방해 금지 시간·잠시 끄기·회의 중: 알리지 않고 안 읽은 소식으로만 쌓는다
-            let q = (Self::quiet_now(&st.settings) || st.snooze_until.map(|s| s > now).unwrap_or(false) || focus.is_some()) && !manual;
+            let q = (Self::quiet_now(&st.settings) || snooze_active(st.snooze_until, now) || focus.is_some()) && !manual;
             (listed, q, st.settings.sound, st.settings.style)
         };
         // 분야 정책: 즉시 알릴 것 · 묶음으로 고일 것 · 매거진에만 둘 것
@@ -507,9 +658,13 @@ impl AppModel {
         if p.mode == NotifyMode::Instant && !was_instant {
             p.less = false; // 설정에서 즉시로 되돌리면 '덜 받기'도 풂
         }
+        let magazine_only = p.mode == NotifyMode::Magazine;
         self.mutate(|s| {
             s.section_policy.insert(section.to_string(), p);
         });
+        if magazine_only {
+            self.prune_pending(); // '매거진만'으로 바꾸면 이미 고인 그 분야 소식도 묶음으로 보내지 않음
+        }
     }
 
     pub fn notify_section(&self, it: &NewsItem) -> String {
@@ -705,7 +860,8 @@ impl AppModel {
         self.subscriptions_changed(); // 뺀 분야의 출처 글은 바로 안 보이게
         if !turned_on.is_empty() {
             let me = self.clone();
-            self.rt.spawn(async move { me.backfill_magazine_only(Some(turned_on)).await });
+            self.pending_fill.lock().unwrap().extend(turned_on);
+            self.rt.spawn(async move { me.check_all(false).await });
         }
     }
 
@@ -811,7 +967,7 @@ impl AppModel {
     }
 
     pub fn is_snoozed(&self) -> bool {
-        self.state().snooze_until.map(|s| s > Utc::now()).unwrap_or(false)
+        snooze_active(self.state.lock().unwrap().snooze_until, Utc::now())
     }
 
     // 회의·발표 중 자동 조용히(N-25): 지금 그 이유(설정에서 켠 것만)
@@ -853,16 +1009,41 @@ impl AppModel {
         Interest { category: s.interest_category.clone(), source: s.interest_source.clone() }
     }
 
+    // 새 글을 매거진 기록에 넣는다. 앞서 DB 잠김·디스크 가득으로 못 넣은 글(retry)을 먼저 — 새 글이 없어도(S7).
+    // 본 글 기억(seen)은 확인에서 먼저 남기므로, 못 넣은 글은 retry 에 두어 잃지 않는다(자료 폴더 ingest-retry.json 에도 — 다시 켜도 남게)
     pub fn ingest(self: &Arc<Self>, items: &[NewsItem]) {
-        if items.is_empty() {
-            return;
-        }
-        let followed = self.state().followed_stories;
-        let grown = magazine::ingest(&self.db, items, &followed);
+        let grown = {
+            // 받아 넣기 둘(구독·확인)이 겹쳐도 retry 목록·파일을 서로 덮어쓰지 않게 끝까지 잡고 한다
+            let mut retry = self.retry.lock().unwrap();
+            if items.is_empty() && retry.is_empty() {
+                return;
+            }
+            let followed = self.state().followed_stories;
+            let before: Vec<String> = retry.iter().map(|i| i.key()).collect();
+            let grown = magazine::ingest_retrying(&self.db, &mut retry, items, &followed);
+            // 바뀌었을 때만 파일에(앱을 껐다 켜도 남게 — 쓰기 실패면 메모리에만)
+            if retry.iter().map(|i| i.key()).ne(before.iter().cloned()) {
+                magazine::save_retry(&self.store.dir.join(magazine::RETRY_FILE), &retry);
+            }
+            grown
+        };
         self.grown.lock().unwrap().extend(grown);
         self.db.prune(crate::database::KEEP_ITEMS);
+        self.trim_story_seen();
         self.send(UiEvent::Magazine);
         self.enrich_images();
+    }
+
+    // 상태의 storySeen 에서 DB 에 이제 없는(정리된) 스토리 것을 지운다 — 끝없이 쌓이지 않게(맥 '남은 것' 4)
+    fn trim_story_seen(&self) {
+        let Some(ids) = self.db.cluster_ids() else { return }; // 읽지 못하면 건드리지 않음
+        let stale = {
+            let st = self.state.lock().unwrap();
+            st.story_seen.keys().any(|k| !ids.contains(k))
+        };
+        if stale {
+            self.mutate(|s| crate::store::trim_story_seen(&mut s.story_seen, &ids));
+        }
     }
 
     // 사진이 없는 최근 기사는 페이지에서 og:image 를 찾아 채운다(한 번에 12개, 공개 주소만)
@@ -977,50 +1158,6 @@ impl AppModel {
         magazine::live_weekly(&self.db, &self.editorial())
     }
 
-    // 처음 한 번: 켜진 출처에서 최근 3일 기사를 받아 매거진 첫 호를 채운다(알림 없음)
-    pub async fn backfill_magazine(self: Arc<Self>) {
-        self.backfill_magazine_only(None).await
-    }
-
-    // only: 이 출처들만(관심 분야를 고른 뒤 새로 켠 출처)
-    pub async fn backfill_magazine_only(self: Arc<Self>, only: Option<std::collections::HashSet<String>>) {
-        self.preparing.store(true, Ordering::SeqCst);
-        self.send(UiEvent::Preparing(true));
-        let cutoff = Utc::now() - Duration::days(3);
-        let enabled = self.state().enabled;
-        let mut all: Vec<NewsItem> = vec![];
-        for src in self.all_sources().into_iter().filter(|s| enabled.get(&s.id) == Some(&true) && only.as_ref().map(|o| o.contains(&s.id)).unwrap_or(true)) {
-            let Ok(Some(mut items)) = FEEDS.items(&src, false).await else { continue };
-            items.retain(|i| i.date_or_past() > cutoff);
-            if src.is_sitemap() {
-                items.truncate(10);
-                for it in items.iter_mut() {
-                    FEEDS.fill_title(it).await;
-                }
-            }
-            if src.ai_only {
-                items.retain(|i| resources::ai_match(&format!("{} {}", i.title, i.summary)));
-            }
-            all.extend(items.into_iter().take(25));
-        }
-        let titles = TR.translate_many(&all.iter().map(|i| i.title.clone()).collect::<Vec<_>>()).await;
-        for (i, t) in titles.into_iter().enumerate() {
-            if t != all[i].title {
-                all[i].title_ko = Some(t);
-            }
-        }
-        add_english_titles(&mut all).await;
-        let mut list = apply_keywords(all, &self.settings());
-        list.sort_by(|a, b| a.date_or_past().cmp(&b.date_or_past()));
-        let n = list.len();
-        self.ingest(&list);
-        self.publish_due();
-        self.mutate(|s| s.magazine_backfilled = true);
-        self.preparing.store(false, Ordering::SeqCst);
-        self.send(UiEvent::Preparing(false));
-        log::info!("[매거진] 첫 호를 {n}건으로 채웠습니다");
-    }
-
     // MARK: 동작
     // 기사를 열 때(읽기 창은 부르는 쪽이 연다)
     pub fn open(&self, item: &NewsItem) -> bool {
@@ -1081,10 +1218,10 @@ impl AppModel {
     }
 
     pub fn minute_tick(&self, now: DateTime<Utc>) {
-        if let Some(s) = self.state().snooze_until {
-            if s <= now {
-                self.mutate(|st| st.snooze_until = None);
-            }
+        // 끝났거나, 시계가 바뀌어 너무 먼 것
+        let until = self.state.lock().unwrap().snooze_until;
+        if until.is_some() && !snooze_active(until, now) {
+            self.mutate(|st| st.snooze_until = None);
         }
         let local = now.with_timezone(&Local);
         if local.minute() % 30 == 0 {
@@ -1210,6 +1347,9 @@ impl AppModel {
         self.mutate(|s| {
             s.notify.insert(id.to_string(), on);
         });
+        if !on {
+            self.prune_pending(); // 끄면 이미 고인 그 출처 소식도 묶음으로 보내지 않음
+        }
     }
 
     pub fn is_subscribed(&self, src: &Source) -> bool {
@@ -1328,6 +1468,23 @@ impl AppModel {
         }
     }
 
+    // 여러 출처를 한 번에(설정 › 구독의 묶음 켜기·끄기): 저장·목록 다시 계산·새로 확인은 한 번만(맥 setEnabled(ids:on:))
+    pub fn set_enabled_many(self: &Arc<Self>, ids: &[String], on: bool) {
+        if ids.is_empty() {
+            return;
+        }
+        self.mutate(|s| {
+            for id in ids {
+                s.enabled.insert(id.clone(), on);
+            }
+        });
+        self.subscriptions_changed();
+        if on {
+            let me = self.clone();
+            self.rt.spawn(async move { me.check_all(false).await });
+        }
+    }
+
     pub fn update(self: &Arc<Self>, change: impl FnOnce(&mut Settings)) {
         let before = self.settings();
         let after = self.mutate(|s| {
@@ -1339,6 +1496,9 @@ impl AppModel {
         }
         if after.interval_minutes != before.interval_minutes {
             self.restart_loop();
+        }
+        if after.limits() != before.limits() {
+            self.send(UiEvent::Layout); // 보도 수 문턱은 매거진 '주요' 지면도 정함
         }
     }
 
@@ -1371,7 +1531,22 @@ impl AppModel {
                 it.watch = if watch.is_empty() { None } else { crate::watch_words::first_match(it, &watch) };
             }
         });
+        self.prune_pending(); // 설정에서 더한 '알리지 않음' 낱말도 이미 고인 소식에 적용
         self.subscriptions_changed();
+    }
+
+    // 설정이 바뀐 뒤 고인 소식(묶음 대기열)에서 이제 알리지 않을 것을 뺀다(맥 prunePending):
+    // '알리지 않음' 낱말이 든 것 · 알림을 끈 출처 · '매거진만'이 된 분야
+    pub fn prune_pending(&self) {
+        let (pending, mute) = {
+            let s = self.state.lock().unwrap();
+            (s.pending.clone(), words(&s.settings.mute_keywords))
+        };
+        let kept = prune_pending(&pending, &mute, |id| self.notifies(id), |sec| self.policy(sec).mode == NotifyMode::Magazine);
+        if kept.len() != pending.len() {
+            let keep: std::collections::HashSet<(String, String)> = kept.into_iter().map(|p| (p.story, p.item.id)).collect();
+            self.mutate(|s| s.pending.retain(|p| keep.contains(&(p.story.clone(), p.item.id.clone()))));
+        }
     }
 
     // 견본 카드. 실제 기사를 다시 띄우면 같은 소식이 또 온 것처럼 보이므로 쓰지 않는다

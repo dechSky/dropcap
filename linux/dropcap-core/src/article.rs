@@ -129,9 +129,9 @@ pub struct PreparedArticle {
     #[serde(default)]
     pub fallback: String, // 본문을 못 추렸을 때 보여 줄 요약 번역
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub paywalled: Option<bool>, // 맛보기만 나오고 구독을 권함(유료벽 뒤, G-14 · READER-CUT.md C)
+    pub paywalled: Option<bool>, // 맛보기만 나오고 구독을 권함(유료벽 뒤, G-14)
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub partial: Option<bool>, // 본문 일부만 가져왔을 수 있음(READER-CUT.md A)
+    pub partial: Option<bool>, // 본문 일부만 가져왔을 수 있음
     #[serde(rename = "savedAt", default, skip_serializing_if = "Option::is_none")]
     pub saved_at: Option<chrono::DateTime<chrono::Utc>>, // 디스크에 남긴 때(맛보기·일부만은 6시간 뒤 다시 받기)
 }
@@ -430,7 +430,7 @@ pub struct ArticleService {
     next_id: Mutex<u64>,
     pinned: Mutex<Arc<dyn Fn() -> Vec<String> + Send + Sync>>, // 저장한 기사 링크(디스크 정리에서 제외)
     recorder: Mutex<Arc<Recorder>>, // 사용자가 연 기사의 추리기 결과(유료 기사 배우기, G-14)
-    paywall_kind: Mutex<Arc<KindOf>>, // 출처의 유료 표시(하드 유료 + 짧은 본문이면 맛보기, READER-CUT.md C)
+    paywall_kind: Mutex<Arc<KindOf>>, // 출처의 유료 표시(하드 유료 + 짧은 본문이면 맛보기)
     teaser_recorder: Mutex<Arc<TeaserRecorder>>, // 맛보기 판정 남기기(미리 받기 포함 — 목록에 열기 전부터 '앞부분만')
 }
 
@@ -875,7 +875,7 @@ pub mod body_cleanup {
         None
     }
 
-    // 군더더기 줄(sources-audit _KR1·_KR2·_INTL1·_INTL2 '섞여 들어온 것' — 맥 BodyCleanup.junkLine): 짧은 줄만, 글자째 맞을 때만
+    // 군더더기 줄(기사 끝에 '섞여 들어온 것' — 맥 BodyCleanup.junkLine): 짧은 줄만, 글자째 맞을 때만
     static JUNK_LINE: Lazy<Regex> = Lazy::new(|| {
         Regex::new(
             r#"(?xi)^\s*(?:

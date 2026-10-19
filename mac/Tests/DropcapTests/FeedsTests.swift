@@ -208,7 +208,7 @@ import Testing
     }
 }
 
-// shared/categories.json · shared/sources.json 의 계약(두 작업자가 함께 쓰는 형식)
+// shared/categories.json · shared/sources.json 의 계약(세 판이 함께 쓰는 형식)
 @Suite struct SourceDataTests {
     struct Cats: Decodable {
         struct S: Decodable { let id: String; let name: String; let symbol: String; let color: String; let flow: Bool?; let more: Bool? }

@@ -1,5 +1,5 @@
 #!/bin/zsh
-# 오래 켜 두기 시험(soak, mac/STABILITY.md). 실제 기록·네트워크를 쓰지 않는다(임시 DROPCAP_DATA_DIR · 견본 피드 · 시험 시계).
+# 오래 켜 두기 시험(soak). 실제 기록·네트워크를 쓰지 않는다(임시 DROPCAP_DATA_DIR · 견본 피드 · 시험 시계).
 #   mac/scripts/e2e/soak.sh [결과 폴더]        환경: SOAK_DAYS(3) SOAK_STEP_MIN(10) SOAK_POSTS(20) E2E_SKIP_BUILD
 # 결과: soak.jsonl(시험 1시간마다 지표) · leaks.txt · footprint.txt · vmmap.txt · e2e.log · app-soak.log
 set -u

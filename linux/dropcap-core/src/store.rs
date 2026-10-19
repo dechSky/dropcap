@@ -63,7 +63,7 @@ pub struct Settings {
     #[serde(rename = "autoQuietCalendar")]
     pub auto_quiet_calendar: bool, // 캘린더 일정 중(리눅스는 감지하지 않음 — 상태 파일 호환용)
     #[serde(rename = "translateEngine")]
-    pub translate_engine: String, // 번역 방식 auto·apple·google·off(맥·윈도우와 같은 키·값 — mac/TRANSLATE.md, 리눅스 auto = Google)
+    pub translate_engine: String, // 번역 방식 auto·apple·google·off(맥·윈도우와 같은 키·값 — 리눅스 auto = Google)
 }
 
 impl Settings {
@@ -194,6 +194,8 @@ pub struct AppState {
     pub interest_source: HashMap<String, f64>,
     #[serde(rename = "magazineBackfilled")]
     pub magazine_backfilled: bool, // 처음 매거진을 채웠는지
+    #[serde(rename = "magazineFill")]
+    pub magazine_fill: i64, // 매거진 채우기 방식 판(2 = 피드가 준 7일치를 확인 때 함께 넣음 — 업데이트 뒤 한 번 채움)
     pub notify: HashMap<String, bool>, // 출처별 알림(없으면 출처 기본값)
     #[serde(rename = "followedStories")]
     pub followed_stories: Vec<String>, // 팔로우한 스토리(새 보도가 붙으면 알림)
@@ -245,6 +247,7 @@ impl<'de> Deserialize<'de> for AppState {
             interest_category: field(m, "interestCategory").unwrap_or_default(),
             interest_source: field(m, "interestSource").unwrap_or_default(),
             magazine_backfilled: field(m, "magazineBackfilled").unwrap_or(false),
+            magazine_fill: field(m, "magazineFill").unwrap_or(0),
             notify: field(m, "notify").unwrap_or_default(),
             followed_stories: field(m, "followedStories").unwrap_or_default(),
             story_seen: field(m, "storySeen").unwrap_or_default(),
@@ -325,6 +328,11 @@ pub fn prepare(state: AppState, existing: bool, sources: &[Source], meta: &HashM
 }
 
 pub const SEEN_LIMIT: usize = 8000;
+
+// storySeen 정리: 남아 있는 스토리(DB) 것만 둔다
+pub fn trim_story_seen(story_seen: &mut HashMap<String, i64>, alive: &std::collections::HashSet<String>) {
+    story_seen.retain(|k, _| alive.contains(k));
+}
 
 // 데이터 폴더: DROPCAP_DATA_DIR(시험용) → $XDG_DATA_HOME/dropcap → ~/.local/share/dropcap
 pub static DIR: Lazy<PathBuf> = Lazy::new(|| {
@@ -504,6 +512,8 @@ pub struct Prefs {
     pub scraps_copy_off: bool, // 스크랩 사본(scraps.json) 끄기(M-17, 맥 scrapsCopyOff)
     #[serde(rename = "magRecentSearches", skip_serializing_if = "Vec::is_empty")]
     pub mag_recent_searches: Vec<String>, // 매거진 빈 검색 화면의 최근 검색어(맥 magRecentSearches, 8개)
+    #[serde(rename = "sourceLayout")]
+    pub source_layout: String, // 설정 › 구독의 보기(media·section·region, source_directory::Layout)
 }
 
 impl Default for Prefs {
@@ -520,6 +530,7 @@ impl Default for Prefs {
             today_issue_done: None,
             scraps_copy_off: false,
             mag_recent_searches: vec![],
+            source_layout: "media".into(),
         }
     }
 }
@@ -541,6 +552,7 @@ impl<'de> Deserialize<'de> for Prefs {
             today_issue_done: field(m, "todayIssueDone"),
             scraps_copy_off: field(m, "scrapsCopyOff").unwrap_or(false),
             mag_recent_searches: field::<Vec<String>>(m, "magRecentSearches").unwrap_or_default().into_iter().take(crate::magazine::RECENT_SEARCHES).collect(),
+            source_layout: field(m, "sourceLayout").unwrap_or(def.source_layout),
         })
     }
 }

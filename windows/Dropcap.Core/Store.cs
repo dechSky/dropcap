@@ -27,6 +27,7 @@ public sealed class AppState
     public Dictionary<string, double> InterestCategory { get; set; } = new(); // 분야별로 연 횟수(관심사)
     public Dictionary<string, double> InterestSource { get; set; } = new();
     public bool MagazineBackfilled { get; set; }                      // 처음 매거진을 채웠는지
+    public int MagazineFill { get; set; }                             // 매거진 채우기 방식 판(2 = 피드가 준 7일치를 확인 때 함께 넣음 — 업데이트 뒤 한 번 채움)
     public Dictionary<string, bool> Notify { get; set; } = new();     // 출처별 알림(없으면 출처 기본값)
     public List<string> FollowedStories { get; set; } = new();        // 팔로우한 스토리(맥과 같은 항목 — 매거진 단계에서 씀)
     public Dictionary<string, int> StorySeen { get; set; } = new();   // 스토리를 마지막으로 봤을 때의 보도 수
@@ -73,6 +74,7 @@ public sealed class AppState
         s.InterestCategory = Json.Field(o, "interestCategory", s.InterestCategory);
         s.InterestSource = Json.Field(o, "interestSource", s.InterestSource);
         s.MagazineBackfilled = Json.Field(o, "magazineBackfilled", false);
+        s.MagazineFill = Json.Field(o, "magazineFill", 0);
         s.Notify = Json.Field(o, "notify", s.Notify);
         s.FollowedStories = Json.Field(o, "followedStories", s.FollowedStories);
         s.StorySeen = Json.Field(o, "storySeen", s.StorySeen);

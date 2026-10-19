@@ -12,6 +12,12 @@ struct SettingsView: View {
     @State private var mustText = ""
     @State private var muteText = ""
     @State private var watchText = ""
+    // 구독 탭: 출처 찾기·상태 거르개·보기(규칙은 Core/SourceDirectory.swift)
+    @State private var sourceQuery = ""
+    @State private var sourceStatus: SourceDirectory.Status = .all
+    @State private var expandedGroups: Set<String> = []
+    @State private var collapsedWhileSearching: Set<String> = []
+    @AppStorage(SourceDirectory.layoutKey) private var sourceLayoutRaw = SourceDirectory.Layout.media.rawValue
     @ObservedObject private var backup = BackupManager.shared
 
     var body: some View {
@@ -119,7 +125,14 @@ struct SettingsView: View {
     }
 
     private var sources: some View {
-        Form {
+        let all = Resources.config.sources
+        let enabled: (String) -> Bool = { model.state.enabled[$0] == true }
+        let shown = SourceDirectory.filter(all, query: sourceQuery, status: sourceStatus, enabled: enabled)
+        let mine = SourceDirectory.filter(model.state.customSources, query: sourceQuery, status: sourceStatus, enabled: enabled)
+        let catalog = ChannelCatalog.all.filter { SourceDirectory.matches($0, query: sourceQuery) }
+        let groups = SourceDirectory.groups(all: all, shown: shown, layout: sourceLayout, enabled: enabled)
+        let searching = !SourceDirectory.fold(sourceQuery).isEmpty
+        return Form {
             Section {
                 HStack {
                     TextField("언론사·블로그 주소 또는 youtube.com/@채널 · r/이름 · github.com/소유자/저장소", text: $newURL)
@@ -130,28 +143,133 @@ struct SettingsView: View {
                 Text("웹사이트·뉴스레터(Substack·Medium)·YouTube 채널·GitHub 릴리스·Reddit·arXiv·팟캐스트 주소를 넣으면 알맞은 피드를 찾아 구독합니다.")
                     .font(.caption).foregroundStyle(.secondary)
             } header: { Text("채널 추가") }
+
+            Section {
+                HStack(spacing: Space.s) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField("출처 찾기", text: $sourceQuery, prompt: Text("출처 찾기 — 이름·주소·분야·국내/해외"))
+                        .labelsHidden().textFieldStyle(.plain)
+                    if !sourceQuery.isEmpty {
+                        Button { sourceQuery = "" } label: { Image(systemName: "xmark.circle.fill") }
+                            .buttonStyle(.borderless).foregroundStyle(.secondary).help("찾기 지우기")
+                    }
+                }
+                Picker("보기", selection: $sourceLayoutRaw) {
+                    ForEach(SourceDirectory.Layout.allCases) { Text($0.label).tag($0.rawValue) }
+                }
+                .pickerStyle(.segmented)
+                Picker("상태", selection: $sourceStatus) {
+                    ForEach(SourceDirectory.Status.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                HStack {
+                    Button(SourceDirectory.summaryText(all + model.state.customSources, enabled: enabled)) { sourceStatus = sourceStatus == .on ? .all : .on }
+                        .buttonStyle(.borderless).help(sourceStatus == .on ? "전체 보기" : "켠 것만 보기")
+                    Spacer()
+                    Text(SourceDirectory.countText(shown: shown.count + mine.count, total: all.count + model.state.customSources.count))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if shown.isEmpty && mine.isEmpty && catalog.isEmpty {
+                    Text("찾는 출처가 없습니다. 이름·주소를 다시 확인하거나 위 '채널 추가'에 주소를 넣어 보세요.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            } header: { Text("출처 찾기") }
+
+            if !mine.isEmpty || (!searching && sourceStatus == .all) {
+                Section("내 채널 \(model.state.customSources.count)") {
+                    if model.state.customSources.isEmpty {
+                        Text("아래 추천 채널을 골라 보세요.").foregroundStyle(.secondary)
+                    }
+                    ForEach(SourceDirectory.sorted(mine)) { s in sourceRow(s, removable: true) }
+                }
+            }
+
+            if !groups.isEmpty {
+                Section("기본 출처") {
+                    ForEach(groups) { g in
+                        if sourceLayout == .media && g.total == 1, let s = g.sources.first {
+                            sourceRow(s, removable: false)
+                        } else {
+                            // 모두 켜기/끄기는 펼침 줄 밖에 둔다: 줄 안에 두면 손쉬운 사용 '누름'(VoiceOver)이 펼치는 대신 그 단추를 눌러 묶음을 다 켰다
+                            HStack(alignment: .firstTextBaseline, spacing: Space.s) {
+                                DisclosureGroup(isExpanded: expandBinding(g.id, auto: searching)) {
+                                    ForEach(g.sources) { s in sourceRow(s, removable: false, media: sourceLayout == .media ? g.title : nil) }
+                                } label: { tapToToggle(groupLabel(g), id: g.id, auto: searching) }
+                                groupBulkButton(g)
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !catalog.isEmpty {
+                Section {
+                    DisclosureGroup(isExpanded: expandBinding("catalog", auto: searching)) {
+                        ForEach(ChannelCatalog.groups, id: \.self) { g in
+                            let list = catalog.filter { $0.group == g }
+                            if !list.isEmpty {
+                                Text(g).font(.caption).foregroundStyle(.secondary)
+                                ForEach(list) { s in catalogRow(s) }
+                            }
+                        }
+                    } label: { tapToToggle(Text("추천 채널 \(catalog.count)"), id: "catalog", auto: searching) }
+                }
+            }
             OPMLSection()
-
-            Section("구독 중인 채널 \(model.state.customSources.count)") {
-                if model.state.customSources.isEmpty {
-                    Text("아래 추천 채널을 골라 보세요.").foregroundStyle(.secondary)
-                }
-                ForEach(model.state.customSources) { s in sourceRow(s, removable: true) }
-            }
-
-            ForEach(["lab", "press", "kr"], id: \.self) { tier in
-                Section("기본 출처 · \(Resources.tierLabel(tier))") {
-                    ForEach(Resources.config.sources.filter { $0.tier == tier }) { s in sourceRow(s, removable: false) }
-                }
-            }
-
-            ForEach(ChannelCatalog.groups, id: \.self) { g in
-                Section("추천 · \(g)") {
-                    ForEach(ChannelCatalog.all.filter { $0.group == g }) { s in catalogRow(s) }
-                }
-            }
         }
         .formStyle(.grouped)
+    }
+
+    private var sourceLayout: SourceDirectory.Layout { SourceDirectory.Layout(rawValue: sourceLayoutRaw) ?? .media }
+
+    // 찾는 중에는 걸린 묶음을 펼친다(찾는 중에 사용자가 접은 것은 접힌 채로)
+    private func expandBinding(_ id: String, auto: Bool) -> Binding<Bool> {
+        Binding(get: { auto ? !collapsedWhileSearching.contains(id) : expandedGroups.contains(id) },
+                set: { on in
+                    if auto { if on { collapsedWhileSearching.remove(id) } else { collapsedWhileSearching.insert(id) } }
+                    else if on { expandedGroups.insert(id) } else { expandedGroups.remove(id) }
+                })
+    }
+
+    // 묶음 줄 어디를 눌러도 펼치고 접는다(펼침 삼각형만이 아니라. 줄 안 단추는 단추대로)
+    private func tapToToggle<V: View>(_ label: V, id: String, auto: Bool) -> some View {
+        let b = expandBinding(id, auto: auto)
+        return label.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+            .onTapGesture { withMotion(Motion.snap) { b.wrappedValue.toggle() } }
+    }
+
+    // 묶음 줄: 이름 · 'N/M 켬'
+    @ViewBuilder private func groupLabel(_ g: SourceDirectory.Group) -> some View {
+        HStack(spacing: Space.m) {
+            if g.id.hasPrefix("media:"), let s = g.sources.first {
+                Monogram(letter: String(g.title.replacingOccurrences(of: "The ", with: "").prefix(1)).uppercased(), color: Color(hex: s.color), size: 22)
+            } else if g.id.hasPrefix("section:"), let sec = Sections.byID(String(g.id.dropFirst("section:".count))) {
+                Image(systemName: sec.symbol).foregroundStyle(sec.tint).frame(width: 22)
+            } else {
+                Image(systemName: g.id == "region:kr" ? "house" : "globe").foregroundStyle(.secondary).frame(width: 22)
+            }
+            Text(g.title)
+            Text("\(g.on)/\(g.total) 켬").font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    // 묶음 옆 단추: 보이는 것에만 모두 켜기/끄기
+    private func groupBulkButton(_ g: SourceDirectory.Group) -> some View {
+        let allOn = g.sources.allSatisfy { model.state.enabled[$0.id] == true }
+        return Button(allOn ? "모두 끄기" : "모두 켜기") { model.setEnabled(ids: g.sources.map(\.id), !allOn) }
+            .buttonStyle(.borderless).controlSize(.small)
+            .help(g.sources.count < g.total ? "보이는 \(g.sources.count)곳에만" : "이 묶음 \(g.total)곳 모두")
+    }
+
+    // 줄 안 작은 칩(KindBadge 와 같은 꼴)
+    private func chip(_ text: String, symbol: String? = nil, tint: Color = .secondary) -> some View {
+        Group {
+            if let symbol { Label(text, systemImage: symbol) } else { Text(text) }
+        }
+        .font(.dsChip).foregroundStyle(tint)
+        .padding(.horizontal, Space.xs + Space.xxs).padding(.vertical, 1)
+        .background(.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: Radius.xs, style: .continuous))
+        .lineLimit(1)
     }
 
     private func addChannel() {
@@ -163,12 +281,19 @@ struct SettingsView: View {
         }
     }
 
-    @ViewBuilder private func sourceRow(_ s: Source, removable: Bool) -> some View {
+    // 줄: 이름(매체 묶음 안에서는 짧은 이름) · 분야 칩 · 국내/해외 · 유료 자물쇠 · 알림 · 켜기
+    @ViewBuilder private func sourceRow(_ s: Source, removable: Bool, media: String? = nil) -> some View {
         HStack(spacing: Space.m) {
             Monogram(letter: String(s.name.replacingOccurrences(of: "The ", with: "").prefix(1)).uppercased(), color: Color(hex: s.color), size: 22)
             VStack(alignment: .leading, spacing: Space.xxs) {
                 HStack(spacing: Space.s) {
-                    Text(s.name)
+                    Text(media.map { SourceDirectory.shortName(s, media: $0) } ?? s.name).lineLimit(1)
+                    chip(Sections.name(s.sectionID), tint: Palette.section(s.sectionID))
+                    chip(SourceDirectory.regionLabel(s))
+                    if let p = s.paywall.flatMap(PaywallKind.init(rawValue:)), p == .hard || p == .metered {
+                        Image(systemName: p.symbol).font(.dsChip).foregroundStyle(Palette.paid)
+                            .help(p == .hard ? "구독해야 읽을 수 있음" : "한 달 몇 건 무료")
+                    }
                     if s.itemKind != .article { KindBadge(kind: s.itemKind) }
                     if s.aiOnly { Text("AI 글만").font(.caption).foregroundStyle(.secondary) }
                     if let err = model.state.errors[s.id] {
@@ -229,7 +354,7 @@ extension SettingsView {
         }
     }
 
-    // 분야: 고른 분야마다 알림 모드·묶음 시각·하루 상한(docs/research/COMPETITIVE.md (다)-3)
+    // 분야: 고른 분야마다 알림 모드·묶음 시각·하루 상한
     var sectionsTab: some View {
         Form {
             Section {

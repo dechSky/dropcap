@@ -7,10 +7,13 @@ use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 pub const SCHEMA_VERSION: i32 = 1;
 pub const KEEP_ITEMS: i64 = 20000;
+// 다른 연결이 잠깐 잠갔을 때 바로 실패하지 않고 기다리는 시간(맥 Database.busyTimeoutMs)
+pub const BUSY_TIMEOUT_MS: u64 = 3000;
 
 #[derive(Debug, Clone)]
 pub struct StoredItem {
@@ -58,6 +61,7 @@ pub struct Database {
     pub file: PathBuf,
     pub recreated: bool,        // 이번 실행에서 깨진 파일을 치우고 새로 만들었는가
     pub salvaged_scraps: usize, // 그때 깨진 파일에서 건진 스크랩 수
+    statements: AtomicUsize,    // 시험용: 실행한 읽기 문장 수(화면 하나에 DB 를 몇 번 묻는지 — S5·S8)
 }
 
 fn ts(d: DateTime<Utc>) -> f64 {
@@ -95,6 +99,11 @@ pub const TEASER_LIMIT: usize = 2000;
 
 impl Database {
     pub fn open(dir: &Path) -> Database {
+        Self::open_with_busy(dir, BUSY_TIMEOUT_MS)
+    }
+
+    // busy_ms 는 시험에서만 줄인다
+    pub fn open_with_busy(dir: &Path, busy_ms: u64) -> Database {
         let file = dir.join("magazine.sqlite");
         let mut recreated = false;
         let conn = match Self::try_open(&file) {
@@ -114,7 +123,8 @@ impl Database {
         };
         let _ = conn.execute_batch(SCHEMA);
         let _ = conn.execute_batch(&format!("PRAGMA user_version={SCHEMA_VERSION};"));
-        let mut db = Database { conn: Mutex::new(conn), file, recreated, salvaged_scraps: 0 };
+        let _ = conn.busy_timeout(std::time::Duration::from_millis(busy_ms));
+        let mut db = Database { conn: Mutex::new(conn), file, recreated, salvaged_scraps: 0, statements: AtomicUsize::new(0) };
         if recreated {
             // 스크랩은 사용자가 만든 것이라 다시 쌓이지 않는다 → 치운 파일에서 읽을 수 있는 만큼 옮겨 온다
             db.salvaged_scraps = db.import_scraps(&dir.join("magazine.broken.sqlite"));
@@ -158,21 +168,31 @@ impl Database {
     pub fn in_memory() -> Database {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(SCHEMA).unwrap();
-        Database { conn: Mutex::new(conn), file: PathBuf::from(":memory:"), recreated: false, salvaged_scraps: 0 }
+        Database { conn: Mutex::new(conn), file: PathBuf::from(":memory:"), recreated: false, salvaged_scraps: 0, statements: AtomicUsize::new(0) }
+    }
+
+    // 시험용: 지금까지 실행한 읽기 문장 수
+    pub fn statements(&self) -> usize {
+        self.statements.load(Ordering::Relaxed)
     }
 
     // MARK: 기사
-    pub fn upsert(&self, item: &NewsItem, cluster: Option<&str>, first_seen: DateTime<Utc>) {
-        let Ok(json) = serde_json::to_string(item) else { return };
+    // 넣었으면 true. 잠김(기다림 상한을 넘김)·디스크 가득 등으로 못 넣으면 false — 부르는 쪽이 다음에 다시 넣게(S7)
+    pub fn upsert(&self, item: &NewsItem, cluster: Option<&str>, first_seen: DateTime<Utc>) -> bool {
+        let Ok(json) = serde_json::to_string(item) else { return false };
         // 논문 피드(arXiv)는 날짜가 발표일 자정이라, 지면에는 받은 때를 기준으로 싣는다
         let when = if item.item_kind() == ItemKind::Paper { Some(first_seen) } else { item.date };
         let c = self.conn.lock().unwrap();
-        let _ = c.execute(
+        let r = c.execute(
             "INSERT INTO items(key,json,date,first_seen,category,source,tier,cluster,image) VALUES(?,?,?,?,?,?,?,?,?)
              ON CONFLICT(key) DO UPDATE SET json=excluded.json, date=COALESCE(items.date, excluded.date),
                category=excluded.category, cluster=COALESCE(excluded.cluster, items.cluster), image=COALESCE(excluded.image, items.image)",
             params![item.key(), json, when.map(ts), ts(first_seen), item.category().raw(), item.source_id, item.tier, cluster, item.image],
         );
+        if let Err(e) = &r {
+            log::warn!("[DB] 기사 넣기 실패: {e}"); // 잠김·디스크 가득 등(A-33)
+        }
+        r.is_ok()
     }
 
     pub fn set_image(&self, key: &str, url: &str) {
@@ -185,7 +205,37 @@ impl Database {
         c.query_row("SELECT 1 FROM items WHERE key=?", [key], |_| Ok(())).optional().ok().flatten().is_some()
     }
 
+    // 이미 있는 key 들(400개씩 한 번에 — 매거진 채우기 전 거르기)
+    pub fn existing(&self, keys: &[String]) -> std::collections::HashSet<String> {
+        let mut out = std::collections::HashSet::new();
+        let c = self.conn.lock().unwrap();
+        for chunk in keys.chunks(400) {
+            let q = vec!["?"; chunk.len()].join(",");
+            let p: Vec<&dyn rusqlite::ToSql> = chunk.iter().map(|k| k as &dyn rusqlite::ToSql).collect();
+            let Ok(mut st) = c.prepare(&format!("SELECT key FROM items WHERE key IN ({q})")) else { continue };
+            let found: Vec<String> = match st.query_map(p.as_slice(), |r| r.get::<_, String>(0)) {
+                Ok(rows) => rows.flatten().collect(),
+                Err(_) => vec![],
+            };
+            out.extend(found);
+        }
+        out
+    }
+
+    // 기사 날짜(없으면 처음 본 때)가 [from, to) 안인 기사 수(빈 날 호를 엮기 전에 — 기사를 다 꺼내지 않고)
+    pub fn article_count(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> i64 {
+        let c = self.conn.lock().unwrap();
+        c.query_row(
+            "SELECT COUNT(*) FROM items WHERE COALESCE(date, first_seen) >= ? AND COALESCE(date, first_seen) < ?
+               AND COALESCE(json_extract(json,'$.kind'),'article') = 'article'",
+            params![ts(from), ts(to)],
+            |r| r.get(0),
+        )
+        .unwrap_or(0)
+    }
+
     fn stored_rows(&self, sql: &str, p: &[&dyn rusqlite::ToSql]) -> Vec<StoredItem> {
+        self.statements.fetch_add(1, Ordering::Relaxed);
         let c = self.conn.lock().unwrap();
         let Ok(mut st) = c.prepare(sql) else { return vec![] };
         let rows = st.query_map(p, |r| Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?, r.get::<_, Option<String>>(2)?)));
@@ -307,6 +357,7 @@ impl Database {
 
     // MARK: 스토리
     fn cluster_rows(&self, sql: &str, p: &[&dyn rusqlite::ToSql]) -> Vec<Cluster> {
+        self.statements.fetch_add(1, Ordering::Relaxed);
         let c = self.conn.lock().unwrap();
         let Ok(mut st) = c.prepare(sql) else { return vec![] };
         let Ok(rows) = st.query_map(p, |r| {
@@ -326,6 +377,31 @@ impl Database {
 
     pub fn recent_clusters(&self, since: DateTime<Utc>) -> Vec<Cluster> {
         self.cluster_rows("SELECT id,title,tokens,first,last,size FROM clusters WHERE last >= ? ORDER BY last DESC", &[&ts(since)])
+    }
+
+    // 최근 스토리(보도 2건 이상)의 보도들을 한 번에(스토리 목록 — 스토리마다 따로 묻지 않게, 맥 Database.storyMembers · S5)
+    pub fn story_members(&self, since: DateTime<Utc>) -> HashMap<String, Vec<StoredItem>> {
+        let mut out: HashMap<String, Vec<StoredItem>> = HashMap::new();
+        let rows = self.stored_rows(
+            "SELECT json, first_seen, cluster FROM items
+             WHERE cluster IN (SELECT id FROM clusters WHERE last >= ? AND size >= 2)
+             ORDER BY COALESCE(date, first_seen) ASC",
+            &[&ts(since)],
+        );
+        for s in rows {
+            if let Some(c) = s.cluster.clone() {
+                out.entry(c).or_default().push(s);
+            }
+        }
+        out
+    }
+
+    // 남아 있는 스토리 id 전부(상태의 storySeen 정리용). 읽지 못하면 None — 그때는 아무것도 지우지 않는다
+    pub fn cluster_ids(&self) -> Option<HashSet<String>> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare("SELECT id FROM clusters").ok()?;
+        let rows = st.query_map([], |r| r.get::<_, String>(0)).ok()?;
+        rows.collect::<rusqlite::Result<HashSet<String>>>().ok()
     }
 
     pub fn cluster(&self, id: &str) -> Option<Cluster> {

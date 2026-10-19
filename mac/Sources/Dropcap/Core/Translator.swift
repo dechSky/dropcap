@@ -2,7 +2,7 @@ import Foundation
 import NaturalLanguage
 import Translation
 
-// 한국어 번역. 설정의 번역 방식(translateEngine)을 따른다(mac/TRANSLATE.md).
+// 한국어 번역. 설정의 번역 방식(translateEngine)을 따른다.
 //  자동: macOS 26 이상에서 언어 자료가 기기에 받아져 있으면 애플 기기 내 번역(무료·비공개), 아니면 구글 번역 공개 엔드포인트
 //  기기 내만: 기기 내 번역이 안 되면 원문 그대로(구글로 보내지 않음) · Google: 늘 구글 · 번역 안 함: 원문 그대로
 // 어느 길이든 실패하면 원문을 그대로 돌려준다.
@@ -91,19 +91,56 @@ actor Translator {
     // 묶음 번역(표 셀): 묶음마다 여러 글을 한 번의 요청에 펴서 보내고 같은 모양으로 돌려준다.
     // 외국어로 보이지 않는 글(숫자·'20.3%'·이미 한국어)은 보내지 않고 그대로 둔다
     func translateGroupsReporting(_ groups: [[String]]) async -> (groups: [[String]], engine: Engine) {
+        await translateGroupsStreaming(groups, onGroups: nil)
+    }
+
+    // 묶음 번역을 흘려 받기로: 묶음의 글이 모두 돌아오면(번역됐든 원문으로 남았든) 그 묶음 번호 → 결과를 알린다.
+    // 받은 쪽은 한 묶음(표 한 줄)이 반만 바뀐 채로 보이지 않는다. 외국어 글이 없는 묶음은 알리지 않는다(그대로이므로)
+    typealias GroupHandler = @Sendable ([Int: [String]], Engine) async -> Void
+    func translateGroupsStreaming(_ groups: [[String]], chunk: Int = 4, onGroups: GroupHandler?) async -> (groups: [[String]], engine: Engine) {
         var flat: [String] = [], at: [(Int, Int)] = []
         for (g, group) in groups.enumerated() {
             for (k, t) in group.enumerated() where Self.looksForeign(t) { flat.append(t); at.append((g, k)) }
         }
         guard !flat.isEmpty else { return (groups, .none) }
-        let (out, engine) = await translateManyReporting(flat)
+        let progress = GroupProgress(groups, at)
+        let forward: ChunkHandler? = onGroups.map { handler in
+            { @Sendable got, engine in
+                let ready = progress.take(got)
+                if !ready.isEmpty { await handler(ready, engine) }
+            }
+        }
+        let (out, engine) = await translateStreaming(flat, chunk: chunk, onChunk: forward)
         var result = groups
         for (n, (g, k)) in at.enumerated() where n < out.count { result[g][k] = out[n] }
         return (result, engine)
     }
 
+    // 흘려 받은 글을 묶음으로 모은다(onChunk 는 차례로 불리지만 @Sendable 이라 상자에 담는다)
+    final class GroupProgress: @unchecked Sendable {
+        private let lock = NSLock()
+        private var groups: [[String]]
+        private var left: [Int: Int] = [:]
+        private let at: [(Int, Int)]
+        init(_ groups: [[String]], _ at: [(Int, Int)]) {
+            self.groups = groups; self.at = at
+            for (g, _) in at { left[g, default: 0] += 1 }
+        }
+        func take(_ got: [Int: String]) -> [Int: [String]] {
+            lock.lock(); defer { lock.unlock() }
+            var ready: [Int: [String]] = [:]
+            for (n, t) in got where n < at.count {
+                let (g, k) = at[n]
+                groups[g][k] = t
+                left[g, default: 0] -= 1
+                if left[g] == 0 { ready[g] = groups[g] }
+            }
+            return ready
+        }
+    }
+
     // 흘려 주기(케이스 5): 끝난 문단부터 onChunk 로 알린다(문단 번호 → 번역). 기기 내 번역은 chunk 문단씩 나눠 보내고
-    // 구글은 묶음마다. 읽기 창이 다 끝나기를 기다리지 않고 바꿔 끼울 수 있게(ArticleService 연결은 TRANSLATE.md '인계').
+    // 구글은 묶음마다. 읽기 창이 다 끝나기를 기다리지 않고 바꿔 끼울 수 있게(ArticleService 연결은).
     // 끝나면 전체 결과를 돌려준다(translateManyReporting 과 같음).
     typealias ChunkHandler = @Sendable ([Int: String], Engine) async -> Void
     func translateStreaming(_ texts: [String], chunk: Int = 4, onChunk: ChunkHandler?) async -> (texts: [String], engine: Engine) {
@@ -128,6 +165,7 @@ actor Translator {
             let sample = todo.prefix(5).map { texts[$0] }.joined(separator: " ")
             var done = 0
             for start in stride(from: 0, to: todo.count, by: min(chunk, todo.count)) {
+                if Task.isCancelled { break } // 읽기 창이 떠났다(ArticleService.release)
                 let part = Array(todo[start..<min(start + min(chunk, todo.count), todo.count)])
                 guard let apple = await appleCall(part.map { texts[$0] }, sample), apple.count == part.count else { break }
                 var got: [Int: String] = [:]
@@ -139,6 +177,8 @@ actor Translator {
                 if let onChunk { await onChunk(got, .apple) }
             }
             if done == todo.count { lastEngine = .apple; return (result, .apple) }
+            // 멈춘 것이면 남은 문단을 구글로 넘기지 않는다(다시 열면 받은 문단은 캐시에서)
+            if Task.isCancelled { return (result, done > 0 ? .apple : nil) }
             // 기기 내 번역을 아예 못 쓰면(자료 없음 등) 자동은 구글로, 기기 내만은 원문 그대로. 중간에 끊겼으면 남은 문단만 이어서
             if mode == .apple { return (result, done > 0 ? .apple : nil) }
             let rest = Array(todo.dropFirst(done))
@@ -174,7 +214,7 @@ actor Translator {
         await withTaskGroup(of: [(Int, String)].self) { group in
             // 묶음은 동시에 몇 개까지만(표가 큰 기사 하나가 요청을 한꺼번에 수백 건 보내지 않게 — 보안 점검 2 X3)
             func next() {
-                guard let batch = pending.popFirst() else { return }
+                guard !Task.isCancelled, let batch = pending.popFirst() else { return }
                 group.addTask {
                     let sources = batch.map { texts[$0].replacingOccurrences(of: "\n", with: " ") }
                     if let out = await call(sources.joined(separator: "\n\n")) {
@@ -183,7 +223,7 @@ actor Translator {
                     }
                     // 문단별 다시 보내기는 번역 한 번에 retryLimit 개까지(넘는 문단은 원문 그대로)
                     var one: [(Int, String)] = []
-                    for i in batch where retries.take() { if let t = await call(texts[i]) { one.append((i, t)) } }
+                    for i in batch where !Task.isCancelled && retries.take() { if let t = await call(texts[i]) { one.append((i, t)) } }
                     return one
                 }
             }
@@ -268,7 +308,7 @@ actor Translator {
 
     // 묶음 대조(케이스 10): 문단 수는 맞아도 결과가 밀렸는지. 원문 문단에만 있는(앞뒤 원문에는 없는) 영문 낱말·숫자 —
     // 번역에도 그대로 남는 것 — 가 제 짝 번역보다 이웃 짝 번역에 더 많이 보이는 문단이 하나라도 있으면 밀린 것으로 본다.
-    // 점검 표본의 실제 묶음 85개(문단 2개 이상)에서 오탐 1, 한 칸 밀림 84/85·가운데부터 밀림 73/83 을 잡았다(TRANSLATE.md).
+    // 점검 표본의 실제 묶음 85개(문단 2개 이상)에서 오탐 1, 한 칸 밀림 84/85·가운데부터 밀림 73/83 을 잡았다.
     // 틀리게 의심하면 그 묶음을 문단별로 다시 받을 뿐이다.
     static func anchors(_ s: String) -> Set<String> {
         var out = Set<String>()
@@ -392,7 +432,7 @@ actor Translator {
         guard let url = c.url, !googleResting else { return nil }
         var req = URLRequest(url: url, timeoutInterval: 15)
         req.setValue(FeedService.userAgent, forHTTPHeaderField: "User-Agent")
-        // 전체 시간 상한: 넘으면 요청을 취소하고 원문 그대로(확인이 번역을 기다리다 멈추지 않게 — STABILITY.md S3)
+        // 전체 시간 상한: 넘으면 요청을 취소하고 원문 그대로(확인이 번역을 기다리다 멈추지 않게)
         enum Outcome: Sendable { case got(Data, URLResponse), failed, timedOut }
         let fetched = await withTaskGroup(of: Outcome.self) { g in
             g.addTask { (try? await URLSession.shared.data(for: req)).map { .got($0.0, $0.1) } ?? .failed }

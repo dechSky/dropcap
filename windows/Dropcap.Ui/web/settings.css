@@ -110,3 +110,18 @@ select:focus-visible, .btn:focus-visible, .switch:focus-visible, .field:focus { 
 .warn-row { min-height: 0; gap: var(--sp-s); font-size: var(--fs-caption); color: var(--orange); padding-top: var(--sp-s); padding-bottom: var(--sp-s); }
 #copyBookmarklet { display: inline-flex; align-items: center; gap: var(--sp-xs); }
 #forgetScrapFolder[hidden], #scrapError[hidden] { display: none; }
+
+/* 설정 › 구독 정리: 찾기 칸·요약 줄·묶음 머리(접기/펴기)·줄의 분야 칩·국내/해외 — 위 값만 다시 씀 */
+.dir-search { gap: var(--sp-s); }
+.dir-search #srcClear[hidden], #srcEmpty[hidden] { display: none; }
+.dir-sum .ib.text { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dir-sum .note { flex: none; }
+.dir-head { gap: var(--sp-s); cursor: default; }
+.dir-head:hover { background: var(--fill); }
+.dir-head .lb { display: flex; align-items: baseline; gap: var(--sp-s); min-width: 0; }
+.dir-head .lb b { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dir-head .mono { --s: 22px; }
+.dir-head .ib .ic { transition: transform var(--dur-standard) var(--ease-enter); }
+.dir-head.open .ib.disc .ic { transform: rotate(90deg); }
+.dir-sub { font-size: var(--fs-caption); color: var(--text-2); }
+.dir-in { padding-left: var(--sp-xl); }

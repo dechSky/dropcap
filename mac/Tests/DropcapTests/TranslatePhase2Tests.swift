@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import Dropcap
 
-// 번역 2단계(mac/TRANSLATE.md): 네트워크 없이 — 엔진 부르기를 가짜로 바꿔 끼운다
+// 번역 2단계: 네트워크 없이 — 엔진 부르기를 가짜로 바꿔 끼운다
 @Suite struct TranslatePhase2Tests {
     // 부른 횟수·받은 글을 세는 가짜 엔진
     actor Calls {

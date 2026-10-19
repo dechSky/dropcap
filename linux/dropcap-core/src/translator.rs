@@ -1,12 +1,14 @@
 // 한국어 번역. 리눅스에는 무료 기기 내 번역이 없어 Google 번역 공개 엔드포인트(gtx)를 쓴다(T-05 ⊘).
-// 설정의 번역 방식(translateEngine — 맥·윈도우와 같은 키·값, mac/TRANSLATE.md)을 따른다:
+// 설정의 번역 방식(translateEngine — 맥·윈도우와 같은 키·값)을 따른다:
 //  auto·google = Google(기기 내 엔진이 없어 auto 도 Google) · off = 번역 안 함 · apple(맥에서 '기기 내만'으로 고른 기록) = 기기 밖으로 보내지 않음 → 번역 안 함.
 // 'Google 로 보내지 않음'이면 기사 본문·배경 제목 번역·같은 소식 묶기용 영어 번역 모두 보내지 않는다. 실패하면 원문을 그대로 돌려준다.
 use crate::net;
-use futures::future::{join_all, BoxFuture};
+use futures::future::BoxFuture;
+use futures::stream::{self, StreamExt};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Engine {
@@ -23,7 +25,7 @@ impl Engine {
     }
 }
 
-// 외국어로 보이는가: 한글이 20% 미만. 글자가 하나도 없거나(숫자·기호뿐) 주소 하나뿐인 글은 번역할 것이 없다(TRANSLATE.md 케이스 8)
+// 외국어로 보이는가: 한글이 20% 미만. 글자가 하나도 없거나(숫자·기호뿐) 주소 하나뿐인 글은 번역할 것이 없다
 pub fn looks_foreign(text: &str) -> bool {
     static URL_ONLY: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r"(?i)^(https?://|www\.)\S+$").unwrap());
     let s: Vec<char> = text.chars().filter(|c| !c.is_whitespace()).collect();
@@ -74,19 +76,29 @@ pub const TRANSLATE_MAX_BODY: usize = 2 << 20;
 type ModeSource = Box<dyn Fn() -> String + Send + Sync>;
 // Google 부르기(글, 목표 언어) — 시험에서 네트워크 없이 바꿔 끼운다
 pub type GoogleCall = Arc<dyn Fn(String, String) -> BoxFuture<'static, Option<String>> + Send + Sync>;
+// 실패하면 HTTP 상태(그 밖의 실패는 0)를 돌려주는 꼴 — 429 를 가려 쉬게(시험용)
+pub type GoogleStatusCall = Arc<dyn Fn(String, String) -> BoxFuture<'static, Result<String, u16>> + Send + Sync>;
 
 pub struct Translator {
     cache: Mutex<HashMap<String, String>>,
     last: Mutex<Engine>,
     mode_source: Mutex<ModeSource>,
     last_mode: Mutex<Option<String>>,
-    google_call: Option<GoogleCall>,
+    google_call: Option<GoogleStatusCall>,
+    deadline: Duration,                  // 번역 요청 하나의 전체 시간 상한
+    quiet_until: Mutex<Option<Instant>>, // 상한에 걸린 뒤 이때까지는 Google 을 부르지 않는다
 }
 
 pub static SHARED: Lazy<Translator> = Lazy::new(|| Translator::with_mode(|| "auto".into()));
 
 pub const CACHE_LIMIT: usize = 4000;
+// 번역 요청 하나의 전체 시간 상한(맥 Translator.requestDeadline). 확인이 제목 번역을 기다리다 멈추지 않게
+pub const REQUEST_DEADLINE: Duration = Duration::from_secs(20);
+// 상한에 걸린 뒤 쉬는 시간(맥 googleBackoff): 묶음이 실패해 문단마다 다시 보낼 때 상한을 문단 수만큼 기다리지 않게
+pub const GOOGLE_BACKOFF: Duration = Duration::from_secs(60);
 pub const BATCH_CHARS: usize = 3800;
+// 묶음·영어 제목 요청은 동시에 이만큼까지(맥 parallelBatches) — 업데이트 뒤 첫 채우기에서 수백 건이 한꺼번에 나가지 않게
+pub const PARALLEL_REQUESTS: usize = 4;
 
 impl Translator {
     pub fn last_engine(&self) -> Engine {
@@ -114,18 +126,59 @@ impl Translator {
             mode_source: Mutex::new(Box::new(mode)),
             last_mode: Mutex::new(None),
             google_call: None,
+            deadline: REQUEST_DEADLINE,
+            quiet_until: Mutex::new(None),
         }
     }
 
     // 시험용: Google 대신 call 을 부른다
     pub fn with_google(mode: impl Fn() -> String + Send + Sync + 'static, call: GoogleCall) -> Translator {
+        let call: GoogleStatusCall = Arc::new(move |t, l| {
+            let f = call(t, l);
+            Box::pin(async move { f.await.ok_or(0) })
+        });
+        Translator::with_google_status(mode, call)
+    }
+
+    // 시험용: 실패 상태(429 등)까지 돌려주는 Google
+    pub fn with_google_status(mode: impl Fn() -> String + Send + Sync + 'static, call: GoogleStatusCall) -> Translator {
         Translator { google_call: Some(call), ..Translator::with_mode(mode) }
     }
 
+    // 시험용: 요청 상한을 줄여서
+    pub fn with_google_deadline(mode: impl Fn() -> String + Send + Sync + 'static, call: GoogleCall, deadline: Duration) -> Translator {
+        Translator { deadline, ..Translator::with_google(mode, call) }
+    }
+
+    // 상한에 걸려 쉬는 중인가
+    pub fn resting(&self) -> bool {
+        self.quiet_until.lock().unwrap().is_some_and(|t| Instant::now() < t)
+    }
+
+    // 요청 하나: 쉬는 중이면 바로 None(원문 그대로), 상한을 넘기거나 429(요청이 너무 많음)를 받으면 GOOGLE_BACKOFF 동안 쉰다
     async fn call(&self, text: &str, target: &str) -> Option<String> {
-        match &self.google_call {
-            Some(f) => f(text.to_string(), target.to_string()).await,
-            None => google(text, target).await,
+        if self.resting() {
+            return None;
+        }
+        let fut = async {
+            match &self.google_call {
+                Some(f) => f(text.to_string(), target.to_string()).await,
+                None => google(text, target).await,
+            }
+        };
+        match tokio::time::timeout(self.deadline, fut).await {
+            Ok(Ok(t)) => Some(t),
+            Ok(Err(429)) => {
+                log::warn!("[번역] 요청이 너무 많다는 답(429)이라 {}초 동안 원문 그대로", GOOGLE_BACKOFF.as_secs());
+                *self.quiet_until.lock().unwrap() = Some(Instant::now() + GOOGLE_BACKOFF);
+                None
+            }
+            Ok(Err(_)) => None,
+            Err(_) => {
+                log::warn!("[번역] {}초 안에 응답이 없어 {}초 동안 원문 그대로", self.deadline.as_secs(), GOOGLE_BACKOFF.as_secs());
+                *self.quiet_until.lock().unwrap() = Some(Instant::now() + GOOGLE_BACKOFF);
+                None
+            }
         }
     }
 
@@ -133,7 +186,7 @@ impl Translator {
         *self.mode_source.lock().unwrap() = Box::new(mode);
     }
 
-    // 지금 방식. 방식이 바뀌면 캐시를 비운다(앞서 다른 방식으로 한 번역이 섞여 나오지 않게 — TRANSLATE.md 케이스 11)
+    // 지금 방식. 방식이 바뀌면 캐시를 비운다(앞서 다른 방식으로 한 번역이 섞여 나오지 않게)
     pub fn mode(&self) -> &'static str {
         let m = normalize_mode(&(self.mode_source.lock().unwrap())());
         let mut last = self.last_mode.lock().unwrap();
@@ -158,7 +211,9 @@ impl Translator {
         if !self.sending() {
             return vec![None; texts.len()];
         }
-        join_all(texts.iter().map(|t| self.call(t, "en"))).await
+        // 상자에 담는다: 스트림 안 클로저 미래는 Send 추론이 막힌다(확인을 tokio::spawn 으로 돌림)
+        let jobs: Vec<BoxFuture<'_, Option<String>>> = texts.iter().map(|t| Box::pin(self.call(t, "en")) as BoxFuture<'_, _>).collect();
+        stream::iter(jobs).buffered(PARALLEL_REQUESTS).collect().await
     }
 
     pub async fn translate(&self, text: &str) -> String {
@@ -187,8 +242,8 @@ impl Translator {
         (out, if fresh || from_cache { Engine::Google } else { Engine::None })
     }
 
-    // 문단 여러 개를 빈 줄로 이어 한 번에 보내고(요청 수를 줄여 빠르게), 묶음들은 동시에 보낸다.
-    // 돌아온 문단 수가 안 맞거나, 수는 맞아도 앞뒤 문단과 엇갈려 보이면(TRANSLATE.md 케이스 10) 그 묶음만 문단별로 다시 보낸다.
+    // 문단 여러 개를 빈 줄로 이어 한 번에 보내고(요청 수를 줄여 빠르게), 묶음들은 동시에 PARALLEL_REQUESTS 개까지 보낸다.
+    // 돌아온 문단 수가 안 맞거나, 수는 맞아도 앞뒤 문단과 엇갈려 보이면 그 묶음만 문단별로 다시 보낸다.
     // 결과는 다듬는다(polish: 제목 끝 마침표·이름 되돌림). 순서를 지킨다. (결과, 새로 번역했나)
     async fn translate_many_raw(&self, texts: &[String]) -> (Vec<String>, bool) {
         let mut result = texts.to_vec();
@@ -205,23 +260,25 @@ impl Translator {
             return (result, false);
         }
         let batches = batches(texts, &todo, BATCH_CHARS);
-        let jobs = batches.into_iter().map(|batch| async move {
-            let sources: Vec<String> = batch.iter().map(|&i| texts[i].replace('\n', " ")).collect();
-            if let Some(out) = self.call(&sources.join("\n\n"), "ko").await {
-                let parts: Vec<String> = out.split("\n\n").map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect();
-                if parts.len() == batch.len() && !looks_shifted(&sources, &parts) {
-                    return batch.into_iter().zip(parts).collect::<Vec<_>>();
+        let jobs = batches.into_iter().map(|batch| -> BoxFuture<'_, Vec<(usize, String)>> {
+            Box::pin(async move {
+                let sources: Vec<String> = batch.iter().map(|&i| texts[i].replace('\n', " ")).collect();
+                if let Some(out) = self.call(&sources.join("\n\n"), "ko").await {
+                    let parts: Vec<String> = out.split("\n\n").map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect();
+                    if parts.len() == batch.len() && !looks_shifted(&sources, &parts) {
+                        return batch.into_iter().zip(parts).collect::<Vec<_>>();
+                    }
                 }
-            }
-            let mut one = Vec::new();
-            for i in batch {
-                if let Some(t) = self.call(&texts[i], "ko").await {
-                    one.push((i, t));
+                let mut one = Vec::new();
+                for i in batch {
+                    if let Some(t) = self.call(&texts[i], "ko").await {
+                        one.push((i, t));
+                    }
                 }
-            }
-            one
+                one
+            })
         });
-        let done = join_all(jobs).await;
+        let done: Vec<Vec<(usize, String)>> = stream::iter(jobs.collect::<Vec<_>>()).buffer_unordered(PARALLEL_REQUESTS).collect().await;
         for pairs in done {
             for (i, raw) in pairs {
                 let t = polish(&texts[i], &raw);
@@ -336,7 +393,8 @@ pub fn parse_google(data: &[u8]) -> Option<String> {
     }
 }
 
-async fn google(text: &str, target: &str) -> Option<String> {
+// 실패하면 Err(HTTP 상태 · 그 밖의 실패는 0)
+async fn google(text: &str, target: &str) -> Result<String, u16> {
     if text.chars().count() <= REQUEST_LIMIT {
         return google_once(text, target).await;
     }
@@ -344,18 +402,20 @@ async fn google(text: &str, target: &str) -> Option<String> {
     for chunk in sentence_chunks(text, REQUEST_LIMIT) {
         parts.push(google_once(&chunk, target).await?);
     }
-    Some(parts.join(" "))
+    Ok(parts.join(" "))
 }
 
-async fn google_once(text: &str, target: &str) -> Option<String> {
-    let r = tokio::time::timeout(std::time::Duration::from_secs(15), net::get(&google_url(text, target), &[], TRANSLATE_MAX_BODY)).await.ok()?.ok()?;
+async fn google_once(text: &str, target: &str) -> Result<String, u16> {
+    let Ok(Ok(r)) = tokio::time::timeout(Duration::from_secs(15), net::get(&google_url(text, target), &[], TRANSLATE_MAX_BODY)).await else {
+        return Err(0);
+    };
     if r.status != 200 {
-        return None;
+        return Err(r.status);
     }
-    parse_google(&r.data)
+    parse_google(&r.data).ok_or(0)
 }
 
-// ── 다듬기(번역 결과 후처리, 맥 Translator.polish — TRANSLATE.md 2단계) ──
+// ── 다듬기(번역 결과 후처리, 맥 Translator.polish) ──
 
 // 원문 끝에 마침표가 없으면(제목·소제목·목록) 번역 끝 마침표 하나를 뗀다(케이스 3, `...` 는 둠),
 // 원문에 영문으로 있는 이름을 엔진이 한글로 음역·직역했으면 영문으로 되돌린다(케이스 2)

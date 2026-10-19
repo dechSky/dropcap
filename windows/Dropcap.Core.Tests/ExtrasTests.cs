@@ -4,7 +4,7 @@ using SkiaSharp;
 
 namespace Dropcap.Core.Tests;
 
-// 맥 mac/Tests/DropcapTests/ExtrasTests.swift 를 옮긴 것(남은 개선 묶음 — mac/EXTRAS.md):
+// 맥 mac/Tests/DropcapTests/ExtrasTests.swift 를 옮긴 것(남은 개선 묶음):
 // 유료 기사 표시·무료 보도 안내(G-14·G-15) · 회의 중 조용히(N-25) · 오늘 호 완독(M-23) · 분야별 저녁 정리(N-26) · 분야 대표 사진 점수(M-24)
 
 internal static class Extras
@@ -94,7 +94,7 @@ public class PaywallTests
         var all = Resources.Config.Sources;
         Assert.All(all.Where(s => s.Paywall is not null), s => Assert.Contains(s.Paywall, new[] { "hard", "metered" }));
         Assert.Equal("hard", all.First(s => s.Id == "wsj-markets").Paywall);
-        Assert.All(all.Where(s => s.Id.StartsWith("nyt-")), s => Assert.Equal("hard", s.Paywall)); // 앱은 403 으로 못 읽음(sources-audit)
+        Assert.All(all.Where(s => s.Id.StartsWith("nyt-")), s => Assert.Equal("hard", s.Paywall)); // 앱은 403 으로 못 읽음
         Assert.Equal("metered", all.First(s => s.Id == "verge").Paywall); // 구독 문·isAccessibleForFree=false
         Assert.Equal("hard", Sections.Meta["wsj-markets"].Paywall);
     }

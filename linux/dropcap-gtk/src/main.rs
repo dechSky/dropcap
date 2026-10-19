@@ -25,6 +25,7 @@ mod section_photos;
 mod scrapbook_settings;
 mod settings;
 mod settings_sections;
+mod settings_sources;
 mod settings_tools;
 mod shots;
 mod strings;

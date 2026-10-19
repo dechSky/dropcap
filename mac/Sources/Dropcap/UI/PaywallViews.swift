@@ -65,7 +65,7 @@ struct FreeAlternativesBox: View {
     }
 }
 
-// 읽기 창: 맛보기(유료벽 앞부분)만 받은 기사 — 본문 바로 위에, 무료 보도가 없어도 늘(READER-CUT.md C②). 무료 보도 상자와 따로
+// 읽기 창: 맛보기(유료벽 앞부분)만 받은 기사 — 본문 바로 위에, 무료 보도가 없어도 늘. 무료 보도 상자와 따로
 struct TeaserBanner: View {
     let link: String
     var body: some View {
@@ -87,7 +87,7 @@ struct TeaserBanner: View {
     }
 }
 
-// 본문 끝 한 줄: 맛보기가 끝난 자리, 또는 일부만 가져왔을 수 있음(READER-CUT.md A②·C②)
+// 본문 끝 한 줄: 맛보기가 끝난 자리, 또는 일부만 가져왔을 수 있음
 struct CutEndNote: View {
     let teaser: Bool
     let link: String

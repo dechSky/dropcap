@@ -20,6 +20,17 @@ struct MagazineView: View {
         ?? TestEnv.get("MAG_SECTION").map { .section($0) } ?? .today)
     @State private var turn = 0   // 넘긴 방향(+1 다음, -1 이전) — 책장 넘김 방향
     @State private var scrolled = false // 지면이 머리 밑으로 들어감(머리 아래 구분선)
+    @State private var toggled: Set<String> = [] // 지난 호 묶음 중 기본(이번 주·지난주 펼침, 달별 접힘)과 다르게 연 것·접은 것
+
+    private func expanded(_ g: Magazine.ArchiveGroup) -> Binding<Bool> {
+        Binding(get: {
+            // 지금 보고 있는 지난 호가 든 묶음은 늘 펼침(⌘[ ⌘] 로 넘어가도 고른 줄이 보이게)
+            if case .issue(let i) = page, g.issues.contains(i) { return true }
+            return g.folded == toggled.contains(g.id)
+        }, set: { open in
+            if open == g.folded { toggled.insert(g.id) } else { toggled.remove(g.id) }
+        })
+    }
 
     var body: some View {
         NavigationSplitView {
@@ -43,16 +54,24 @@ struct MagazineView: View {
                     Label("스크랩북 \(book.scraps.count)", systemImage: "scissors").tag(Page.scrapbook)
                     Label("검색", systemImage: "magnifyingglass").tag(Page.search)
                 }
-                if !mag.archive.isEmpty {
-                    Section("지난 호") {
-                        ForEach(mag.archive) { issue in
+                // 지난 호: 이번 주 · 지난주 · 그 앞은 달별(처음엔 접힘). 빈 날은 줄마다 두지 않고 묶음 끝에 한 줄로
+                ForEach(Magazine.archiveGroups(mag.archive, now: Date())) { g in
+                    Section(isExpanded: expanded(g)) {
+                        ForEach(g.issues) { issue in
                             Label { // 이름은 오른쪽 머리와 같은 issue.title, 기사가 너무 적은 호는 흐리게 '기록 적음'
                                 Text(issue.title).lineLimit(1) // 이름이 잘리지 않게 '기록 적음'은 흐림·도움말로(머리에는 글로)
                             } icon: { Image(systemName: issue.kind == .weekly ? "books.vertical" : "doc.richtext") }
                             .opacity(issue.isThin ? 0.55 : 1)
-                            .help(issue.isThin ? "기록 적음 — 소식 \(issue.count)건" : issue.title)
+                            .help(Magazine.thinReason(issue) ?? issue.title)
                             .tag(Page.issue(issue))
                         }
+                        if g.emptyDays > 0 { // 고를 수 없는 줄(태그 없음) — 그 기간에 호가 없는 날 수
+                            Label("\(g.emptyDays)일 비어 있음", systemImage: "calendar.badge.minus")
+                                .foregroundStyle(Palette.inkTertiary)
+                                .help("이날들은 모인 소식이 없어 호를 엮지 않았습니다")
+                        }
+                    } header: {
+                        Text(g.id == "this" ? "지난 호 · 이번 주" : g.title)
                     }
                 }
             }
@@ -75,6 +94,10 @@ struct MagazineView: View {
                 // 제목줄이 투명이라 스크롤한 본문이 머리에 비쳐 겹쳐 보였다 → 머리 자리에 바탕색(맨 위에선 그대로 보임)
                 TitlebarBackdrop(fill: Color(nsColor: .textBackgroundColor), separator: scrolled)
             }
+            // 새로 고침: 제목줄 오른쪽(도구 막대 자리). 예전엔 숨은 ⌘R 뿐이라 매거진에서 새로 고칠 수 있는지 보이지 않았다
+            .overlay(alignment: .topTrailing) {
+                MagRefresh().padding(.trailing, Space.l).padding(.top, Space.xs).ignoresSafeArea(edges: .top)
+            }
             .clipped()
             .onPreferenceChange(ScrolledPastTopKey.self) { scrolled = $0 }
         }
@@ -88,7 +111,7 @@ struct MagazineView: View {
                 Button("") { go(.stories) }.keyboardShortcut("3", modifiers: .command)
                 Button("") { go(.search) }.keyboardShortcut("f", modifiers: .command)
                 Button("") { go(.scrapbook) }.keyboardShortcut("4", modifiers: .command)
-                Button("") { Task { await AppModel.shared.checkAll(manual: false) } }.keyboardShortcut("r", modifiers: .command)
+                Button("") { Task { await AppModel.shared.checkAll(manual: true) } }.keyboardShortcut("r", modifiers: .command) // 새로 고침 단추와 같은 길
                 Button("") { flip(-1) }.keyboardShortcut("[", modifiers: .command) // 이전 지면
                 Button("") { flip(1) }.keyboardShortcut("]", modifiers: .command)  // 다음 지면
                 Button("") { SettingsWindow.open(openSettings) }.keyboardShortcut(",", modifiers: .command) // 앱 메뉴가 없어 창에서 듣는다
@@ -227,7 +250,9 @@ struct IssueView: View {
             let outlets = Set(([shownCover(d)?.item].compactMap { $0 } + pages.flatMap(\.items)).map(\.sourceId)).count
             return Magazine.subtitle(total: d.issue.count, shown: n, sections: 0, noun: Sections.name(id) + " 소식") + " · 출처 \(outlets)곳"
         }
-        return Magazine.subtitle(total: d.issue.count, shown: n, sections: pages.filter { $0.section.kind == nil }.count)
+        let head = Magazine.subtitle(total: d.issue.count, shown: n, sections: pages.filter { $0.section.kind == nil }.count)
+        if case .fixed(let i) = source, let why = Magazine.thinReason(i) { return head + " · " + why }
+        return head
     }
 
     private func handle(_ press: KeyPress) -> KeyPress.Result {
@@ -407,6 +432,33 @@ private struct AISubChips: View {
     }
 }
 
+// 매거진 새로 고침(제목줄 오른쪽): 지금 확인 · 확인 중엔 돌고 다시 눌리지 않음 · 마지막 확인 n분 전(30초마다 다시 셈)
+private struct MagRefresh: View {
+    @ObservedObject private var app = AppModel.shared
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { ctx in
+            HStack(spacing: Space.s) {
+                Text(app.checking ? "확인하는 중…" : Magazine.lastCheckText(app.state.lastCheck, now: ctx.date))
+                    .font(.dsCaption).foregroundStyle(Palette.inkSecondary).monospacedDigit()
+                    .lineLimit(1).fixedSize()
+                Button {
+                    Task { await app.checkAll(manual: true) }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.dsBodyStrong)
+                        .rotationEffect(.degrees(app.checking ? 360 : 0))
+                        .animation(app.checking ? Motion.loop(0.9) : Motion.exit(), value: app.checking)
+                }
+                .buttonStyle(.borderless)
+                .disabled(app.checking)
+                .help("새로 고침 — 지금 확인 (⌘R)")
+                .accessibilityLabel("새로 고침")
+            }
+        }
+    }
+}
+
 private struct Masthead: View {
     let title: String
     var kicker: String? = nil
@@ -513,7 +565,7 @@ private struct EmptyIssue: View {
             if preparing {
                 ProgressView().controlSize(.small)
                 Text("첫 호를 엮는 중…").font(.dsHeading)
-                Text("구독한 출처에서 최근 사흘 소식을 모으고 번역하고 있어요. 잠시면 됩니다.").font(.dsBody).foregroundStyle(.secondary)
+                Text("구독한 출처에서 최근 일주일 소식을 모으고 번역하고 있어요. 잠시면 됩니다.").font(.dsBody).foregroundStyle(.secondary)
             } else {
                 Image(systemName: "newspaper").font(.app(34, .light)).foregroundStyle(.tertiary)
                 Text(live ? "아직 이번 호에 실을 소식이 없습니다" : "이 호에는 소식이 없습니다").font(.dsHeading)
@@ -824,7 +876,7 @@ struct StoriesView: View {
     let onStory: (String) -> Void
     @ObservedObject private var mag = Magazine.shared
     @ObservedObject private var app = AppModel.shared
-    // 목록은 화면 줄기 밖에서 한 번에 만든다(예전엔 그릴 때마다 메인에서 스토리마다 DB 를 물어 멈췄다 — STABILITY.md S5)
+    // 목록은 화면 줄기 밖에서 한 번에 만든다(예전엔 그릴 때마다 메인에서 스토리마다 DB 를 물어 멈췄다)
     @State private var groups = Magazine.shared.lastStoryCards
     @State private var loaded = Magazine.shared.storyCardsLoaded
 
@@ -868,7 +920,7 @@ struct StoriesView: View {
 private struct StoryListCard: View {
     let cluster: Database.Cluster
     let items: [NewsItem] // 보이는 보도들(목록을 만들 때 함께 꺼냄)
-    let topic: (section: String, category: NewsCategory?)? // 분야 다수결(목록을 만들 때 화면 줄기 밖에서 — STABILITY.md S8)
+    let topic: (section: String, category: NewsCategory?)? // 분야 다수결(목록을 만들 때 화면 줄기 밖에서)
     let big: Bool
     let onOpen: () -> Void
     @ObservedObject private var app = AppModel.shared

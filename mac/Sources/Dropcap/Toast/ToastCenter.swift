@@ -19,8 +19,8 @@ struct Toast: Identifiable, Equatable {
 @MainActor
 final class ToastCenter: ObservableObject {
     static let shared = ToastCenter()
-    static let panelWidth: CGFloat = 400
-    static let panelHeight: CGFloat = 600
+    nonisolated static let panelWidth: CGFloat = 400
+    nonisolated static let panelHeight: CGFloat = 600
 
     @Published var toasts: [Toast] = []
     @Published var hoveredID: UUID?   // 커서 아래 카드
@@ -29,9 +29,8 @@ final class ToastCenter: ObservableObject {
 
     private var panel: ToastPanel?
     private var panelScreen: NSScreen?
+    private var placedAt: AppState.Settings.Position? // 패널을 마지막으로 놓을 때의 위치 설정
     private var screenObserver: NSObjectProtocol?
-    private var otherScreenSince: Date?
-    private var moving = false
     private var mouseTimer: Timer?
     private let maxVisible = 4
 
@@ -121,8 +120,8 @@ final class ToastCenter: ObservableObject {
             panel = p
         }
         guard let panel, Self.cursorScreen() != nil else { return } // 화면이 하나도 없으면(덮개 닫힘 등) 띄우지 않음(A-27)
-        if !panel.isVisible || panelScreen != Self.cursorScreen() {
-            place(panel) // 새 알림은 언제나 마우스가 있는 화면에
+        if Self.needsPlace(visible: panel.isVisible, placedAt: placedAt, wanted: AppModel.shared.state.settings.position) {
+            place(panel) // 새로 뜨는 알림은 마우스가 있는 화면에, 지금 설정한 위치에
             panel.alphaValue = 1
             panel.orderFrontRegardless() // 지금 쓰던 앱의 입력 초점은 빼앗지 않는다
         }
@@ -144,6 +143,9 @@ final class ToastCenter: ObservableObject {
         }
     }
 
+    // 시험용: 떠 있는 패널의 자리(안 보이면 nil)
+    var panelFrame: NSRect? { panel?.isVisible == true ? panel?.frame : nil }
+
     // 시험용: 패널 화면을 PNG 로 저장(화면 캡처 권한 없이 확인할 때)
     func snapshot(to path: String) {
         guard let view = panel?.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
@@ -157,49 +159,44 @@ final class ToastCenter: ObservableObject {
         return NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main ?? NSScreen.screens.first
     }
 
+    // 패널을 다시 놓을지: 숨어 있었거나 위치 설정이 놓을 때와 달라졌으면.
+    // (예전엔 위치 설정을 보지 않아 알림이 떠 있는 동안 '오른쪽 위'로 바꾸면 다음 알림도 가운데에 떨어졌다)
+    // 마우스가 다른 화면으로 가도 이미 뜬 알림은 처음 화면에 둔다 — 그동안 오는 새 알림도 같은 패널(그 화면)에 쌓인다.
+    // 화면이 빠지거나 해상도가 바뀔 때만 screenObserver 가 다시 놓는다.
+    nonisolated static func needsPlace(visible: Bool, placedAt: AppState.Settings.Position?, wanted: AppState.Settings.Position) -> Bool {
+        !visible || placedAt != wanted
+    }
+
+    // 화면과 위치 설정에 맞는 패널 자리. 가운데는 화면 정가운데(노치 아래), 오른쪽은 상단바 아래 오른쪽 끝에서 2pt 안쪽
+    nonisolated static func panelRect(screen: NSRect, visible vf: NSRect, position: AppState.Settings.Position) -> NSRect {
+        let x = position == .center ? screen.midX - panelWidth / 2 : vf.maxX - panelWidth - 2
+        return NSRect(x: x, y: vf.maxY - panelHeight, width: panelWidth, height: panelHeight)
+    }
+
+    // 패널을 놓을 화면: 이미 떠 있으면 그 화면(아직 꽂혀 있으면), 새로 뜨면 마우스가 있는 화면
+    nonisolated static func chooseScreen<S: Equatable>(visible: Bool, current: S?, screens: [S], cursor: S?) -> S? {
+        if visible, let current, screens.contains(current) { return current }
+        return cursor
+    }
+
     private func place(_ panel: NSPanel) {
-        guard let screen = Self.cursorScreen() else { return }
+        guard let screen = Self.chooseScreen(visible: panel.isVisible, current: panelScreen, screens: NSScreen.screens, cursor: Self.cursorScreen()) else { return }
+        let position = AppModel.shared.state.settings.position
         panelScreen = screen
-        let vf = screen.visibleFrame // 상단바 아래부터
-        let hasNotch = screen.safeAreaInsets.top > 0
-        let center = AppModel.shared.state.settings.position == .center
-        notchMode = center && hasNotch
-        let x = center ? screen.frame.midX - Self.panelWidth / 2 : vf.maxX - Self.panelWidth - 2
-        panel.setFrame(NSRect(x: x, y: vf.maxY - Self.panelHeight, width: Self.panelWidth, height: Self.panelHeight), display: false)
+        placedAt = position
+        notchMode = position == .center && screen.safeAreaInsets.top > 0
+        panel.setFrame(Self.panelRect(screen: screen.frame, visible: screen.visibleFrame, position: position), display: false)
     }
 
     // 카드 위에 마우스가 있을 때만 패널이 클릭을 받는다
     private func updateMousePassThrough() {
         guard let panel, panel.isVisible else { return }
-        followCursorScreen(panel)
         let p = NSEvent.mouseLocation
         let local = NSPoint(x: p.x - panel.frame.minX, y: panel.frame.maxY - p.y)
         let hit = cardFrames.first { $0.value.insetBy(dx: -10, dy: -10).contains(local) }?.key
         let inside = hit != nil
         if panel.ignoresMouseEvents == inside { panel.ignoresMouseEvents = !inside }
         if hoveredID != hit { hoveredID = hit } // 카드의 '마우스 올림' 상태는 여기서만 정한다
-    }
-
-    // 알림이 떠 있는 동안 마우스가 다른 화면으로 가서 잠시 머물면, 카드가 살짝 사라졌다가 그 화면에 다시 나타난다
-    private func followCursorScreen(_ panel: NSPanel) {
-        guard !moving, !toasts.isEmpty else { return }
-        guard let target = Self.cursorScreen(), target != panelScreen else { otherScreenSince = nil; return }
-        if otherScreenSince == nil { otherScreenSince = Date(); return }
-        guard Date().timeIntervalSince(otherScreenSince!) > 0.25 else { return }
-        otherScreenSince = nil
-        moving = true
-        NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = 0.14
-            panel.animator().alphaValue = 0
-        }, completionHandler: {
-            MainActor.assumeIsolated {
-                self.place(panel)
-                NSAnimationContext.runAnimationGroup({ ctx in
-                    ctx.duration = 0.2
-                    panel.animator().alphaValue = 1
-                }, completionHandler: { MainActor.assumeIsolated { self.moving = false } })
-            }
-        })
     }
 }
 

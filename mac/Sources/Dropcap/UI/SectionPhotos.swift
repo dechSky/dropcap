@@ -14,7 +14,7 @@ final class SectionPhotos: ObservableObject {
         loading = true
         let want = Sections.all.map(\.id).filter { images[$0] == nil }
         Task {
-            // 기록 읽기(최근 3000건)와 분야 나누기(낱말 분류)는 화면 줄기 밖에서 — 기록이 많으면 매거진을 열 때 메인이 몇 초 멈췄다(STABILITY.md S8)
+            // 기록 읽기(최근 3000건)와 분야 나누기(낱말 분류)는 화면 줄기 밖에서 — 기록이 많으면 매거진을 열 때 메인이 몇 초 멈췄다
             let bySection = await Task.detached(priority: .userInitiated) {
                 Self.candidates(Database.shared.items(from: Date().addingTimeInterval(-3 * 86400), limit: 3000).map(\.item), sections: want)
             }.value

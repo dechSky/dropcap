@@ -19,7 +19,7 @@ enum BodyCleanup {
         return nil
     }
 
-    // 군더더기 줄(sources-audit _KR1·_KR2·_INTL1·_INTL2 '섞여 들어온 것'): 짧은 줄만, 글자째 맞을 때만
+    // 군더더기 줄(기사 끝에 '섞여 들어온 것'): 짧은 줄만, 글자째 맞을 때만
     private static let junkLine = try! NSRegularExpression(pattern: #"""
     (?xi)^\s*(?:
       [\w.+-]+@[\w-]+(?:\.[\w-]+)+ | \S{1,20}\s+[\w.+-]+@[\w-]+(?:\.[\w-]+)+                # 메일만 · 매체명+메일

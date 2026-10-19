@@ -23,7 +23,14 @@
   let addError = null;
   let kwFilled = false;
 
-  const refresh = () => bridge.send('view').then(render);
+  // 설정 › 구독 정리: 찾기·상태는 이 창에서만, 보기는 앱이 기억. 펼친 묶음(찾는 중에는 걸린 묶음을 펼치고 사용자가 접은 것만 기억)
+  let srcQuery = '';
+  let srcStatus = 'all';
+  const expanded = new Set();
+  const collapsedWhileSearching = new Set();
+  const dirArgs = (extra = {}) => ({ query: srcQuery, status: srcStatus, ...extra });
+
+  const refresh = () => bridge.send('view', dirArgs()).then(render);
   const run = (cmd, args = {}) => bridge.send(cmd, args).then(refresh, (e) => { ui.toast(e.message); refresh(); });
 
   // 고르기 단추 채우기(값이 같으면 다시 만들지 않음)
@@ -72,7 +79,7 @@
     // 스크랩북(I-05·I-06)
     renderScrapbook(v.scrapbook);
     // 구독(P-06)
-    $('#sourceLists').innerHTML = sources(v.sources);
+    renderDirectory(v.sources.directory);
     $('#addBtn').textContent = adding ? '찾는 중…' : '구독';
     $('#addBtn').disabled = adding || !$('#newURL').value.trim();
     $('#addError').hidden = !addError;
@@ -153,23 +160,58 @@
       `<div class="row" data-id="${esc(h.id)}"><span class="lb">${esc(h.name)}</span><button class="ib text" data-act="unhide">다시 보이기</button></div>`).join('')}</div>` : '';
   }
 
-  function sources(s) {
-    const group = (label, rows) => `<h3>${esc(label)}</h3><div class="group">${rows}</div>`;
-    const custom = s.custom.length
-      ? s.custom.map(sourceRow).join('')
-      : '<div class="row empty-row">아래 추천 채널을 골라 보세요.</div>';
-    return group(`구독 중인 채널 ${s.custom.length}`, custom)
-      + s.tiers.map((t) => group(t.label, t.rows.map(sourceRow).join(''))).join('')
-      + s.catalog.map((c) => group(c.label, c.rows.map(catalogRow).join(''))).join('');
+  // 구독 탭(설정 › 구독 정리): 찾기 칸·보기·상태·요약·수 + 내 채널 · 기본 출처 묶음 · 추천 채널(맨 아래 접힘)
+  const seg = (items, on) => items.map((o) => `<button type="button" data-id="${esc(o.id)}" class="${o.id === on ? 'on' : ''}" role="radio" aria-checked="${o.id === on}">${esc(o.label)}</button>`).join('');
+  const isOpen = (id, d) => d.searching ? !collapsedWhileSearching.has(id) : expanded.has(id);
+
+  function renderDirectory(d) {
+    if (document.activeElement !== $('#srcQuery')) $('#srcQuery').value = d.query;
+    $('#srcClear').hidden = !$('#srcQuery').value;
+    $('#srcLayout').innerHTML = seg(d.layouts, d.layout);
+    $('#srcStatus').innerHTML = seg(d.statuses, d.status);
+    $('#srcSummary').textContent = d.summary;
+    $('#srcSummary').title = d.status === 'on' ? '전체 보기' : '켠 것만 보기';
+    $('#srcCount').textContent = d.count;
+    $('#srcEmpty').hidden = !d.empty;
+    $('#srcEmpty').textContent = d.emptyText;
+
+    const box = (label, rows) => `<h3>${esc(label)}</h3><div class="group">${rows}</div>`;
+    const disc = (id, open) => `<button class="ib disc" data-act="toggle" title="${open ? '접기' : '펼치기'}" aria-expanded="${open}">${ic('chevronRight')}</button>`;
+    let html = '';
+    if (d.mine.show) {
+      html += box(d.mine.label, d.mine.rows.length ? d.mine.rows.map((r) => sourceRow(r)).join('') : '<div class="row empty-row">아래 추천 채널을 골라 보세요.</div>');
+    }
+    if (d.groups.length) {
+      html += box('기본 출처', d.groups.map((g) => {
+        if (g.single) return sourceRow(g.rows[0]);
+        const open = isOpen(g.id, d);
+        const mono = d.layout === 'media' ? `<span class="mono" style="--c:${esc(g.color)}">${esc(g.initial)}</span>` : '';
+        return `<div class="row dir-head${open ? ' open' : ''}" data-gid="${esc(g.id)}">
+          ${disc(g.id, open)}${mono}
+          <span class="lb"><b>${esc(g.title)}</b><span class="dir-sub">${esc(g.countLabel)}</span></span>
+          <button class="ib text" data-act="bulk" title="${esc(g.bulkHelp)}">${esc(g.bulk)}</button>
+        </div>${open ? g.rows.map((r) => sourceRow(r, true)).join('') : ''}`;
+      }).join(''));
+    }
+    const rec = d.recommended;
+    if (rec.count) {
+      const open = isOpen('catalog', d);
+      html += `<h3>추천 채널</h3><div class="group"><div class="row dir-head${open ? ' open' : ''}" data-gid="catalog">
+          ${disc('catalog', open)}<span class="lb"><b>${esc(rec.label)}</b></span></div>${open ? rec.groups.map((g) =>
+          `<div class="row note dir-in">${esc(g.label)}</div>${g.rows.map(catalogRow).join('')}`).join('') : ''}</div>`;
+    }
+    $('#sourceLists').innerHTML = html;
   }
 
   const badge = (r) => r.kindLabel ? `<span class="badge">${ic('kind.' + r.kind)}${esc(r.kindLabel)}</span>` : '';
 
-  function sourceRow(r) {
-    return `<div class="row src" data-id="${esc(r.id)}">
+  // 줄: 이름(묶음 안에서는 짧은 이름) · 분야 칩 · 국내/해외 · 유료 자물쇠 · 알림 종 · 켜기 스위치
+  function sourceRow(r, inGroup = false) {
+    const name = inGroup ? r.shortName : r.name;
+    return `<div class="row src${inGroup ? ' dir-in' : ''}" data-id="${esc(r.id)}">
       <span class="mono" style="--c:${esc(r.color)}">${esc(r.initial)}</span>
       <div class="body">
-        <div class="name"><b>${esc(r.name)}</b>${badge(r)}${r.aiOnly ? '<span class="ai">AI 글만</span>' : ''}${r.error ? `<span class="warn" title="${esc(r.error)}">${sic('warn')}</span>` : ''}</div>
+        <div class="name"><b title="${esc(r.name)}">${esc(name)}</b>${r.sectionName ? `<span class="badge">${esc(r.sectionName)}</span>` : ''}${r.region ? `<span class="ai">${esc(r.region)}</span>` : ''}${ui.lock(r)}${badge(r)}${r.aiOnly ? '<span class="ai">AI 글만</span>' : ''}${r.error ? `<span class="warn" title="${esc(r.error)}">${sic('warn')}</span>` : ''}</div>
         ${r.sub ? `<div class="sub" title="${esc(r.sub)}">${esc(r.sub)}</div>` : ''}
       </div>
       <button class="ib${r.notify ? ' on' : ''}" data-act="notify" title="${esc(r.notifyHelp)}"${r.enabled ? '' : ' disabled'}>${sic(r.notify ? 'bell.fill' : 'bell.slash')}</button>
@@ -244,9 +286,45 @@
   $('#reonboard').addEventListener('click', () => bridge.send('onboarding'));
   $('#openMag').addEventListener('click', () => bridge.send('magazine'));
 
-  // 출처 줄의 단추: 알림 종·해지·구독
+  // 찾기 칸: 글자가 바뀌면 바로 다시 거른다(찾는 중 접은 묶음 기억은 새 찾기마다 비움). Esc 는 창을 닫기 전에 찾기부터 지움
+  const setQuery = (q) => {
+    srcQuery = q;
+    collapsedWhileSearching.clear();
+    $('#srcClear').hidden = !q;
+    refresh();
+  };
+  $('#srcQuery').addEventListener('input', (e) => setQuery(e.target.value));
+  $('#srcQuery').addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && e.target.value) { e.preventDefault(); e.stopPropagation(); e.target.value = ''; setQuery(''); }
+  });
+  $('#srcClear').addEventListener('click', () => { $('#srcQuery').value = ''; setQuery(''); $('#srcQuery').focus(); });
+  $('#srcLayout').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-id]');
+    if (b && !b.classList.contains('on')) bridge.send('view', dirArgs({ layout: b.dataset.id })).then(render, (err) => ui.toast(err.message));
+  });
+  $('#srcStatus').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-id]');
+    if (b && !b.classList.contains('on')) { srcStatus = b.dataset.id; refresh(); }
+  });
+  $('#srcSummary').addEventListener('click', () => { srcStatus = srcStatus === 'on' ? 'all' : 'on'; refresh(); }); // 켠 것만 ↔ 전체
+
+  // 출처 줄의 단추: 알림 종·해지·구독 · 묶음 머리: 펼치기·모두 켜기/끄기(보이는 것에만)
   $('#sourceLists').addEventListener('click', (e) => {
     const b = e.target.closest('button[data-act]');
+    const head = e.target.closest('.dir-head');   // 묶음 줄 어디를 눌러도 펼치기·접기(모두 켜기/끄기 단추만 빼고)
+    if (head) {
+      const id = head.dataset.gid;
+      const d = view.sources.directory;
+      if (!b || b.dataset.act === 'toggle') {
+        const set = d.searching ? collapsedWhileSearching : expanded;
+        if (set.has(id)) set.delete(id); else set.add(id);
+        renderDirectory(d);
+      } else if (b.dataset.act === 'bulk') {
+        const g = d.groups.find((x) => x.id === id);
+        if (g) run('setEnabledMany', { ids: g.ids, on: !g.allOn });
+      }
+      return;
+    }
     const row = b && b.closest('.src');
     if (!row) return;
     const id = row.dataset.id;
@@ -303,7 +381,7 @@
 
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !document.querySelector('.pop')) bridge.send('close'); });
 
-  bridge.on('shown', () => bridge.send('ready').then(render));
+  bridge.on('shown', () => bridge.send('ready', dirArgs()).then(render));
   bridge.on('changed', refresh);
-  bridge.send('ready').then(render);
+  bridge.send('ready', dirArgs()).then(render);
 })();

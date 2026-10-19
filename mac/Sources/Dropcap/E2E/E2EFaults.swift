@@ -5,7 +5,7 @@ import SQLite3
 // 시험 장치(M9): 디버그 빌드(swift build·swift test·e2e·clicksweep)에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
 #if DEBUG
 
-// 실패 처리 시험(mac/STABILITY.md · scripts/e2e/faults.sh). DROPCAP_TEST_E2E_PHASE=faults 일 때만.
+// 실패 처리 시험(scripts/e2e/faults.sh). DROPCAP_TEST_E2E_PHASE=faults 일 때만.
 // 시나리오 12단계(다시 시작·깨진 상태 파일·깨진 DB) 밖의 고장에서 앱이 죽거나 멈추지 않고 회복하는지 본다:
 // 출처 일부 고장(5xx·깨진 피드·빈 응답·끊김·큰 피드·미래 날짜) · 전체 끊김 · 느린 출처 · DB 잠김 · 디스크 가득(작은 볼륨에서만)
 // · 잠자기/깨어나기 · 시계 바뀜. 단계마다 확인에 걸린 시간과 메인 스레드 최장 지연을 함께 적는다.

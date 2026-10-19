@@ -127,7 +127,7 @@ public class TeaserMarkTests : IDisposable
         Assert.Null(new PaywallBook(db).Kind(it));
     }
 
-    // review-3 B3: 다시 맛보기로 판정되면 시각을 새로 써서, 계속 맛보기인 기사가 처음 판정 30일 뒤에 빠지지 않는다(표시는 그대로라 다시 그리지 않음)
+    // 다시 맛보기로 판정되면 시각을 새로 써서, 계속 맛보기인 기사가 처음 판정 30일 뒤에 빠지지 않는다(표시는 그대로라 다시 그리지 않음)
     [Fact]
     public void TeaserAgainRefreshesTime()
     {
@@ -142,7 +142,7 @@ public class TeaserMarkTests : IDisposable
         Assert.Contains(link, db.TeaserLinks(DateTimeOffset.Now.AddDays(2)));   // 고치기 전: 29+2일 → 빠짐
     }
 
-    // review-3 B2: 알림 미리 받기와 사용자가 연 기사가 함께 남겨도 메모리 표시가 사라지지 않는다
+    // 알림 미리 받기와 사용자가 연 기사가 함께 남겨도 메모리 표시가 사라지지 않는다
     [Fact]
     public void ConcurrentRecordsAllKept()
     {

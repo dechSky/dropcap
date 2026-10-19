@@ -11,6 +11,8 @@ struct PreparedArticle: Codable {
     var blocks: [Block] = []          // 번역됐으면 text=번역, original=원문
     var translated = false
     var engine = ""
+    var progress: Int? = nil          // 번역 중: 받은 문단 수 / 번역할 문단 수(읽기 창 '기기 내 번역 중 n/m')
+    var progressTotal: Int? = nil
     var summary: [String]?
     var summarizing = false
     var fallback = ""                 // 본문을 못 추렸을 때 보여 줄 요약 번역
@@ -27,11 +29,11 @@ final class ArticleService {
     private var memory: [String: PreparedArticle] = [:]
     private var inflight: [String: Task<PreparedArticle, Never>] = [:]
     private var listeners: [String: [UUID: (PreparedArticle) -> Void]] = [:]
-    private let dir: URL = {
-        let d = Store.dir.appendingPathComponent("articles", isDirectory: true)
-        try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
-        return d
-    }()
+    private let dir: URL
+    init(dir: URL = Store.dir.appendingPathComponent("articles", isDirectory: true)) {
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        self.dir = dir
+    }
     private let diskLimit = 150
 
     // 진행 상황을 받아 보기(읽기 창). 돌려받은 id 로 그만 받기.
@@ -40,7 +42,20 @@ final class ArticleService {
         listeners[link, default: [:]][id] = cb
         return id
     }
-    func stopObserving(_ link: String, _ id: UUID) { listeners[link]?[id] = nil }
+    func stopObserving(_ link: String, _ id: UUID) {
+        listeners[link]?[id] = nil
+        if listeners[link]?.isEmpty == true { listeners[link] = nil } // 빈 사전이 기사마다 남지 않게
+    }
+    var listenedLinks: Int { listeners.count }
+
+    // 읽기 창이 닫히거나 J/K 로 다른 기사로 갔다: 그만 받고, 번역 중인데 보는 창이 없으면 번역을 멈춘다.
+    // 받은 문단은 Translator 캐시에 남아 다시 열면 그 자리부터 빠르게 이어진다
+    func release(_ link: String, _ id: UUID) {
+        stopObserving(link, id)
+        guard Self.shouldStop(stage: memory[link]?.stage, watchers: listeners[link]?.count ?? 0), let t = inflight[link] else { return }
+        NSLog("[기사] 읽기 창이 떠나 번역을 멈춤")
+        t.cancel()
+    }
 
     // 맛보기·일부만 기사는 6시간 뒤 다시 받는다(사이트가 풀거나 앱이 고쳐지면 다시 열 때 온전히). 그 밖은 그대로 오래 둔다
     nonisolated static let cutCacheLife: TimeInterval = 6 * 3600
@@ -63,7 +78,7 @@ final class ArticleService {
         guard let data = try? Data(contentsOf: file(link)),
               let a = try? JSONDecoder().decode(PreparedArticle.self, from: data), a.stage == .done else { return nil }
         if Self.isStale(a) { memory[link] = nil; try? FileManager.default.removeItem(at: file(link)); return nil }
-        memory[link] = a
+        remember(link, a) // 디스크에서 읽은 것도 순서 목록에 넣어 40개 상한 안에(예전엔 빠져 천천히 늘었음)
         try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: file(link).path) // 최근에 쓴 것을 오래 남김
         return a
     }
@@ -76,8 +91,10 @@ final class ArticleService {
         if let c = cached(item.link) { return c }
         if let t = inflight[item.link] {
             let r = await t.value
-            // 미리 받기가 스크립트 없이 실패했으면, 사용자가 열었을 때는 제대로 다시 시도
-            if r.stage == .failed, interactive {
+            // 미리 받기가 스크립트 없이 실패했으면, 사용자가 열었을 때는 제대로 다시 시도.
+            // 앞 창이 떠나 번역을 멈춘 작업이면(release) 지금 보는 창이 있을 때만 다시
+            let stopped = r.stage == .translating && listeners[item.link]?.isEmpty == false
+            if r.stage == .failed || stopped, interactive {
                 if inflight[item.link] == t { inflight[item.link] = nil } // 끝난 실패 작업을 치우고 한 번만 다시
                 return await prepare(item, interactive: true)
             }
@@ -102,12 +119,17 @@ final class ArticleService {
 
     private var order: [String] = []
 
-    private func emit(_ link: String, _ a: PreparedArticle) {
+    private func remember(_ link: String, _ a: PreparedArticle) {
         if memory[link] == nil {
             order.append(link)
             if order.count > 40 { memory.removeValue(forKey: order.removeFirst()) } // 메모리에는 최근 40개만
         }
         memory[link] = a
+    }
+    var memoryCount: Int { memory.count }
+
+    private func emit(_ link: String, _ a: PreparedArticle) {
+        remember(link, a)
         listeners[link]?.values.forEach { $0(a) }
     }
 
@@ -175,29 +197,11 @@ final class ArticleService {
             a.title = item.titleKo ?? artTitle
             a.stage = .translating
             emit(item.link, a)
-            let idx = art.blocks.indices.filter { art.blocks[$0].text != nil && art.blocks[$0].type != .pre }
-            let first = Array(idx.prefix(8)), rest = Array(idx.dropFirst(8))
-            var done = 0, total = 0 // 실제로 바뀐(번역된) 문단 수 — 번역이 모두 실패하면 원문이 그대로 돌아온다
-            for (n, chunk) in [first, rest].enumerated() where !chunk.isEmpty || n == 0 {
-                // 표 한 줄은 셀 묶음으로(셀마다 번역해 다시 이음), 나머지는 한 글짜리 묶음
-                let inputs = (n == 0 ? [[artTitle]] : []) + chunk.map { art.blocks[$0].cells ?? [art.blocks[$0].text!] }
-                let (translatedGroups, usedEngine) = await Translator.shared.translateGroupsReporting(inputs)
-                var out = translatedGroups
-                if usedEngine != .none { a.engine = usedEngine.rawValue } // 이 기사에 실제로 쓴 엔진(A-24)
-                if n == 0 { a.title = out.removeFirst()[0] }
-                for (k, i) in chunk.enumerated() where Translator.looksForeign(art.blocks[i].text!) {
-                    total += 1
-                    let text = art.blocks[i].cells != nil ? out[k].joined(separator: " · ") : out[k][0]
-                    guard text != art.blocks[i].text else { continue } // 번역 안 된 문단은 원문 그대로(원문 보기 대상 아님)
-                    done += 1
-                    a.blocks[i].original = art.blocks[i].text
-                    a.blocks[i].text = text
-                    if art.blocks[i].cells != nil { a.blocks[i].cells = out[k] }
-                }
-                a.translated = done > 0
-                emit(item.link, a)
+            guard await Self.translateBody(&a, blocks: art.blocks, title: artTitle, translator: .shared, emit: { self.emit(item.link, $0) }) else {
+                memory.removeValue(forKey: item.link) // 다 못 한 것은 남기지 않는다(다시 열면 처음부터 — 받은 문단은 번역 캐시에서)
+                order.removeAll { $0 == item.link }
+                return a
             }
-            a.engine = Self.engineLabel(done: done, total: total, engine: a.engine)
         } else {
             a.title = artTitle
         }
@@ -218,7 +222,7 @@ final class ArticleService {
     }
 
     // MARK: 디스크
-    private func file(_ link: String) -> URL {
+    func file(_ link: String) -> URL {
         let h = SHA256.hash(data: Data(link.utf8)).map { String(format: "%02x", $0) }.joined().prefix(24)
         return dir.appendingPathComponent("\(h).json")
     }
@@ -241,6 +245,68 @@ final class ArticleService {
 }
 
 extension ArticleService {
+    // 본문 번역: 제목+첫 8문단 → 나머지 순서로 보내고, 끝난 묶음(기기 내는 chunk 문단씩)마다 바꿔 끼워 emit 한다.
+    // 바뀐 문단은 원문을 original 에 남긴다(문단별 원문 펼치기). 중간에 작업이 취소되면(release) 받은 데까지 두고 false
+    @discardableResult
+    static func translateBody(_ a: inout PreparedArticle, blocks: [Block], title artTitle: String, translator: Translator,
+                              chunk: Int = 4, emit: (PreparedArticle) -> Void) async -> Bool {
+        let idx = blocks.indices.filter { blocks[$0].text != nil && blocks[$0].type != .pre }
+        let first = Array(idx.prefix(8)), rest = Array(idx.dropFirst(8))
+        var received = Set<Int>()
+        a.progress = 0
+        a.progressTotal = idx.filter { Translator.looksForeign(blocks[$0].text!) }.count
+        // 받은 묶음 하나를 제자리에: 번역 안 된 문단은 원문 그대로(원문 보기 대상 아님)
+        func put(_ out: [String], at i: Int) {
+            guard Translator.looksForeign(blocks[i].text!) else { return }
+            received.insert(i)
+            let text = blocks[i].cells != nil ? out.joined(separator: " · ") : out[0]
+            guard text != blocks[i].text else { return }
+            a.blocks[i].original = blocks[i].text
+            a.blocks[i].text = text
+            if blocks[i].cells != nil { a.blocks[i].cells = out }
+        }
+        for (n, part) in [first, rest].enumerated() where !part.isEmpty || n == 0 {
+            // 표 한 줄은 셀 묶음으로(셀마다 번역해 다시 이음), 나머지는 한 글짜리 묶음. 첫 묶음 0번은 제목
+            let lead = n == 0 ? 1 : 0
+            let inputs = (n == 0 ? [[artTitle]] : []) + part.map { blocks[$0].cells ?? [blocks[$0].text!] }
+            func place(_ g: Int, _ out: [String]) { if g < lead { a.title = out[0] } else { put(out, at: part[g - lead]) } }
+            // Translator actor 에서 오는 알림을 MainActor 로 넘겨 받는다
+            let (stream, cont) = AsyncStream.makeStream(of: ([Int: [String]], Translator.Engine).self)
+            func send() async -> (groups: [[String]], engine: Translator.Engine) {
+                defer { cont.finish() }
+                return await translator.translateGroupsStreaming(inputs, chunk: chunk) { got, engine in cont.yield((got, engine)) }
+            }
+            async let finished = send()
+            var emitted = false
+            for await (got, engine) in stream {
+                if engine != .none { a.engine = engine.rawValue } // 이 기사에 실제로 쓴 엔진(A-24)
+                for (g, out) in got.sorted(by: { $0.key < $1.key }) { place(g, out) }
+                a.progress = received.count
+                a.translated = a.blocks.contains { $0.original != nil }
+                emit(a); emitted = true
+            }
+            let (groups, usedEngine) = await finished
+            if usedEngine != .none { a.engine = usedEngine.rawValue }
+            for (g, out) in groups.enumerated() { place(g, out) } // 흘려 받지 못한 것(실패해 원문 그대로 등)까지 맞춘다
+            a.progress = received.count
+            a.translated = a.blocks.contains { $0.original != nil }
+            if Task.isCancelled { return false }
+            if !emitted { emit(a) }
+        }
+        let total = a.progressTotal ?? 0
+        let done = idx.filter { a.blocks[$0].original != nil }.count
+        a.engine = engineLabel(done: done, total: total, engine: a.engine)
+        a.progress = nil; a.progressTotal = nil
+        return true
+    }
+}
+
+extension ArticleService {
+    // 읽기 창이 떠날 때 멈출지: 번역 중이고 보는 창이 더는 없을 때만(본문 받는 중에 끊으면 실패로 남는다)
+    nonisolated static func shouldStop(stage: PreparedArticle.Stage?, watchers: Int) -> Bool {
+        stage == .translating && watchers == 0
+    }
+
     // 읽기 창의 번역 표시: 번역된 문단이 없으면 표시 없음, 일부만 됐으면 '일부 번역'
     nonisolated static func engineLabel(done: Int, total: Int, engine: String) -> String {
         guard done > 0 else { return "" }

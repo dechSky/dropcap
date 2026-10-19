@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 
 namespace Dropcap.Core;
 
-// 분야별 알림 정책(G-04~G-08, docs/research/COMPETITIVE.md (다)-3 · 맥 NotifyPolicy.swift 와 같은 수치).
+// 분야별 알림 정책(G-04~G-08· 맥 NotifyPolicy.swift 와 같은 수치).
 // 매거진에는 전부 싣고, 물방울은 분야 모드·중요도 문턱·하루 상한을 모두 지날 때만 떨어뜨린다.
 [JsonConverter(typeof(LowerEnum<NotifyMode>))]
 public enum NotifyMode { Instant, Bundle, Magazine }

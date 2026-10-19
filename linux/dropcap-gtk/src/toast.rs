@@ -226,10 +226,7 @@ struct Center {
     x: Option<place::x11::X>,
     #[cfg(feature = "x11")]
     screen: Option<place::x11::Rect>,
-    #[cfg(feature = "x11")]
-    other_since: Option<f64>,
-    #[cfg(feature = "x11")]
-    moving_until: f64,
+    placed_right: Option<bool>,  // 창을 마지막으로 놓을 때의 위치 설정(오른쪽 위인지)
     win_pos: Option<(f64, f64)>, // 창의 화면 자리(논리 좌표) — 읽기 창이 누른 카드 자리에서 커져 나오게
     menu_card: Option<u64>,      // 오른쪽 클릭 메뉴가 열린 카드(열려 있는 동안 마우스를 올린 것처럼 멈춤)
     test_checked: bool,          // 시험용 환경 변수(DROPCAP_TEST_BUNDLE)를 한 번 봤는지
@@ -253,10 +250,7 @@ thread_local! {
         x: None,
         #[cfg(feature = "x11")]
         screen: None,
-        #[cfg(feature = "x11")]
-        other_since: None,
-        #[cfg(feature = "x11")]
-        moving_until: 0.0,
+        placed_right: None,
         win_pos: None,
         menu_card: None,
         test_checked: false,
@@ -580,8 +574,12 @@ fn ensure_window() {
         build_window();
     }
     let Some(win) = CENTER.with(|c| c.borrow().win.clone()) else { return };
+    let placed = CENTER.with(|c| c.borrow().placed_right);
+    if !place::needs_place(win.is_visible(), placed, right()) {
+        return;
+    }
+    place_window(&win); // 떠 있는 동안 위치 설정을 바꿨어도 다음 알림에서 옮긴다
     if !win.is_visible() {
-        place_window(&win);
         win.set_opacity(1.0);
         CENTER.with(|c| c.borrow_mut().win_alpha = Anim::fixed(1.0));
         // present() 는 입력 초점을 가져가려 하므로 보이게만 한다(N-14)
@@ -745,6 +743,7 @@ fn open_reduce_menu(x: f64, y: f64) {
 }
 
 fn place_window(win: &gtk::Window) {
+    CENTER.with(|c| c.borrow_mut().placed_right = Some(right()));
     place::set_right(win, right());
     #[cfg(feature = "x11")]
     {
@@ -879,8 +878,6 @@ fn tick() {
         }
         return;
     }
-    #[cfg(feature = "x11")]
-    follow_cursor(t);
     update_input_region();
     // 잔잔해진 뒤에는 초당 12번만 다시 그림(N-03)
     let due = CENTER.with(|c| {
@@ -899,46 +896,6 @@ fn tick() {
     });
     if due {
         queue_draw();
-    }
-}
-
-// 떠 있는 동안 커서가 다른 화면에 0.25초 머물면 살짝 사라졌다가 그 화면에 다시 나타난다(N-11, X11)
-#[cfg(feature = "x11")]
-fn follow_cursor(t: f64) {
-    let go = CENTER.with(|c| {
-        let mut c = c.borrow_mut();
-        if c.cards.is_empty() || t < c.moving_until {
-            return false;
-        }
-        let Some(x) = &c.x else { return false };
-        let Some((px, py)) = x.pointer() else { return false };
-        let target = place::x11::monitor_of(px, py);
-        if target.is_none() || target == c.screen {
-            c.other_since = None;
-            return false;
-        }
-        match c.other_since {
-            None => {
-                c.other_since = Some(t);
-                false
-            }
-            Some(s) if t - s > 0.25 => {
-                c.other_since = None;
-                c.moving_until = t + 0.34;
-                c.win_alpha.go(t, 0.0, 0.14, ease_out);
-                true
-            }
-            _ => false,
-        }
-    });
-    if go {
-        crate::widgets::later(140, || {
-            if let Some(w) = CENTER.with(|c| c.borrow().win.clone()) {
-                place_window(&w);
-            }
-            let t = now();
-            CENTER.with(|c| c.borrow_mut().win_alpha.go(t, 1.0, 0.2, ease_out));
-        });
     }
 }
 

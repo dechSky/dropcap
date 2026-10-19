@@ -96,7 +96,7 @@ public static class Paywall
         @"exclusive (?:to|for) [^.]{0,30}subscribers|read the rest of this (?:story|article)|this article is for (?:paid )?subscribers|unlock this article|구독자 전용|유료 회원 전용|한경 프리미엄9?의 모든 콘텐츠",
         System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
-    // 맛보기(유료벽 뒤 앞부분만)인가 — 맥 Paywall.isTeaser(mac/READER-CUT.md C). 지금의 문구 판정에 더해
+    // 맛보기(유료벽 뒤 앞부분만)인가 — 맥 Paywall.isTeaser. 지금의 문구 판정에 더해
     // 사이트가 유료라고 적었고(isAccessibleForFree=false · 한경 articlePayment) 본문이 1,500자 미만, 하드 유료 출처인데 2,500자 미만, 끝쪽에 강한 문구
     // ldBody: 사이트가 ld+json articleBody 로 적은 본문 글자 수. 우리 본문과 거의 같으면(±10%) 그 길이가 기사 전부다 —
     // 늘 isAccessibleForFree=false 라고 적지만 전문을 주는 사이트(Verge)의 짧은 기사를 맛보기로 잘못 보지 않게 '유료+1,500자' 규칙을 쓰지 않는다
@@ -183,8 +183,8 @@ public sealed class PaywallBook
     }
 
     // 본문을 받은 기사(미리 받기 포함)의 맛보기 판정을 남긴다 — 맛보기가 아니면 지난 기록을 지운다.
-    // 다시 맛보기로 판정되면 시각만 새로 써서 30일·2,000건 정리에서 계속 맛보기인 기사가 빠지지 않게 한다(review-3 B3).
-    // 알림 미리 받기(Task.Run)와 사용자가 연 기사가 함께 부를 수 있어 고치기를 잠근다 — 잠그지 않으면 한쪽 고침이 메모리에서 사라진다(review-3 B2)
+    // 다시 맛보기로 판정되면 시각만 새로 써서 30일·2,000건 정리에서 계속 맛보기인 기사가 빠지지 않게 한다.
+    // 알림 미리 받기(Task.Run)와 사용자가 연 기사가 함께 부를 수 있어 고치기를 잠근다 — 잠그지 않으면 한쪽 고침이 메모리에서 사라진다
     private readonly object teaserGate = new();
     internal Action? BeforeSwap;   // 시험 전용: 고친 사본을 바꿔 넣기 직전(경쟁 창을 넓혀 B2 를 재현)
     public void RecordTeaser(NewsItem item, bool teaser)

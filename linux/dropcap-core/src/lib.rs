@@ -31,6 +31,7 @@ pub mod brief;
 pub mod watch_words;
 pub mod backup;
 pub mod source_filter;
+pub mod source_directory; // 설정 › 구독 찾기·묶음(맥 SourceDirectory)
 pub mod reader_find;
 pub mod reader_extract;
 pub mod cover_pick;
@@ -41,3 +42,4 @@ pub mod url_router;
 pub mod search_index;
 pub mod scrap_export;
 pub mod test_hooks;
+pub mod byte_cache;

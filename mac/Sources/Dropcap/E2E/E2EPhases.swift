@@ -4,7 +4,7 @@ import SwiftUI
 // 시험 장치(M9): 디버그 빌드(swift build·swift test·e2e·clicksweep)에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
 #if DEBUG
 
-// 시나리오 단계. 기대값은 docs/research/COMPETITIVE.md (다)-3 의 알림 정책(NotifyPolicy)과 지시서의 단계 설명을 따른다.
+// 시나리오 단계. 기대값은 분야별 알림 정책(NotifyPolicy)과 지시서의 단계 설명을 따른다.
 @MainActor
 enum E2EPhases {
     typealias S = E2EStories
@@ -106,7 +106,7 @@ enum E2EPhases {
         // 6) 묶음 시각 지남
         r.setClock(r.at(18, 1), "묶음 시각(18시) 지남")
         mark = r.toastMark
-        let gotBundle = await r.until(80) { r.toasts(since: mark).contains { if case .bundle = $0 { return true }; return false } }
+        let gotBundle = await r.tickUntil(80) { r.toasts(since: mark).contains { if case .bundle = $0 { return true }; return false } }
         await r.sleep(3)
         let bundles = r.toasts(since: mark).compactMap { k -> (String, [NewsItem])? in if case .bundle(let s, let i) = k { return (s, i) }; return nil }
         let shot6 = await r.toastShot("06-bundle")
@@ -185,7 +185,7 @@ enum E2EPhases {
                  pass: m.isSnoozed && news.isEmpty && m.state.unread == unread0 + 1 && r.pending(S.q2) == "world")
         m.snooze(nil)
         mark = r.toastMark
-        let after8 = await r.until(80) { r.toasts(since: mark).contains { if case .bundle("world", _) = $0 { return true }; return false } }
+        let after8 = await r.tickUntil(80) { r.toasts(since: mark).contains { if case .bundle("world", _) = $0 { return true }; return false } }
         await r.sleep(2)
         let shot8 = await r.toastShot("08-after-quiet")
         r.record("8-다", "잠시 끄기를 풀면 고인 소식이 묶음으로",
@@ -270,7 +270,12 @@ enum E2EPhases {
         for (src, id) in [("bbc-world", "s3-bbc-world"), ("yna-market", "s1-yna-market")] {
             guard let it = Database.shared.items(keys: [r.key(src, id)]).first?.item else { continue }
             ReaderController.open(it)
-            await r.sleep(12)
+            // 본문(번역 시도 포함)이 끝날 때까지 — 예전엔 12초를 그냥 기다렸다. 사진이 자리 잡게 조금 더
+            await r.until(12) {
+                let host = NSApp.windows.first { $0.isVisible && $0.title == it.sourceName }?.contentViewController as? NSHostingController<ReaderView>
+                return host.map { [.done, .failed].contains($0.rootView.model.phase) } ?? false
+            }
+            await r.sleep(1.5)
             rshots.append(r.windowShot({ $0.title == it.sourceName }, "09-reader-\(src)"))
             NSApp.windows.first { $0.isVisible && $0.title == it.sourceName }?.close()
         }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""기사 페이지의 꼴(태그·class)만 남기고 글·주소를 모두 바꾼 시험용 HTML 을 만든다(mac/READER-CUT.md).
+"""기사 페이지의 꼴(태그·class)만 남기고 글·주소를 모두 바꾼 시험용 HTML 을 만든다.
 
 공개 저장소에 기사 글·기자 이름·주소가 들어가지 않게:
 - script·style·svg·noscript·iframe·주석·meta·link 는 버린다(--keep-ld 면 ld+json 의 isAccessibleForFree 만 남김).

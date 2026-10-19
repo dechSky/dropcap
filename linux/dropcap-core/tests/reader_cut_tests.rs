@@ -1,4 +1,4 @@
-// 읽기 창 본문 잘림·군더더기(mac/READER-CUT.md 2단계, 맥 ReaderCutTests 와 같은 꼴).
+// 읽기 창 본문 잘림·군더더기(맥 ReaderCutTests 와 같은 꼴).
 // 고정 HTML 은 실제 사이트의 꼴만 본뜬 것이고 글은 지어낸 것(fixtures/reader-cut 은 맥 Fixtures/reader-cut 그대로 — 글·주소를 바꾼 것).
 use dropcap_core::article::body_cleanup;
 use dropcap_core::article::{extract_html, image_fit, paid_flag, Article, Block, BlockKind, PreparedArticle, Stage};

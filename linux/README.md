@@ -40,7 +40,7 @@ cargo build --release -p dropcap-gtk --features linux
 | `notify` | 시스템 알림(org.freedesktop.Notifications) | 물방울만 |
 | `speech` | 소리 내어 읽기(speech-dispatcher `spd-say`) | 단추 숨김 |
 
-### 이 맥에서(개발)
+### 맥에서(개발)
 
 ```bash
 brew install gtk4 libadwaita pkgconf
@@ -90,32 +90,3 @@ DROPCAP_TEST_EXTRAS2=/tmp/e dropcap          # 내 기록 내보내기→가져�
 - **회의·발표 중 조용히**: 전체 화면은 X11 에서만 알 수 있고(Wayland 는 다른 앱 창 상태를 알 공개 방법이 없음), 화면 공유·기록은 기록 앱(OBS·SimpleScreenRecorder·Kooha·wf-recorder 등)이 떠 있는지로 봅니다. Zoom·Meet 의 화면 공유는 따로 뜨는 프로세스가 없어 알 수 없습니다. 캘린더는 데스크톱 공통 일정 저장소가 없어 쓰지 않습니다.
 - **분야 대표 사진 점수의 글자 면적**: `tesseract`(한·일·중·영 중 설치된 언어)가 있으면 글자 인식, 없으면 '글자 같은 칸' 어림. 맥이 잰 실제 사진 16장과 판정이 같았습니다.
 - **분야별 저녁 정리**: 기기 안 모델은 Ollama. 없으면 상자를 띄우지 않고 알림은 그대로 제목 2줄.
-
-## 리눅스에서 확인할 목록
-
-이 판은 맥에서 개발해 리눅스 전용 부분은 리눅스에서 직접 확인해야 합니다(FEATURES 에 `~ 리눅스 확인 필요`).
-
-1. GNOME(X11)·GNOME(Wayland)·KDE(Wayland)에서 트레이 아이콘이 보이고, 안 읽은 소식이 있으면 채운 모양이 되는지
-2. 처음 실행하면 관심 분야 고르기 창이 뜨고, 고른 분야 출처만 켜지는지
-3. `DROPCAP_TEST_TOAST=1` — X11: 커서가 있는 모니터의 작업 영역 위쪽 가운데에서 물방울이 떨어지고 카드 밖 클릭이 뒤 창으로 가는지 / KDE Wayland: layer 로 뜨는지 / GNOME Wayland: 시스템 알림으로 바뀌는지
-4. 알림이 뜰 때 다른 앱의 입력 초점을 빼앗지 않는지
-5. X11 에서 Ctrl+Alt+N · Ctrl+Alt+M
-6. `DROPCAP_TEST_URL=https://www.theverge.com/...` — 빠른 길·느린 길(스크립트 사이트) 추출, 번역 바뀜, 소리 내어 읽기
-7. 설정 › 로그인할 때 실행 → `~/.config/autostart/io.github.dechsky.Dropcap.desktop` 생기고 다시 로그인하면 창 없이 시작
-8. GNOME 방해 금지(배너 끔)·KDE 방해 금지일 때 조용히 쌓이는지
-9. `./scripts/build-appimage.sh` 결과가 다른 배포판에서 열리는지(WebKitGTK 보조 프로세스 포함)
-10. 알림 카드·목록 줄·매거진 카드의 오른쪽 클릭 '바로 줄이기'(초점을 받지 않는 알림 창에서도 메뉴가 뜨는지)
-11. 묶음 알림을 누르면 매거진의 그 분야 지면이 열리는지, OPML 가져오기·내보내기·스크랩 파일 저장(파일 대화상자·포털)
-12. 매거진 카드 마우스 올림 확대·시차, 표지 켄 번스, 지면 전환이 배율 2 화면에서 매끄러운지
-13. X11 에서 다른 앱을 전체 화면으로 두거나 OBS 를 켠 동안 물방울 대신 '안 읽음'에 쌓이고 상단바 머리에 이유 아이콘이 뜨는지(Wayland 에서는 기록 앱만)
-14. 상단바 창을 열자마자 ↓/J·↑/K·Enter·S·O·M 이 듣는지, 검색칸에서 ↓ 로 목록으로 내려가는지, 매거진 Ctrl+[ · Ctrl+], 읽기 창 J·K·Esc
-15. 설정 › 일반 › 내 기록: 내보내기·가져오기 파일 대화상자(포털), 맥·윈도우에서 내보낸 파일을 가져오면 저장·스크랩·구독이 더해지는지, '마지막 가져오기 되돌리기'
-16. 지켜볼 낱말 정리 알림(시스템 알림 방식)을 누르면 매거진 검색이 그 낱말로 열리는지
-17. `xdg-open 'dropcap://save?url=https%3A%2F%2Fexample.com%2Fa'` — 앱이 떠 있을 때·꺼져 있을 때 모두 확인 창 → '나중에 읽기에 저장했어요', 설정 › 스크랩북의 북마클릿(Firefox·Chromium)
-18. `dropcap --save <주소>`·`dropcap --magazine` 이 떠 있는 앱으로 넘어가는지, `dropcap --latest 5 --section 연구`·`--json` 이 창 없이 출력하는지
-19. 데스크톱 검색: `packaging/io.github.dechsky.Dropcap.search-provider.ini` 를 `/usr/share/gnome-shell/search-providers/` 에(D-Bus `.service` 는 `/usr/share/dbus-1/services/`) 두면 GNOME 검색에 저장·스크랩 기사가 나오고 누르면 읽기 창 · KDE 는 `.krunner.desktop` 을 `~/.local/share/krunner/dbusplugins/` 에. AppImage 는 이 파일들의 사본을 `usr/share/dropcap/integration/` 에 담음(D-Bus 로 처음 깨울 때 첫 질문이 빈 결과일 수 있음)
-20. 설정 › 스크랩북 노트 폴더: 포털 폴더 고르기(Flatpak 경로 포함), Obsidian 보관함에 `<폴더>.md` 가 생기고 폴더 이름을 바꾸면 예전 파일이 휴지통으로, 폴더가 없어지면 '다시 골라 주세요'
-21. 상단바 '저장' 탭·매거진 '저장' 의 '주소로 추가…' 칸
-22. 읽기 창 사진 도구: 마우스 올림 단추·오른쪽 클릭, tesseract(kor·eng 등) 설치 시 사진 속 글자 번역 창, 없을 때 설치 안내 · Ctrl+F 찾기
-23. 설정 › 번역 방식 "번역 안 함": 새 외국어 기사 제목이 원문 그대로이고 읽기 창이 원문만 보이며(번역 표시 없음) 네트워크에 translate.googleapis.com 요청이 없는지, 다시 "자동"이면 번역되는지
-24. 매거진: 지난 호 목록의 기사 5건 미만 호가 흐리고 마우스를 올리면 "기록 적음", 머리에 "지난 호 · 기록 적음" / 이번 주 머리 "이번 주 · …" / 저장·스크랩북 머리 수가 옆 목록 수와 같음 / 빈 검색 화면의 지켜볼 낱말·최근 검색 칩 / 좁은 창 4열 카드가 겹치거나 화면 밖으로 나가지 않음

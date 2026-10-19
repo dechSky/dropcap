@@ -220,6 +220,69 @@ final class Magazine: ObservableObject {
         issues.sorted { a, b in a.to != b.to ? a.to > b.to : (a.kind == .weekly) && b.kind != .weekly }
     }
 
+    // 새로 고침 옆 '마지막 확인 n분 전'
+    nonisolated static func lastCheckText(_ d: Date?, now: Date) -> String {
+        guard let d else { return "아직 확인 전" }
+        let s = max(0, now.timeIntervalSince(d))
+        if s < 60 { return "마지막 확인 방금" }
+        if s < 3600 { return "마지막 확인 \(Int(s / 60))분 전" }
+        if s < 24 * 3600 { return "마지막 확인 \(Int(s / 3600))시간 전" }
+        return "마지막 확인 \(Int(s / 86400))일 전"
+    }
+
+    // 기록 적음 이유(지난 호 머리) — 그날 모인 소식이 적은 까닭을 말해 준다
+    nonisolated static func thinReason(_ issue: Issue) -> String? {
+        issue.isThin ? "기록 적음 — 앱을 쓰기 전이거나 켠 출처가 적던 때라 모인 소식이 \(issue.count)건뿐입니다" : nil
+    }
+
+    // 지난 호 목록 묶음: 이번 주 · 지난주 · 그 앞은 달별(접혀 있음). 주간 호는 그 주 묶음 맨 위(archiveOrder 그대로).
+    // 빈 날: 묶음 기간 중 첫 기록 날부터 어제까지 일간 호가 없는 날 수(앱을 쓰기 전 날은 세지 않음)
+    struct ArchiveGroup: Identifiable, Hashable {
+        var id: String
+        var title: String
+        var issues: [Issue]
+        var emptyDays: Int
+        var folded: Bool
+    }
+    nonisolated static func archiveGroups(_ issues: [Issue], now: Date, cal: Calendar = .current) -> [ArchiveGroup] {
+        let thisWeek = weekRange(containing: now, cal: cal)
+        let lastWeek = weekRange(containing: thisWeek.from.addingTimeInterval(-3600), cal: cal)
+        let today = cal.startOfDay(for: now)
+        // 호가 속한 날: 일간은 그날(끝 시각 바로 앞), 주간은 그 주 첫날
+        func anchor(_ i: Issue) -> Date { cal.startOfDay(for: i.kind == .weekly ? i.from : i.to.addingTimeInterval(-60)) }
+        let days = Set(issues.filter { $0.kind == .daily }.map(anchor))
+        guard let first = (days.min() ?? issues.map(anchor).min()) else { return [] }
+        var order: [String] = []
+        var groups: [String: ArchiveGroup] = [:]
+        var ranges: [String: (Date, Date)] = [:]
+        for i in issues {
+            let d = anchor(i)
+            let key: String, title: String, range: (Date, Date), folded: Bool
+            if d >= thisWeek.from { (key, title, range, folded) = ("this", "이번 주", (thisWeek.from, thisWeek.to), false) }
+            else if d >= lastWeek.from { (key, title, range, folded) = ("last", "지난주", (lastWeek.from, lastWeek.to), false) }
+            else {
+                let m = cal.dateInterval(of: .month, for: d) ?? DateInterval(start: d, duration: 86400)
+                let c = cal.dateComponents([.year, .month], from: m.start)
+                // 달 묶음은 지난주 앞까지만(지난주와 같은 날을 두 번 세지 않게)
+                (key, title, range, folded) = (String(format: "m-%04d-%02d", c.year ?? 0, c.month ?? 0), "\(c.year ?? 0)년 \(c.month ?? 0)월",
+                                               (m.start, min(m.end, lastWeek.from)), true)
+            }
+            if groups[key] == nil { order.append(key); groups[key] = ArchiveGroup(id: key, title: title, issues: [], emptyDays: 0, folded: folded); ranges[key] = range }
+            groups[key]!.issues.append(i)
+        }
+        for key in order {
+            guard let (from, to) = ranges[key] else { continue }
+            var d = max(from, first), n = 0
+            while d < min(to, today) {
+                if !days.contains(d) { n += 1 }
+                guard let next = cal.date(byAdding: .day, value: 1, to: d) else { break }
+                d = next
+            }
+            groups[key]!.emptyDays = n
+        }
+        return order.compactMap { groups[$0] }
+    }
+
     // 주간 범위: 달력 한 주(이번 주 진행 중 호와 지난 주간이 겹치지 않고 이어짐, 각 7일)
     nonisolated static func weekRange(containing d: Date, cal: Calendar = .current) -> (from: Date, to: Date) {
         let i = cal.dateInterval(of: .weekOfYear, for: d) ?? DateInterval(start: cal.startOfDay(for: d), duration: 7 * 24 * 3600)
@@ -292,7 +355,9 @@ final class Magazine: ObservableObject {
         return (g.live.map(\.cluster), g.past.map(\.cluster))
     }
     // 스토리 한눈에 요약(기기 안 모델) — 보도 수가 같으면 다시 만들지 않음
-    private var digestCache: [String: (size: Int, lines: [String])] = [:]
+    var digestCache: [String: (size: Int, lines: [String])] = [:]
+    // 지워진(또는 기억에서 치운) 스토리의 요약을 버린다 — 연 스토리마다 남아 끝없이 늘던 것
+    func keepDigests(_ live: Set<String>) { digestCache = digestCache.filter { live.contains($0.key) } }
     func storyDigest(_ c: Database.Cluster) async -> [String]? {
         if let d = digestCache[c.id], d.size == c.size { return d.lines }
         let items = storyItems(c.id)
@@ -332,7 +397,7 @@ final class Magazine: ObservableObject {
     }
 
     // 지금 보이는 출처로만 두 곳 이상이 다룬 스토리(출처를 끄면 그 스토리의 보도 수도 줄어 목록에서 빠질 수 있음)
-    // 스토리 목록 전체를 문장 두 번(스토리 · 보도)으로 — 예전엔 스토리마다 두 번씩 물어 기록이 쌓일수록 화면이 멈췄다(STABILITY.md S5)
+    // 스토리 목록 전체를 문장 두 번(스토리 · 보도)으로 — 예전엔 스토리마다 두 번씩 물어 기록이 쌓일수록 화면이 멈췄다
     nonisolated static func stories(db: Database, filter: SourceFilter, now: Date) -> [StoryCard] {
         let since = now.addingTimeInterval(-14 * 24 * 3600)
         let members = db.storyMembers(since: since)
@@ -364,6 +429,8 @@ final class Magazine: ObservableObject {
         return groups
     }
 
+    // 매거진에 아직 없는 key(채우기 전 — 이미 있는 글은 번역·넣기를 건너뛰게)
+    func missing(_ keys: [String]) async -> Set<String> { await editor.missing(keys) }
     func search(_ q: String) async -> [NewsItem] { let f = context.filter; return await editor.search(q, filter: f) }
     func recentItems(since: Date) async -> [NewsItem] { await editor.recentItems(since: since, limit: 3000).map(\.item) }
     func storedImage(_ key: String) -> String? { db.image(key) }

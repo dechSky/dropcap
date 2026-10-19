@@ -8,6 +8,7 @@ use adw::prelude::*;
 use chrono::{Duration, Local, Utc};
 use dropcap_core::app_model::{by_importance, clock, title_words, tomorrow_morning, UiEvent};
 use dropcap_core::article::image_key;
+use dropcap_core::byte_cache;
 use dropcap_core::models::NewsItem;
 use dropcap_core::notify_policy::NotifyMode;
 use dropcap_core::sections;
@@ -699,14 +700,28 @@ fn photo_url(it: &NewsItem, cb: impl FnOnce(Option<String>) + 'static) {
     bg(async move { core.db.image(&key) }, move |u: Option<String>| cb(u.filter(|u| !image_key::is_junk(Some(u)))));
 }
 
-// 텍스처를 cairo 그림으로(한 번만 바꿔 두고 다시 그릴 때 쓴다)
-fn surface_of(tex: &gdk::Texture) -> Option<gtk::cairo::ImageSurface> {
+// 텍스처를 cairo 그림으로(한 번만 바꿔 두고 다시 그릴 때 쓴다). 칸(box, 화면 배율 포함 픽셀)을 채울 만큼으로 줄여 둔다 —
+// 카드마다 원본(최대 1400px) 크기 사본을 두면 목록 하나에 수십 MB 였다(S1). 원본 크기 표면은 줄이는 동안만 쓰고 버린다
+fn surface_of(tex: &gdk::Texture, box_w: i32, box_h: i32) -> Option<gtk::cairo::ImageSurface> {
     let (w, h) = (tex.width(), tex.height());
     let stride = gtk::cairo::Format::ARgb32.stride_for_width(w as u32).ok()?;
     let mut data = vec![0u8; (stride * h) as usize];
     // gdk 기본 내려받기 형식은 미리 곱한 BGRA(리틀 엔디언) = cairo ARGB32 와 같다
     tex.download(&mut data, stride as usize);
-    gtk::cairo::ImageSurface::create_for_data(data, gtk::cairo::Format::ARgb32, w, h, stride).ok()
+    let full = gtk::cairo::ImageSurface::create_for_data(data, gtk::cairo::Format::ARgb32, w, h, stride).ok()?;
+    let (sw, sh) = byte_cache::cover_size(w, h, box_w, box_h);
+    if (sw, sh) == (w, h) {
+        return Some(full);
+    }
+    let small = gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, sw, sh).ok()?;
+    {
+        let cr = gtk::cairo::Context::new(&small).ok()?;
+        cr.scale(sw as f64 / w as f64, sh as f64 / h as f64);
+        cr.set_source_surface(&full, 0.0, 0.0).ok()?;
+        cr.source().set_filter(gtk::cairo::Filter::Good);
+        cr.paint().ok()?;
+    }
+    Some(small)
 }
 
 // 사진 칸: 정한 크기에 꽉 차게 잘라 둥근 모서리로. 사진을 받으면 나타나고, 없으면 자리를 차지하지 않는다(대체 그림 없음)
@@ -741,7 +756,8 @@ fn thumb(it: &NewsItem, w: i32, h: i32, radius: i32) -> gtk::DrawingArea {
         let Some(u) = u else { return };
         widgets::load_texture(&u, move |tex| {
             let Some(t) = tex else { return };
-            *surf.borrow_mut() = surface_of(&t);
+            let k = a2.scale_factor().max(1);
+            *surf.borrow_mut() = surface_of(&t, w * k, h * k);
             if surf.borrow().is_some() {
                 a2.set_visible(true);
                 a2.queue_draw();

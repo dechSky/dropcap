@@ -168,7 +168,7 @@ static STRONG_WALL: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy:
 pub const PAID_TEASER_CHARS: usize = 1500; // 사이트가 유료라고 적었을 때
 pub const HARD_TEASER_CHARS: usize = 2500; // 하드 유료 출처일 때
 
-// 맛보기(유료벽 뒤 앞부분만)인가 — READER-CUT.md C(맥 Paywall.isTeaser). 지금의 문구 판정에 더해
+// 맛보기(유료벽 뒤 앞부분만)인가 — 맥 Paywall.isTeaser. 지금의 문구 판정에 더해
 // 사이트가 유료라고 적었고(isAccessibleForFree=false · 한경 articlePayment) 본문이 1,500자 미만, 하드 유료 출처인데 2,500자 미만, 끝쪽에 강한 문구
 // ld_body: 사이트가 ld+json articleBody 로 적은 본문 글자 수. 우리 본문과 거의 같으면(±10%) 그 길이가 기사 전부다 —
 // 늘 isAccessibleForFree=false 라고 적지만 전문을 주는 사이트(Verge)의 짧은 기사를 맛보기로 잘못 보지 않게 '유료+1,500자' 규칙을 쓰지 않는다
@@ -212,7 +212,7 @@ pub fn looks_blocked(blocks: &[Block]) -> bool {
     WALL_PHRASES.iter().any(|p| lower.contains(p))
 }
 
-// 읽기 창 문구(맥 PaywallViews TeaserBanner·CutEndNote 그대로 — READER-CUT.md C②·A②)
+// 읽기 창 문구(맥 PaywallViews TeaserBanner·CutEndNote 그대로 — A②)
 pub const TEASER_TITLE: &str = "구독자만 전체를 볼 수 있는 기사예요";
 pub const TEASER_DETAIL: &str = "아래는 사이트가 공개한 앞부분입니다.";
 pub const TEASER_END: &str = "— 여기까지가 공개된 부분입니다";
@@ -309,8 +309,8 @@ impl PaywallBook {
     }
 
     // 본문을 받은 기사(미리 받기 포함)의 맛보기 판정을 남긴다 — 맛보기가 아니면 지난 기록을 지운다.
-    // 다시 맛보기로 판정되면 시각만 새로 써서 30일·2,000건 정리에서 계속 맛보기인 기사가 빠지지 않게 한다(review-3 B3).
-    // 돌려주는 값: 화면 표시가 바뀌었나(목록·카드를 다시 그릴지 — review-3 B1)
+    // 다시 맛보기로 판정되면 시각만 새로 써서 30일·2,000건 정리에서 계속 맛보기인 기사가 빠지지 않게 한다.
+    // 돌려주는 값: 화면 표시가 바뀌었나(목록·카드를 다시 그릴지)
     pub fn record_teaser(&self, item: &NewsItem, teaser: bool) -> bool {
         if item.id == crate::app_model::PREVIEW_ID || item.link.is_empty() {
             return false;

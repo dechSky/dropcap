@@ -81,7 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             ReaderSaveTestHooks.run(env)
             ExtrasTestHooks.run(env) // 유료 표시·오늘 호·저녁 정리·사진 점수 시험(UI/ExtrasTestHooks.swift)
             DesignTestHooks.run(env) // 창 열기 움직임 연속 장면(UI/DesignTestHooks.swift · docs/DESIGN.md)
-            ReadSweep.run(env) // 읽기 창 본문 성공률 전수 점검(Reader/ReadSweep.swift · mac/READSWEEP.md)
+            ReadSweep.run(env) // 읽기 창 본문 성공률 전수 점검(Reader/ReadSweep.swift)
             if let u = env["DROPCAP_TEST_URL"] {
                 ReaderController.open(NewsItem(id: u, title: u, titleKo: nil, link: u, date: Date(), summary: "", sourceId: "openai", sourceName: "시험", tier: "lab"))
                 if let dir = env["DROPCAP_TEST_SHOT_DIR"] {

@@ -24,7 +24,7 @@ const UA: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, l
 const FAST_BLOCK: [&str; 11] = ["image", "media", "font", "style-sheet", "script", "raw", "svg-document", "popup", "fetch", "websocket", "other"];
 const SLOW_BLOCK: [&str; 5] = ["image", "media", "font", "popup", "websocket"];
 
-// 맥 ArticleExtractor.script 와 같은 추출 스크립트(글자째 같음 — READER-CUT.md 2단계: 본문 밖 상자·각주 빼기, articleBody 우선, 형제 덩어리 모으기,
+// 맥 ArticleExtractor.script 와 같은 추출 스크립트(글자째 같음: 본문 밖 상자·각주 빼기, articleBody 우선, 형제 덩어리 모으기,
 // 일부만·유료 표시, 맨 글자 문단·<br> 빈칸, 같은 글 한 번만, 목록뿐이면 빈 본문). 웹 엔진이 없을 때는 핵심의 reader_extract 가 같은 순서로
 const SCRIPT: &str = r#"(() => {
   const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
@@ -131,10 +131,13 @@ const SCRIPT: &str = r#"(() => {
       const marks = [...fresh.querySelectorAll(TXT)].filter((e) => { const n = cln(e); return (n >= 12 || (/^H/.test(e.tagName) && n >= 4)) && !roots.some((r) => r.contains(e)); });
       const before = (a, b) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
       const RECO_HEAD = /^(recommended|related|read more|more on this|more from|keep reading|you may also like|also read|관련\s?기사|추천\s?기사|함께\s?(볼|읽을)|많이\s?본)/i;
+      // 캐러셀 바깥 바로 앞 형제 제목도 본다 — 뿌리가 앞 형제 없이 감싸여 있으면 세 겹까지 올라가고, 글이 제목 하나뿐인 상자(머리말 상자)면 그 제목
+      const headBefore = (r) => { let s = r; for (let i = 0; i < 3 && !s.previousElementSibling && s.parentElement; i++) s = s.parentElement; const p = s.previousElementSibling; if (!p) return null; if (/^H[1-6]$/.test(p.tagName)) return p; const h = p.querySelector('h1, h2, h3, h4, h5, h6'); return h && norm(h.textContent) === norm(p.textContent) ? h : null; };
+      // 칸 글 양 상한: 본문(캐러셀 밖 글 중 우리 본문에 있는 것) 글자의 2배, 적어도 3000자 · 칸 50개
+      const cap = Math.max(2 * marks.filter((m) => found.has(norm(m.textContent))).reduce((z, m) => z + cln(m), 0), 3000);
       let added = false;
       roots.forEach((r) => {
-        const hd = r.querySelector('h1, h2, h3, h4, h5, h6');
-        if (hd && RECO_HEAD.test(norm(hd.textContent))) return;
+        if ([r.querySelector('h1, h2, h3, h4, h5, h6'), headBefore(r)].some((hd) => hd && RECO_HEAD.test(norm(hd.textContent)))) return;
         let prev = null, next = null;
         for (const m of marks) { if (before(m, r)) prev = m; else if (before(r, m)) { next = m; break; } }
         const pms = pick(prev), nm = pick(next).find((n) => pms.some((q) => before(q, n)));
@@ -148,6 +151,8 @@ const SCRIPT: &str = r#"(() => {
         const wrap = fresh.createElement('div'), keys = [], units = new Set(), srcs = new Set();
         let text = 0, link = 0;
         slides.forEach((s) => {
+          // 상한을 넘은 칸은 넣지 않되, Readability 가 남긴 같은 칸은 지우게 글·사진만 적어 둔다
+          if (keys.length >= 50 || text > cap) { [s, ...s.querySelectorAll('p, li, h1, h2, h3, h4, h5, h6, blockquote, figcaption')].forEach((e) => { const u = norm(e.textContent); if (u) units.add(u); }); s.querySelectorAll('img').forEach((i) => { const x = i.getAttribute('src') || i.getAttribute('data-src') || ''; if (x) srcs.add(x); }); return; }
           const c = s.cloneNode(true);
           c.querySelectorAll('button, [role="tablist"], [class*="pagination" i], [class*="controls" i], [class*="arrow" i], [class*="dots" i]').forEach((n) => n.remove());
           c.querySelectorAll('*').forEach((n) => {

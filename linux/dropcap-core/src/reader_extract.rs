@@ -1,4 +1,4 @@
-// 본문 추리기의 앞뒤 손질(맥 ArticleExtractor 추출 스크립트의 2단계 — mac/READER-CUT.md '2단계 결과').
+// 본문 추리기의 앞뒤 손질(맥 ArticleExtractor 추출 스크립트의 2단계).
 // 웹 엔진 없이 도는 빠른 길(dom_smoothie)도 맥 스크립트와 같은 순서로:
 //  ① 추리기 전에 본문 밖 상자(기자 소개·댓글 수·공유·단추)·기자 얼굴·각주 번호를 뺀다(pre_clean)
 //  ② Readability 결과를 원문에서 찾아 B: itemprop=articleBody 우선(옆 상자를 고른 경우), A: 같은 꼴 형제 덩어리 모으기,
@@ -295,7 +295,7 @@ pub fn gather(content: &str, fresh: &Document) -> (String, bool) {
     (content, partial)
 }
 
-// 캐러셀·슬라이드(맥 추출 스크립트 carousel-slides — mac/READER-CUT.md '5단계 결과'): Readability 가 칸을 버리고, 화면 밖 칸은 숨겨져 있다.
+// 캐러셀·슬라이드(맥 추출 스크립트 carousel-slides): Readability 가 칸을 버리고, 화면 밖 칸은 숨겨져 있다.
 // 원문(fresh)에서 앞 글과 뒤 글이 모두 우리 본문에 있는 것(본문 사이)만 칸마다 글·사진을 순서대로 뒤 글 앞에 넣는다 — 본문 밖 추천 캐러셀은 넣지 않음.
 // 복제 칸(무한 돌기)·같은 칸은 한 번만, 칸 글 대부분이 링크면(추천 기사 줄) 넣지 않음. 인용 카드가 속성에만 든 글(quote=·author-name=)은 인용으로
 static CAR_TOK: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)^(swiper|swiper-container|glide|slick-slider|splide|flickity|owl-carousel|slideshow)$|carousel").unwrap());
@@ -337,6 +337,24 @@ fn outer_only<'a>(list: Vec<NodeRef<'a>>) -> Vec<NodeRef<'a>> {
     list.into_iter().filter(|n| !n.ancestors_it(None).any(|a| ids.contains(&a.id))).collect()
 }
 
+// 캐러셀 바깥 바로 앞 형제 제목(보안 낮음 L2) — 뿌리가 앞 형제 없이 감싸여 있으면 세 겹까지 올라가 본다.
+// 앞 형제가 제목이거나, 글이 제목 하나뿐인 상자(머리말 상자)면 그 제목
+fn head_before<'a>(r: &NodeRef<'a>) -> Option<NodeRef<'a>> {
+    let mut s = r.clone();
+    for _ in 0..3 {
+        if s.prev_element_sibling().is_some() {
+            break;
+        }
+        s = s.parent()?;
+    }
+    let p = s.prev_element_sibling()?;
+    if matches!(tag(&p).as_str(), "h1" | "h2" | "h3" | "h4" | "h5" | "h6") {
+        return Some(p);
+    }
+    let h = Selection::from(p.clone()).select("h1, h2, h3, h4, h5, h6").nodes().first().cloned()?;
+    (norm(&h.text()) == norm(&p.text())).then_some(h)
+}
+
 pub fn carousel(content: &str, fresh: &Document) -> String {
     let Some(fbody) = body_of(fresh) else { return content.to_string() };
     let all = in_order(&fbody);
@@ -353,9 +371,6 @@ pub fn carousel(content: &str, fresh: &Document) -> String {
     }
     let cur = Document::from(content);
     let Some(cbody) = body_of(&cur) else { return content.to_string() };
-    let call = in_order(&cbody);
-    let corder: std::collections::HashMap<_, usize> = call.iter().enumerate().map(|(i, n)| (n.id, i)).collect();
-    let cbefore = |a: &NodeRef, b: &NodeRef| corder.get(&a.id).zip(corder.get(&b.id)).is_some_and(|(x, y)| x < y);
     let mut found: std::collections::HashMap<String, Vec<NodeRef>> = std::collections::HashMap::new();
     for e in cur.select(CAR_TXT).nodes() {
         found.entry(norm(&e.text())).or_default().push(e.clone());
@@ -376,13 +391,21 @@ pub fn carousel(content: &str, fresh: &Document) -> String {
         })
         .cloned()
         .collect();
+    // 칸 글 양 상한(보안 낮음 L3): 본문(캐러셀 밖 글 중 우리 본문에 있는 것) 글자의 2배, 적어도 3000자 · 칸 50개
+    let body_len: usize = marks.iter().filter(|m| found.contains_key(&norm(&m.text()))).map(len_of).sum();
+    let cap = (body_len * 2).max(3000);
     let mut added = false;
     for r in &roots {
-        if let Some(hd) = Selection::from(r.clone()).select("h1, h2, h3, h4, h5, h6").nodes().first() {
-            if RECO_HEAD.is_match(&norm(&hd.text())) {
-                continue;
-            }
+        if [Selection::from(r.clone()).select("h1, h2, h3, h4, h5, h6").nodes().first().cloned(), head_before(r)]
+            .iter()
+            .flatten()
+            .any(|hd| RECO_HEAD.is_match(&norm(&hd.text())))
+        {
+            continue;
         }
+        // 순서 표는 캐러셀마다 새로(보안 낮음 L5) — 앞 캐러셀을 넣으며 지운 요소를 앞뒤 글로 고르지 않게
+        let corder: std::collections::HashMap<_, usize> = in_order(&cbody).iter().enumerate().map(|(i, n)| (n.id, i)).collect();
+        let cbefore = |a: &NodeRef, b: &NodeRef| corder.get(&a.id).zip(corder.get(&b.id)).is_some_and(|(x, y)| x < y);
         let ro = order[&r.id];
         let mut prev = None;
         let mut next = None;
@@ -411,6 +434,17 @@ pub fn carousel(content: &str, fresh: &Document) -> String {
         let (mut wrap, mut keys, mut units, mut srcs) = (String::new(), Vec::<String>::new(), HashSet::<String>::new(), HashSet::<String>::new());
         let (mut text, mut link) = (0usize, 0usize);
         for s in &slides {
+            // 상한을 넘은 칸은 넣지 않되, Readability 가 남긴 같은 칸은 지우게 글·사진만 적어 둔다
+            if keys.len() >= 50 || text > cap {
+                for e in std::iter::once(s.clone()).chain(Selection::from(s.clone()).select("p, li, h1, h2, h3, h4, h5, h6, blockquote, figcaption").nodes().iter().cloned()) {
+                    let u = norm(&e.text());
+                    if !u.is_empty() {
+                        units.insert(u);
+                    }
+                }
+                srcs.extend(Selection::from(s.clone()).select("img").nodes().iter().filter_map(|i| i.attr("src").or_else(|| i.attr("data-src")).map(|v| v.to_string())).filter(|v| !v.is_empty()));
+                continue;
+            }
             let d = Document::from(s.html().to_string().as_str());
             let Some(c) = body_of(&d).and_then(|b| b.first_element_child()) else { continue };
             Selection::from(c.clone())

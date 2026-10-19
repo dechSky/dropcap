@@ -2,11 +2,9 @@
 use crate::app::{bg, ui};
 use crate::strings;
 use crate::theme;
-use crate::widgets::{chip, icon, label};
+use crate::widgets::label;
 use adw::prelude::*;
-use dropcap_core::app_model::{UiEvent, INTERVALS};
-use dropcap_core::channels::{self, CATALOG};
-use dropcap_core::models::{resources, ItemKind, Source};
+use dropcap_core::app_model::INTERVALS;
 use dropcap_core::store::{Position, Style};
 use dropcap_core::translator;
 use gtk::glib;
@@ -37,7 +35,7 @@ pub fn open(tab: Option<&str>) {
 }
 
 // 줄 끝에 붙는 짧은 글자(줄바꿈 없이)
-fn tag(text: &str, size: f64, weight: u16, classes: &[&str]) -> gtk::Label {
+pub(crate) fn tag(text: &str, size: f64, weight: u16, classes: &[&str]) -> gtk::Label {
     let l = label(text, size, weight, classes);
     l.set_wrap(false);
     l.set_valign(gtk::Align::Center);
@@ -56,14 +54,14 @@ fn build() -> adw::PreferencesWindow {
     w.set_application(Some(&u.app));
     w.add(&general());
     w.add(&crate::settings_sections::page());
-    w.add(&sources());
+    w.add(&crate::settings_sources::page()); // 구독(찾기·묶음, settings_sources.rs)
     w.add(&filters());
     w.add(&crate::scrapbook_settings::page()); // 스크랩북(I-05·I-06)
     WINDOW.with(|c| *c.borrow_mut() = Some(w.clone()));
     w
 }
 
-fn caption(text: &str) -> gtk::Label {
+pub(crate) fn caption(text: &str) -> gtk::Label {
     let l = label(text, 12.0, 400, &["dc-secondary"]);
     l.set_margin_top(6);
     l
@@ -213,290 +211,6 @@ fn desktop_is(name: &str) -> bool {
     std::env::var("XDG_CURRENT_DESKTOP").map(|d| d.split(':').any(|p| p.eq_ignore_ascii_case(name))).unwrap_or(false)
 }
 
-// MARK: 구독(P-06, K-02~K-04)
-struct Sources {
-    custom_group: adw::PreferencesGroup,
-    custom_rows: RefCell<Vec<gtk::Widget>>,
-    custom_ids: RefCell<Vec<String>>,
-    updaters: RefCell<Vec<Box<dyn Fn()>>>,
-}
-
-fn sources() -> adw::PreferencesPage {
-    let page = adw::PreferencesPage::builder().title("구독").icon_name("network-transmit-receive-symbolic").name("sources").build();
-
-    // 채널 추가
-    let g = adw::PreferencesGroup::builder().title("채널 추가").build();
-    let entry = adw::EntryRow::builder().title("언론사·블로그 주소 또는 youtube.com/@채널 · r/이름 · github.com/소유자/저장소").build();
-    let add = gtk::Button::builder().label("구독").valign(gtk::Align::Center).css_classes(["suggested-action"]).build();
-    entry.add_suffix(&add);
-    g.add(&entry);
-    let err = label("", 12.0, 400, &["error"]);
-    err.set_visible(false);
-    err.set_margin_top(6);
-    g.add(&err);
-    g.add(&caption("웹사이트·뉴스레터(Substack·Medium)·YouTube 채널·GitHub 릴리스·Reddit·arXiv·팟캐스트 주소를 넣으면 알맞은 피드를 찾아 구독합니다."));
-    page.add(&g);
-    let do_add = {
-        let entry = entry.clone();
-        let add = add.clone();
-        let err = err.clone();
-        Rc::new(move || {
-            let text = entry.text().to_string();
-            if text.trim().is_empty() {
-                return;
-            }
-            add.set_sensitive(false);
-            add.set_label("찾는 중…");
-            err.set_visible(false);
-            let core = ui().core.clone();
-            let (entry, add, err) = (entry.clone(), add.clone(), err.clone());
-            bg(core.add_channel(text, String::new()), move |r| {
-                add.set_sensitive(true);
-                add.set_label("구독");
-                match r {
-                    Some(e) => {
-                        err.set_text(&e);
-                        err.set_visible(true);
-                    }
-                    None => entry.set_text(""),
-                }
-            });
-        })
-    };
-    {
-        let f = do_add.clone();
-        add.connect_clicked(move |_| f());
-        let f = do_add.clone();
-        entry.connect_entry_activated(move |_| f());
-    }
-
-    // OPML 가져오기·내보내기
-    page.add(&crate::settings_tools::opml_group());
-
-    // 구독 중인 채널
-    let custom_group = adw::PreferencesGroup::new();
-    page.add(&custom_group);
-    let s = Rc::new(Sources { custom_group, custom_rows: RefCell::new(vec![]), custom_ids: RefCell::new(vec![]), updaters: RefCell::new(vec![]) });
-
-    // 기본 출처(등급별)
-    for tier in ["lab", "press", "kr"] {
-        let g = adw::PreferencesGroup::builder().title(format!("기본 출처 · {}", resources::tier_label(tier))).build();
-        for src in resources::CONFIG.sources.iter().filter(|x| x.tier == tier) {
-            g.add(&source_row(src, false, &s));
-        }
-        page.add(&g);
-    }
-
-    // 추천 채널(묶음별)
-    for group in channels::GROUPS {
-        let g = adw::PreferencesGroup::builder().title(format!("추천 · {group}")).build();
-        for src in CATALOG.iter().filter(|x| x.group.as_deref() == Some(group)) {
-            g.add(&catalog_row(src, &s, &err));
-        }
-        page.add(&g);
-    }
-
-    rebuild_custom(&s);
-    {
-        let s = s.clone();
-        ui().listen(move |e| {
-            if matches!(e, UiEvent::State) {
-                rebuild_custom(&s);
-                for u in s.updaters.borrow().iter() {
-                    u();
-                }
-            }
-        });
-    }
-    page
-}
-
-fn rebuild_custom(s: &Rc<Sources>) {
-    let st = ui().core.state();
-    let ids: Vec<String> = st.custom_sources.iter().map(|x| x.id.clone()).collect();
-    s.custom_group.set_title(&format!("구독 중인 채널 {}", st.custom_sources.len()));
-    if *s.custom_ids.borrow() == ids && !s.custom_rows.borrow().is_empty() {
-        return;
-    }
-    for r in s.custom_rows.borrow_mut().drain(..) {
-        s.custom_group.remove(&r);
-    }
-    *s.custom_ids.borrow_mut() = ids;
-    let mut rows = vec![];
-    if st.custom_sources.is_empty() {
-        let r = adw::ActionRow::builder().title("아래 추천 채널을 골라 보세요.").css_classes(["dim-label"]).build();
-        rows.push(r.upcast::<gtk::Widget>());
-    } else {
-        for src in &st.custom_sources {
-            rows.push(source_row(src, true, s).upcast::<gtk::Widget>());
-        }
-    }
-    for r in &rows {
-        s.custom_group.add(r);
-    }
-    *s.custom_rows.borrow_mut() = rows;
-}
-
-fn source_monogram(src: &Source) -> gtk::DrawingArea {
-    let mut it = dropcap_core::models::NewsItem::new("", "", "", &src.id, &src.name, &src.tier);
-    it.source_name = src.name.clone();
-    let d = gtk::DrawingArea::builder().content_width(22).content_height(22).valign(gtk::Align::Center).build();
-    let color = src.color.clone();
-    let letter = it.initial();
-    d.set_draw_func(move |area, cr, w, h| {
-        let r = (w.min(h) as f64) / 2.0;
-        let (cr_, cg, cb) = dropcap_core::models::hex_rgb(&color);
-        cr.arc(w as f64 / 2.0, h as f64 / 2.0, r, 0.0, std::f64::consts::TAU);
-        cr.set_source_rgb(cr_, cg, cb);
-        let _ = cr.fill();
-        let layout = area.create_pango_layout(Some(&letter));
-        layout.set_font_description(Some(&theme::font(r * 0.95, gtk::pango::Weight::Bold)));
-        let (_, ext) = layout.pixel_extents();
-        cr.set_source_rgb(1.0, 1.0, 1.0);
-        cr.move_to(w as f64 / 2.0 - ext.width() as f64 / 2.0 - ext.x() as f64, h as f64 / 2.0 - ext.height() as f64 / 2.0 - ext.y() as f64);
-        crate::widgets::pangocairo_show(cr, &layout);
-    });
-    d
-}
-
-fn kind_badge(k: ItemKind) -> gtk::Label {
-    chip(k.label(), dropcap_core::category::kind_color(k, theme::is_dark()))
-}
-
-// 구독 중인 채널·기본 출처: 알림 종 · 켜기 스위치 · (지우기) · 주소 · 오류 표시
-fn source_row(src: &Source, removable: bool, s: &Rc<Sources>) -> adw::ActionRow {
-    let row = adw::ActionRow::builder().title(glib::markup_escape_text(&src.name).as_str()).build();
-    row.add_prefix(&source_monogram(src));
-    if let Some(h) = src.home.clone().or_else(|| removable.then(|| src.url.clone())) {
-        row.set_subtitle(&glib::markup_escape_text(&h));
-        row.set_subtitle_lines(1);
-    }
-    if src.item_kind() != ItemKind::Article {
-        let b = kind_badge(src.item_kind());
-        b.set_valign(gtk::Align::Center);
-        row.add_suffix(&b);
-    }
-    if src.ai_only {
-        row.add_suffix(&tag("AI 글만", 11.5, 400, &["dc-secondary"]));
-    }
-    let warn = icon("dialog-warning-symbolic", 14);
-    warn.add_css_class("warning");
-    row.add_suffix(&warn);
-    // 출처 건강: 조용함·멈춤·글 없음·오류(켜진 출처만)
-    let health = crate::settings_tools::health_badge();
-    row.add_suffix(&health);
-    let bell = gtk::ToggleButton::builder().css_classes(["flat"]).valign(gtk::Align::Center).build();
-    row.add_suffix(&bell);
-    let sw = gtk::Switch::builder().valign(gtk::Align::Center).build();
-    row.add_suffix(&sw);
-    if removable {
-        let del = gtk::Button::builder().icon_name("user-trash-symbolic").css_classes(["flat"]).valign(gtk::Align::Center).tooltip_text("구독 해지").build();
-        let id = src.id.clone();
-        del.connect_clicked(move |_| ui().core.remove_custom_source(&id));
-        row.add_suffix(&del);
-    }
-    let id = src.id.clone();
-    let busy = Rc::new(std::cell::Cell::new(false));
-    let update = {
-        let (warn, bell, sw, id, busy, health) = (warn.clone(), bell.clone(), sw.clone(), id.clone(), busy.clone(), health.clone());
-        move || {
-            busy.set(true);
-            let core = ui().core.clone();
-            let st = core.state();
-            match st.errors.get(&id) {
-                Some(e) => {
-                    warn.set_visible(true);
-                    warn.set_tooltip_text(Some(&format!("확인 실패: {e}")));
-                }
-                None => warn.set_visible(false),
-            }
-            let enabled = st.enabled.get(&id) == Some(&true);
-            let n = core.notifies(&id);
-            bell.set_active(n);
-            bell.set_icon_name(if n { "preferences-system-notifications-symbolic" } else { "notifications-disabled-symbolic" });
-            bell.set_tooltip_text(Some(if n { "새 글 알림 켜짐 (끄면 매거진에만 실림)" } else { "알림 꺼짐 — 매거진에만 실림" }));
-            bell.set_sensitive(enabled);
-            sw.set_active(enabled);
-            crate::settings_tools::update_health(&health, &id, enabled);
-            busy.set(false);
-        }
-    };
-    update();
-    {
-        let (id, busy) = (id.clone(), busy.clone());
-        bell.connect_toggled(move |b| {
-            if !busy.get() {
-                ui().core.set_notify(&id, b.is_active());
-            }
-        });
-    }
-    {
-        let busy = busy.clone();
-        sw.connect_active_notify(move |w| {
-            if !busy.get() {
-                ui().core.set_enabled(&id, w.is_active());
-            }
-        });
-    }
-    s.updaters.borrow_mut().push(Box::new(update));
-    row
-}
-
-// 추천 채널: 구독 / 확인 중… / 구독 중
-fn catalog_row(src: &Source, s: &Rc<Sources>, err: &gtk::Label) -> adw::ActionRow {
-    let row = adw::ActionRow::builder()
-        .title(glib::markup_escape_text(&src.name).as_str())
-        .subtitle(if src.notify_default == Some(false) { "글이 많아 알림 없이 매거진에만 실림" } else { "새 글이 오면 알림" })
-        .build();
-    row.add_prefix(&source_monogram(src));
-    if src.item_kind() != ItemKind::Article {
-        let b = kind_badge(src.item_kind());
-        b.set_valign(gtk::Align::Center);
-        row.add_suffix(&b);
-    }
-    let done = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-    let ok = icon("object-select-symbolic", 13);
-    ok.add_css_class("success");
-    done.append(&ok);
-    let l = tag("구독 중", 12.0, 500, &["success"]);
-    done.append(&l);
-    done.set_valign(gtk::Align::Center);
-    row.add_suffix(&done);
-    let btn = gtk::Button::builder().label("구독").valign(gtk::Align::Center).build();
-    row.add_suffix(&btn);
-    let src2 = src.clone();
-    let update = {
-        let (done, btn) = (done.clone(), btn.clone());
-        move || {
-            let core = ui().core.clone();
-            let sub = core.is_subscribed(&src2);
-            let busy = core.is_subscribing(&src2.url);
-            done.set_visible(sub);
-            btn.set_visible(!sub);
-            btn.set_sensitive(!busy);
-            btn.set_label(if busy { "확인 중…" } else { "구독" });
-        }
-    };
-    update();
-    {
-        let src = src.clone();
-        let err = err.clone();
-        btn.connect_clicked(move |b| {
-            b.set_sensitive(false);
-            b.set_label("확인 중…");
-            let err = err.clone();
-            bg(ui().core.clone().subscribe(src.clone()), move |r| {
-                if let Some(e) = r {
-                    err.set_text(&e);
-                    err.set_visible(true);
-                }
-            });
-        });
-    }
-    s.updaters.borrow_mut().push(Box::new(update));
-    row
-}
-
 // MARK: 거르기(P-07)
 fn filters() -> adw::PreferencesPage {
     let u = ui();
@@ -520,9 +234,17 @@ fn filters() -> adw::PreferencesPage {
     let save = gtk::Button::builder().label("저장").valign(gtk::Align::Center).build();
     save_row.append(&save);
     g.add(&save_row);
+    // 사용자가 고쳤을 때만 저장한다: 창은 닫아도 숨기만 하므로, 기록 가져오기·되돌리기 뒤 남은 옛 글자를
+    // 탭을 옮기거나 닫을 때(unmap) 다시 저장하면 가져온 낱말을 덮어썼다
+    let dirty = Rc::new(std::cell::Cell::new(false));
+    let syncing = Rc::new(std::cell::Cell::new(false));
     let do_save = {
         let (must, mute, watch) = (must.clone(), mute.clone(), watch.clone());
+        let dirty = dirty.clone();
         Rc::new(move || {
+            if !dirty.replace(false) {
+                return;
+            }
             let split = |s: &str| -> Vec<String> { s.split([',', '\n']).map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect() };
             let (a, b) = (split(&must.text()), split(&mute.text()));
             let w = dropcap_core::watch_words::normalized(&split(&watch.text()));
@@ -544,8 +266,12 @@ fn filters() -> adw::PreferencesPage {
     for e in [&must, &mute, &watch] {
         let f = do_save.clone();
         e.connect_entry_activated(move |_| f());
-        let (f, t) = (do_save.clone(), timer.clone());
+        let (f, t, d, sy) = (do_save.clone(), timer.clone(), dirty.clone(), syncing.clone());
         e.connect_changed(move |_| {
+            if sy.get() {
+                return;
+            }
+            d.set(true);
             if let Some(id) = t.take() {
                 id.remove();
             }
@@ -560,6 +286,22 @@ fn filters() -> adw::PreferencesPage {
     {
         let f = do_save.clone();
         page.connect_unmap(move |_| f());
+    }
+    // 다시 보일 때 고치던 것이 없으면 지금 값으로(가져오기·되돌리기·다른 창에서 바뀐 낱말)
+    {
+        let (must, mute, watch) = (must.clone(), mute.clone(), watch.clone());
+        let (d, sy) = (dirty.clone(), syncing.clone());
+        page.connect_map(move |_| {
+            if d.get() {
+                return;
+            }
+            let st = ui().core.settings();
+            sy.set(true);
+            must.set_text(&st.must_keywords.join(", "));
+            mute.set_text(&st.mute_keywords.join(", "));
+            watch.set_text(&st.watch_keywords.join(", "));
+            sy.set(false);
+        });
     }
     {
         let f = do_save.clone();

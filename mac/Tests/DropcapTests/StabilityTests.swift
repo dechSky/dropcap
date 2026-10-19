@@ -4,7 +4,7 @@ import Network
 import Testing
 @testable import Dropcap
 
-// 앱 안정화(mac/STABILITY.md): 오래 켜 두기·멈춤·실패 처리에서 찾은 문제. 고치기 전에는 실패하고 고친 뒤 통과한다.
+// 앱 안정화: 오래 켜 두기·멈춤·실패 처리에서 찾은 문제. 고치기 전에는 실패하고 고친 뒤 통과한다.
 @Suite struct StabilityTests {
     static func tempDir(_ name: String) -> URL {
         let d = FileManager.default.temporaryDirectory.appendingPathComponent("dropcap-stability-\(name)-\(UUID().uuidString)", isDirectory: true)
@@ -212,6 +212,27 @@ final class SilentTranslate: URLProtocol {
         #expect(await editor.retry.isEmpty)
     }
 
+    // 못 넣은 기사는 메모리에만 있어 앱을 끄면 사라졌다(이미 '본 글'이라 피드에서 다시 오지 않음).
+    // 자료 폴더 파일에 적어 두었다가 다시 켠 뒤 넣고, 다 넣으면 파일을 지운다. 깨진 파일은 빈 것으로
+    @Test func retryOutlivesRestart() async throws {
+        let dir = StabilityTests.tempDir("dbretry")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let db = Database(file: dir.appendingPathComponent("m.sqlite"), busyTimeoutMs: 100)
+        let file = dir.appendingPathComponent("ingest-retry.json")
+        #expect(DBLocker(path: db.file.path).lock(seconds: 1.5))
+        _ = await Editor(db: db, retryFile: file).ingest([Self.item(11), Self.item(12)], followed: [])
+        #expect(FileManager.default.fileExists(atPath: file.path))
+        try await Task.sleep(for: .seconds(2))
+        let again = Editor(db: db, retryFile: file) // 앱을 다시 켬
+        #expect(await again.retry.map(\.id) == ["w11", "w12"])
+        _ = await again.ingest([], followed: [])
+        #expect(db.exists(Self.item(11).key) && db.exists(Self.item(12).key))
+        #expect(await again.retry.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: file.path))
+        try Data("not json".utf8).write(to: file)
+        #expect(await Editor(db: db, retryFile: file).retry.isEmpty)
+    }
+
     // S7-나: 잠금을 기다리는 동안 메인 스레드(화면)가 멈추지 않게 — 메인에서 부른 쓰기는 0.1초만 기다리고 포기한다
     // (실패 처리 시험 F4-나: 8초 잠금에 메인이 6.5초 멈춤 — 사진 주소·점수 쓰기)
     @MainActor @Test func mainThreadWriteDoesNotWaitLong() async throws {
@@ -247,5 +268,50 @@ final class SilentTranslate: URLProtocol {
         #expect(Sections.hits(nfc)["economy"] == 4) // 한국은행·기준금리·금리·코스피(겹친 낱말도 따로 셈 — 예전과 같음)
         #expect(Sections.classify(nfd) == "economy")
         #expect(NewsCategory.classify("오픈AI 새 모델 출시".decomposedStringWithCanonicalMapping) == .model)
+    }
+}
+
+@Suite struct StorySeenPruneTests {
+    // 남은 것 4: 본 스토리마다 '본 보도 수'(storySeen)·요약(digestCache)이 남고 지우지 않아, DB 정리로 스토리가 지워진 뒤에도
+    // 상태 파일·메모리에 끝없이 쌓였다. DB 에 남은 스토리와 팔로우한 스토리 것만 남긴다(묻는 사이에 새로 본 것은 그대로).
+    @MainActor @Test func storySeenDropsDeletedStories() {
+        let file = StabilityTests.tempDir("storyseen").appendingPathComponent("m.sqlite")
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let db = Database(file: file)
+        let now = Date()
+        for c in 0..<3 { db.saveCluster(Database.Cluster(id: "c\(c)", title: "s\(c)", tokens: [], first: now, last: now, size: 2)) }
+        let ids = (0..<1200).map { "c\($0)" } // 500개씩 나눠 묻는 것도
+        let live = db.existingClusters(ids)
+        #expect(live == ["c0", "c1", "c2"])
+        let seen = Dictionary(uniqueKeysWithValues: ids.map { ($0, 2) })
+        var now2 = seen; now2["new"] = 5 // 묻는 사이에 본 스토리
+        let kept = AppModel.prunedStorySeen(now2, asked: Set(ids), live: live, followed: ["c900"])
+        #expect(Set(kept.keys) == ["c0", "c1", "c2", "c900", "new"])
+        let mag = Magazine.shared
+        let saved = mag.digestCache
+        defer { mag.digestCache = saved }
+        mag.digestCache = ["c0": (2, ["a"]), "gone": (3, ["b"])]
+        mag.keepDigests(Set(kept.keys))
+        #expect(Set(mag.digestCache.keys) == ["c0"])
+    }
+}
+
+@Suite struct ArticleMemoryTests {
+    // 남은 것 4: 디스크에서 읽은 기사를 메모리에 넣을 때 순서 목록에 넣지 않아 40개 상한 밖으로 천천히 늘었고,
+    // 읽기 창을 닫아도 기사마다 빈 받아 보기 사전이 남았다.
+    @MainActor @Test func diskHitsStayWithinMemoryLimit() throws {
+        let dir = StabilityTests.tempDir("articles")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let svc = ArticleService(dir: dir)
+        for i in 0..<60 {
+            let link = "https://e.example/a\(i)"
+            let a = PreparedArticle(stage: .done, title: "t\(i)", originalTitle: "t\(i)")
+            try JSONEncoder().encode(a).write(to: svc.file(link))
+            #expect(svc.cached(link)?.title == "t\(i)")
+            let id = svc.observe(link) { _ in }
+            svc.stopObserving(link, id)
+        }
+        #expect(svc.memoryCount <= 40, "메모리 \(svc.memoryCount)개")
+        #expect(svc.listenedLinks == 0)
     }
 }

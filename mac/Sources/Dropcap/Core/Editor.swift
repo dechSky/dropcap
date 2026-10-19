@@ -15,24 +15,43 @@ struct EditContext: Sendable {
 }
 
 actor Editor {
-    static let shared = Editor()
+    static let shared = Editor(retryFile: Store.dir.appendingPathComponent("ingest-retry.json"))
     private let db: Database
+    private let retryFile: URL?
 
-    init(db: Database = .shared) { self.db = db }
+    // retryFile: 못 넣은 기사를 앱을 껐다 켜도 남게 적어 두는 파일(nil 이면 메모리에만 — 시험용)
+    init(db: Database = .shared, retryFile: URL? = nil) {
+        self.db = db
+        self.retryFile = retryFile
+        if let retryFile, let d = try? Data(contentsOf: retryFile), let items = try? JSONDecoder().decode([NewsItem].self, from: d) {
+            retry = Array(items.suffix(Self.retryLimit))
+        }
+    }
 
     // MARK: 받아 넣기
     // DB 에 넣지 못한 기사(디스크 가득·오래 잠김). 앱 상태에는 '본 글'로 남아 피드에서 다시 오지 않으므로 여기 두었다가
-    // 다음 받아 넣기 때 먼저 다시 넣는다(STABILITY.md S7). 끝없이 쌓이지 않게 retryLimit 건까지(오래된 것부터 버림)
+    // 다음 받아 넣기 때 먼저 다시 넣는다. 끝없이 쌓이지 않게 retryLimit 건까지(오래된 것부터 버림)
+    // 앱을 끄면 사라지지 않게 retryFile 에도 적는다 — 비면 파일을 지운다. 파일이 깨졌거나 없으면 빈 것으로
     private(set) var retry: [NewsItem] = []
     static let retryLimit = 3000
+
+    private func keepRetry(_ items: [NewsItem]) {
+        let had = !retry.isEmpty
+        retry = Array(items.suffix(Self.retryLimit))
+        guard let retryFile else { return }
+        if retry.isEmpty {
+            if had || FileManager.default.fileExists(atPath: retryFile.path) { try? FileManager.default.removeItem(at: retryFile) }
+        } else if let d = try? JSONEncoder().encode(retry) {
+            try? d.write(to: retryFile, options: .atomic) // 디스크가 가득이면 못 적을 수 있다(그때는 메모리에만)
+        }
+    }
 
     // 새 기사들을 DB 에 넣고 스토리에 배정한다. 팔로우한 스토리에 붙은 새 보도를 돌려준다.
     func ingest(_ fresh: [NewsItem], followed: Set<String>) -> [(Database.Cluster, NewsItem)] {
         let items = retry + fresh
-        retry = []
         guard !items.isEmpty else { return [] }
         var failed: [NewsItem] = []
-        defer { retry = Array(failed.suffix(Self.retryLimit)) }
+        defer { keepRetry(failed) }
         let since = Date().addingTimeInterval(-7 * 24 * 3600)
         var clusters = db.recentClusters(since: since)   // 최근에 커진 스토리 먼저
         let reps = db.representatives(since: since)       // 스토리마다 대표 기사(가장 최근 보도) — SQL 한 번
@@ -185,22 +204,30 @@ actor Editor {
 
     // 하루가 지나면 그날 호를, 일요일이 지나면 그 주 호를 발행해 지난 호에 남긴다. 지난 호 목록을 돌려준다.
     // 어제 호는 정오까지 새 기사가 오면 다시 엮되, 실린 기사가 같으면 다시 저장하지 않는다(A-21).
+    // 빈 날은 최근 dueDays 일까지 메운다(매거진 채우기로 넣은 지난 기사도 그날 호가 생기게 — 예전엔 1~3일 전만이라 4일 넘은 날은 호가 없었다).
+    // 이미 있는 호는 건너뛰고, 4일 넘은 날은 기사 수만 먼저 세어 없으면 엮지 않는다(확인마다 14일을 다시 엮지 않게)
+    static let dueDays = 14
     func publishDue(_ ctx: EditContext) -> [Issue] {
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
-        for back in stride(from: 3, through: 1, by: -1) {
+        for back in stride(from: Self.dueDays, through: 1, by: -1) {
             guard let day = cal.date(byAdding: .day, value: -back, to: today) else { continue }
             let id = "daily-" + Magazine.dayID(day)
             let refresh = back == 1 && cal.component(.hour, from: Date()) < 12
             let existing = db.issue(id)
             if existing != nil && !refresh { continue }
-            let issue = makeIssue(kind: .daily, from: day.addingTimeInterval(-6 * 3600), to: day.addingTimeInterval(18 * 3600), id: id, ctx: ctx)
+            let from = day.addingTimeInterval(-6 * 3600), to = day.addingTimeInterval(18 * 3600)
+            if back > 3, db.articleCount(from: from, to: to) == 0 { continue }
+            let issue = makeIssue(kind: .daily, from: from, to: to, id: id, ctx: ctx)
             if issue.count > 0, !Self.sameContent(issue, existing) { db.saveIssue(issue) }
         }
-        let weekStart = Magazine.weekRange(containing: today, cal: cal).from
-        let last = Magazine.weekRange(containing: weekStart.addingTimeInterval(-3600), cal: cal)
-        let weekID = "weekly-" + Magazine.weekID(last.from)
-        if !db.hasIssue(weekID) {
+        // 주간: 지난주와 지지난주(채운 기사가 지지난주에 걸칠 수 있음)
+        var weekStart = Magazine.weekRange(containing: today, cal: cal).from
+        for n in 0..<2 {
+            let last = Magazine.weekRange(containing: weekStart.addingTimeInterval(-3600), cal: cal)
+            weekStart = last.from
+            let weekID = "weekly-" + Magazine.weekID(last.from)
+            if db.hasIssue(weekID) || (n > 0 && db.articleCount(from: last.from, to: last.to) == 0) { continue }
             let issue = makeIssue(kind: .weekly, from: last.from, to: last.to, id: weekID, ctx: ctx)
             if issue.count > 0 { db.saveIssue(issue) }
         }
@@ -245,7 +272,9 @@ actor Editor {
     func saveImageScore(_ url: String, _ s: PhotoQuality.Score) { db.saveImageScore(url, s) }
 
     func search(_ q: String, filter: SourceFilter = SourceFilter()) -> [NewsItem] { filter.visible(db.search(q)) }
+    func missing(_ keys: [String]) -> Set<String> { Set(keys).subtracting(db.existing(keys)) }
     func recentItems(since: Date, limit: Int) -> [Database.StoredItem] { db.items(from: since, limit: limit) }
+    func existingStories(_ ids: [String]) -> Set<String> { db.existingClusters(ids) }
 
     // 알림 판단용: 기사마다 스토리 id 와 같은 소식을 다룬 국내·해외 출처 수(숨긴 출처 제외)
     func storyInfo(_ items: [NewsItem], filter: SourceFilter) -> [String: (story: String?, coverage: Coverage)] {

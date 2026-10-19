@@ -29,7 +29,7 @@ import Testing
         #expect(!FeedService.sameSite("not a url", "https://feeds.example.org/x"))
         #expect(FeedService.siteKey("feeds.bbci.co.uk") == "bbci.co.uk")
         #expect(FeedService.siteKey("10.0.0.1") == "10.0.0.1")
-        // review-3 S1: 공용 호스팅은 하위 도메인 하나가 한 사이트
+        // 공용 호스팅은 하위 도메인 하나가 한 사이트
         #expect(!FeedService.sameSite("https://b.substack.com/p/x", "https://a.substack.com/feed"))
         #expect(FeedService.sameSite("https://a.substack.com/p/x", "https://a.substack.com/feed"))
         #expect(FeedService.sameSite("https://WWW.A.Substack.com/p/x", "https://a.substack.com/feed"))
@@ -52,7 +52,7 @@ import Testing
         #expect(ArticleService.usableFeedBody(nil, link: "https://arstechnica.com/a", sourceURL: "https://feeds.arstechnica.com/x") == nil)
     }
 
-    // review-3 시험 빈틈 T2: 읽기 창(ArticleService.run 이 부르는 feedBody(for:))이 피드 기록 DB 에 남은 다른 사이트 본문을 쓰지 않는다
+    // 읽기 창(ArticleService.run 이 부르는 feedBody(for:))이 피드 기록 DB 에 남은 다른 사이트 본문을 쓰지 않는다
     @Test @MainActor func readerIgnoresStoredForeignFeedBody() throws {
         let d = FileManager.default.temporaryDirectory.appendingPathComponent("dropcap-m15-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
@@ -74,7 +74,7 @@ import Testing
         #expect(ArticleService.feedBody(for: own, db: db, sourceURL: { _ in nil }) == nil) // 출처를 모르면 쓰지 않음
     }
 
-    // review-3 시험 빈틈 T3: 글자 검사만이 아니라 실제로 — 세 판의 추출 스크립트(맥 script · 윈도우 extract.js · 리눅스 SCRIPT)를
+    // 글자 검사만이 아니라 실제로 — 세 판의 추출 스크립트(맥 script · 윈도우 extract.js · 리눅스 SCRIPT)를
     // 스크립트·그림이 켜진 WebKit 에서 돌려도 여러 덩어리 모으기가 그림 받기·onerror 를 일으키지 않는다. 고치기 전 꼴(document.createElement)은 일으킴(대조)
     @Test @MainActor func gatheringDoesNotLoadImagesInWebKit() async throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()

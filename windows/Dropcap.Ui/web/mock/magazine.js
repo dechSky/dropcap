@@ -141,11 +141,18 @@ if (!(window.chrome && window.chrome.webview)) {
             { id: 'daily-2026-10-12', title: '10월 12일 일요일 호', weekly: false },
             { id: 'daily-2026-10-11', title: '10월 11일 토요일 호', weekly: false, thin: true, count: 3 },
             { id: 'weekly-2026-W40', title: '주간 · 10월 4일–10월 10일', weekly: true },
-          ] };
+          ],
+          groups: [
+            { id: 'this', title: '지난 호 · 이번 주', folded: false, emptyDays: 0, rows: [{ id: 'daily-2026-10-12', title: '10월 12일 일요일 호', weekly: false }] },
+            { id: 'last', title: '지난주', folded: false, emptyDays: 2, rows: [
+              { id: 'daily-2026-10-11', title: '10월 11일 토요일 호', weekly: false, thin: true, count: 3, reason: '기록 적음 — 앱을 쓰기 전이거나 켠 출처가 적던 때라 모인 소식이 3건뿐입니다' },
+              { id: 'weekly-2026-W40', title: '주간 · 10월 4일–10월 10일', weekly: true }] },
+          ],
+          checking: false, lastCheck: '마지막 확인 3분 전' };
       case 'issue':
         if (a.sort) localStorage.magSort = a.sort;
         if (a.source === 'week') return { ...issue('주간 · 10월 6일–10월 13일', true), cover: undefined, sections: [], count: 0, sectionCount: 0, chips: [],
-          empty: { preparing: true, title: '첫 호를 엮는 중…', sub: '구독한 출처에서 최근 사흘 소식을 모으고 번역하고 있어요. 잠시면 됩니다.' }, preparing: true };
+          empty: { preparing: true, title: '첫 호를 엮는 중…', sub: '구독한 출처에서 최근 일주일 소식을 모으고 번역하고 있어요. 잠시면 됩니다.' }, preparing: true };
         // 분야 지면(M-25): 그 분야만으로 따로 엮은 호 — 표지도 그 분야, 칩은 AI 하위 칩만(건수 합 = 실린 수)
         if (a.source.startsWith('section:')) {
           const id = a.source.slice(8);

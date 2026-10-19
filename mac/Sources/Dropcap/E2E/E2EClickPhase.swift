@@ -127,6 +127,16 @@ enum E2EClickPhase {
         sv.reflectScrolledClipView(sv.contentView)
     }
 
+    // 가장 긴 스크롤 영역을 맨 위에서 y 만큼 내린 자리로
+    static func scrollBy(_ w: NSWindow, _ y: CGFloat) {
+        func all(_ v: NSView) -> [NSScrollView] { (v as? NSScrollView).map { [$0] } ?? [] + v.subviews.flatMap(all) }
+        guard let cv = w.contentView, let sv = all(cv).max(by: { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }),
+              let doc = sv.documentView else { return }
+        let maxY = max(0, doc.frame.height - sv.contentView.bounds.height), d = min(y, maxY)
+        sv.contentView.scroll(to: NSPoint(x: 0, y: doc.isFlipped ? d : maxY - d))
+        sv.reflectScrolledClipView(sv.contentView)
+    }
+
     static func menuBar(_ r: E2ERun, _ sw: E2EClickSweep) async {
         for (cfg, bottom) in [("위", false), ("아래", true)] {
             await sw.sweep("상단바", config: cfg, window: { menuPanel() }, prepare: {
@@ -154,6 +164,9 @@ enum E2EClickPhase {
             if magWindow() == nil { MagazineController.open(); await r.sleep(4) }
             guard let w = magWindow() else { return }
             if let size, w.frame.size != size { w.setContentSize(size); await r.sleep(0.5) }
+            // 지면 안에 제 상태가 있는 스크랩북(고른 폴더·새 폴더 알림)은 다른 지면을 거쳐 새로 그린다 — 앞 단추의 누름이 바꾼 폴더가
+            // 다음 단추의 기준이 되면 '스크랩 0'·'새 폴더'·스크랩 카드가 빈 폴더에서 검사돼 실패했다(범위 순회에서만 — 전체 순회는 칩이 '같은 형'이라 누르지 않음)
+            if page == .scrapbook { MagazineController.open(page: .today); await r.sleep(0.4) }
             MagazineController.open(page: page)
             await r.sleep(0.8)
             scroll(w, bottom: bottom)
@@ -310,13 +323,131 @@ enum E2EClickPhase {
     // MARK: 설정
     static func settings(_ r: E2ERun, _ sw: E2EClickSweep) async {
         let win: () -> NSWindow? = { NSApp.windows.first { $0.isVisible && $0.toolbar?.items.contains { $0.label == "거르기" } == true } }
-        for tab in ["일반", "분야", "구독", "거르기", "스크랩북"] {
-            await sw.sweep("설정-\(tab)", config: "기본", window: win, prepare: {
-                if win() == nil { _ = await E2ESettings.settingsWindow(r) }
-                if let w = win() { _ = await E2ESettings.selectTab(w, tab) }
-            }, skip: { t in t.role == "AXButton" && ["해지", "모두 지우기", "지우기"].contains(t.label) })
+        // 구독 탭 스냅샷(보기마다 위·조금 아래): 출처 목록 정리 전후 비교용(shots/sources-*.png)
+        if win() == nil { _ = await E2ESettings.settingsWindow(r) }
+        if let w = win(), await E2ESettings.selectTab(w, "구독") {
+            for layout in SourceDirectory.Layout.allCases {
+                UserDefaults.standard.set(layout.rawValue, forKey: SourceDirectory.layoutKey)
+                await r.sleep(1.2)
+                scroll(w, bottom: false); await r.sleep(0.4)
+                r.note("[클릭] 구독 스냅샷 \(r.windowShot({ $0 === w }, "sources-\(layout.rawValue)-top"))")
+                scrollBy(w, 900); await r.sleep(0.6)
+                r.note("[클릭] 구독 스냅샷 \(r.windowShot({ $0 === w }, "sources-\(layout.rawValue)-900"))")
+            }
+            UserDefaults.standard.removeObject(forKey: SourceDirectory.layoutKey)
+            scroll(w, bottom: false)
         }
+        await sourcesTab(r, sw, win)
+        for tab in ["일반", "분야", "구독", "거르기", "스크랩북"] {
+            // 구독 탭은 보기(매체별·분야별·지역별)마다 훑는다
+            // 구독 탭: 누를 때마다 켠 출처를 처음대로(모두 켜기·스위치가 다음 단추의 이름·자리를 바꾼다), 못 찾으면 창을 새로(펼친 묶음 비움)
+            let enabled0 = r.model.state.enabled
+            for layout in tab == "구독" ? SourceDirectory.Layout.allCases.map(Optional.some) : [nil] {
+                await sw.sweep("설정-\(tab)", config: layout?.label ?? "기본", window: win, prepare: {
+                    if let layout {
+                        UserDefaults.standard.set(layout.rawValue, forKey: SourceDirectory.layoutKey)
+                        if r.model.state.enabled != enabled0 {
+                            let ids = Set(enabled0.keys).union(r.model.state.enabled.keys)
+                            r.model.setEnabled(ids: ids.filter { enabled0[$0] == true }, true)
+                            r.model.setEnabled(ids: ids.filter { enabled0[$0] != true }, false)
+                            await r.sleep(0.4)
+                        }
+                    }
+                    if win() == nil { _ = await E2ESettings.settingsWindow(r) }
+                    if let w = win() { _ = await E2ESettings.selectTab(w, tab) }
+                }, skip: { t in t.role == "AXButton" && ["해지", "모두 지우기", "지우기"].contains(t.label) },
+                   reset: layout == nil ? nil : { win()?.close(); await r.sleep(0.5) })
+            }
+        }
+        UserDefaults.standard.removeObject(forKey: SourceDirectory.layoutKey)
         win()?.close()
+    }
+
+    // MARK: 설정 › 구독: 보기 고르기 · 묶음 펼치기 · 찾기(걸린 묶음 자동 펼침)
+    static func sourcesTab(_ r: E2ERun, _ sw: E2EClickSweep, _ win: () -> NSWindow?) async {
+        let screen = "설정-구독"
+        func row(_ label: String, _ role: String, _ ok: Bool, _ effect: String) {
+            sw.append(.init(screen: screen, config: "기본", label: label, role: role, result: ok ? "통과" : "실패", effect: effect, hit: "-", at: "-"))
+        }
+        // 손쉬운 사용 나무의 글(이름·값) 전부
+        func texts(_ w: NSWindow) -> [String] {
+            var out: [String] = []
+            func walk(_ e: Any, _ depth: Int) {
+                guard depth < 40, let el = e as? NSAccessibilityElementProtocol else { return }
+                let o = el as AnyObject
+                let n = E2EClickSweep.name(o)
+                if !n.isEmpty { out.append(n) }
+                for c in E2EClickSweep.kids(o) { walk(c, depth + 1) }
+            }
+            walk(w, 0)
+            return out
+        }
+        let key = SourceDirectory.layoutKey
+        UserDefaults.standard.set(SourceDirectory.Layout.media.rawValue, forKey: key)
+        if win() == nil { _ = await E2ESettings.settingsWindow(r) }
+        guard let w = win(), await E2ESettings.selectTab(w, "구독") else {
+            row("구독 탭", "-", false, "설정 창·탭을 찾지 못함"); return
+        }
+        await r.sleep(1.2)
+        _ = sw.targets(w); await r.sleep(1.0) // 첫 요청에 나무를 만들기 시작한다
+
+        // 1) 보기 고르기: 분할 칸(NSSegmentedControl)을 고르면 기억값이 바뀌고 묶음 이름이 그 보기의 것으로
+        let seg = E2ESettings.all(w.contentView, NSSegmentedControl.self).first { c in
+            (0..<c.segmentCount).contains { c.label(forSegment: $0) == SourceDirectory.Layout.section.label }
+        }
+        for layout in [SourceDirectory.Layout.section, .region, .media] {
+            let i = seg.flatMap { c in (0..<c.segmentCount).first { c.label(forSegment: $0) == layout.label } }
+            if let seg, let i { seg.selectedSegment = i; _ = seg.sendAction(seg.action, to: seg.target); await r.sleep(1.0) }
+            let saved = UserDefaults.standard.string(forKey: key) ?? "(없음)"
+            let shown = texts(w)
+            let expect = layout == .section ? "경제" : layout == .region ? "해외" : "연합뉴스"
+            let ok = i != nil && saved == layout.rawValue && shown.contains(expect)
+            row("보기 고르기 '\(layout.label)'", "AXRadioGroup", ok,
+                i == nil ? "칸을 찾지 못함" : "기억값 \(saved) · 묶음 '\(expect)' \(shown.contains(expect) ? "보임" : "안 보임")")
+            r.note("[클릭] 구독 보기 \(r.windowShot({ $0 === w }, "sources-pick-\(layout.rawValue)"))")
+        }
+
+        // 2) 묶음 펼치기: 보이는 맨 위 묶음 줄을 손쉬운 사용 누름(VoiceOver 길)·창 직접 클릭으로 번갈아 펼치고 접는다 → 출처 줄(알림 단추) 수.
+        //    누름이 묶음을 켜면 안 된다(전에는 줄 안 '모두 켜기'가 같이 눌림)
+        let rows = { texts(w).filter { $0 == "알림" }.count }
+        let group = { sw.targets(w).filter { $0.role == "AXDisclosureTriangle" && $0.label.contains("켬") }.max { $0.frame.maxY < $1.frame.maxY } }
+        if let g = group() {
+            let name = g.label.components(separatedBy: ", ").dropFirst().first ?? g.label
+            let on0 = r.model.state.enabled
+            var n = rows()
+            for (i, direct) in [false, true, true, false].enumerated() {
+                guard let t = sw.targets(w).first(where: { $0.role == "AXDisclosureTriangle" && $0.label.contains(", \(name), ") }) ?? group() else { break }
+                if direct { sw.directClick(w, NSPoint(x: t.frame.minX + 120, y: t.frame.midY)) } else { _ = await sw.press(w, t) }
+                await r.sleep(0.8)
+                let m = rows(), open = i % 2 == 0
+                if i == 0 { r.note("[클릭] 구독 묶음 펼침 \(r.windowShot({ $0 === w }, "sources-expand"))") }
+                let kept = r.model.state.enabled == on0
+                row("묶음 \(open ? "펼치기" : "접기")(\(direct ? "줄 직접 클릭" : "누름") · '\(name)')", t.role, (open ? m > n : m < n) && kept,
+                    "출처 줄 \(n) → \(m)\(kept ? "" : " · 켜짐이 바뀜(누르면 안 됨)")")
+                n = m
+            }
+        } else {
+            row("묶음 펼치기", "AXDisclosureTriangle", false, "보이는 묶음 줄을 찾지 못함")
+        }
+
+        // 3) 찾기: '연합뉴스 경제' → 걸린 수 '…곳 중 …곳' · 그 묶음이 저절로 펼쳐져 짧은 이름 '경제' 줄이 보임
+        let field = E2ESettings.all(w.contentView, NSTextField.self).first {
+            $0.isEditable && (($0.placeholderString ?? $0.placeholderAttributedString?.string) ?? "").hasPrefix("출처 찾기")
+        }
+        if let field, E2ESettings.type(field, "연합뉴스 경제", in: w) {
+            await r.sleep(1.0)
+            let shown = texts(w)
+            let count = shown.first { $0.contains("곳 중") } ?? "(없음)"
+            let expanded = shown.contains("경제")
+            r.note("[클릭] 구독 찾기 \(r.windowShot({ $0 === w }, "sources-search"))")
+            row("찾기 칸 '연합뉴스 경제'", "AXTextField", count != "(없음)" && expanded, "걸린 수 '\(count)' · 묶음 자동 펼침 \(expanded ? "O" : "X")")
+            _ = E2ESettings.type(field, "", in: w); await r.sleep(0.6)
+            row("찾기 지우기", "AXTextField", !texts(w).contains { $0.contains("곳 중") }, "걸린 수 글 사라짐")
+            w.makeFirstResponder(nil)
+        } else {
+            row("찾기 칸", "AXTextField", false, "찾기 칸을 찾지 못함")
+        }
+        UserDefaults.standard.removeObject(forKey: key)
     }
 
     // MARK: 물방울

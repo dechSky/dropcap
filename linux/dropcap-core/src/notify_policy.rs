@@ -1,4 +1,4 @@
-// 분야별 알림 정책(맥 Core/NotifyPolicy.swift · docs/research/COMPETITIVE.md (다)-3).
+// 분야별 알림 정책(맥 Core/NotifyPolicy.swift).
 // 매거진에는 전부 싣고, 물방울은 분야 모드·중요도 문턱·하루 상한을 모두 지날 때만 떨어뜨린다.
 use crate::sections;
 use chrono::{DateTime, Local, Timelike, Utc};

@@ -5,7 +5,7 @@ import Foundation
 // 시험 장치(M9): 디버그 빌드(swift build·swift test·e2e·clicksweep)에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
 #if DEBUG
 
-// 시작 시간·첫 화면 재기(mac/STABILITY.md · scripts/e2e/startup.sh). DROPCAP_TEST_E2E_PHASE=probe 일 때만.
+// 시작 시간·첫 화면 재기(scripts/e2e/startup.sh). DROPCAP_TEST_E2E_PHASE=probe 일 때만.
 // 켠 순간(프로세스 시작) → 앱 준비(didFinishLaunching) → 첫 확인 끝까지, 그동안 메인 스레드 최장 지연,
 // 그 뒤 매거진 창·스토리 화면을 열 때 메인 최장 지연을 probe.json 에 남긴다. 바깥 스크립트가 창을 여는 동안 sample 을 뜬다.
 @MainActor

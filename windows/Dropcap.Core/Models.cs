@@ -110,7 +110,23 @@ public sealed record NewsItem
     [JsonIgnore] public ItemKind ItemKind => ItemKinds.Parse(Kind);
     [JsonIgnore] public string Key => $"{SourceId}|{Id}";
     [JsonIgnore] public string DisplayTitle => TitleKo ?? Title;
-    [JsonIgnore] public NewsCategory Category => Categories.ForKind(ItemKind) ?? Categories.Classify($"{Title} {TitleKo ?? ""} {Summary}");
+    // 분류(낱말 찾기)는 한 번만 — 매거진·스토리가 같은 기사의 분류를 여러 번 묻는다.
+    // with 로 만든 사본에도 이 기억이 복사되므로, 잴 때 쓴 글(참조)이 그대로일 때만 기억을 쓴다
+    [JsonIgnore]
+    public NewsCategory Category
+    {
+        get
+        {
+            var c = categoryMemo;
+            if (c is not null && ReferenceEquals(c.Title, Title) && ReferenceEquals(c.TitleKo, TitleKo) && ReferenceEquals(c.Summary, Summary) && ReferenceEquals(c.Kind, Kind))
+                return c.Value;
+            var v = Categories.ForKind(ItemKind) ?? Categories.Classify($"{Title} {TitleKo ?? ""} {Summary}");
+            categoryMemo = new CategoryMemo(Title, TitleKo, Summary, Kind, v);
+            return v;
+        }
+    }
+    private sealed record CategoryMemo(string Title, string? TitleKo, string Summary, string? Kind, NewsCategory Value);
+    private CategoryMemo? categoryMemo;
 
     [JsonIgnore]
     public string Initial

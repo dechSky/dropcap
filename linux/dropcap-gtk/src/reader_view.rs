@@ -44,7 +44,7 @@ struct Model {
     engine: String,
     cover: Option<String>, // 표지 사진(피드 → 매거진 기록 → 기사 머리 대표 사진)
     paywalled: bool,                // 맛보기만 나옴(유료벽 뒤, G-14)
-    partial: bool,                  // 본문 일부만 가져왔을 수 있음(READER-CUT.md A)
+    partial: bool,                  // 본문 일부만 가져왔을 수 있음
     paywall: Option<PaywallKind>,   // 출처가 유료로 알려졌거나 자주 막히는 곳
     alternatives: Vec<NewsItem>,    // 같은 스토리의 무료 보도(G-15)
     open_originals: std::collections::HashSet<usize>, // 원문을 펼친 문단(번역 보기에서 문단마다, 블록 번호)
@@ -724,7 +724,7 @@ impl ReaderWindow {
             let m = self.model.borrow();
             (m.phase, m.paywalled, m.partial)
         };
-        // 맛보기면 본문 바로 위에, 무료 보도가 없어도 늘(무료 보도 상자와 따로 — READER-CUT.md C②)
+        // 맛보기면 본문 바로 위에, 무료 보도가 없어도 늘(무료 보도 상자와 따로)
         if paywalled && matches!(phase, Phase::Translating | Phase::Done) {
             let b = self.teaser_banner();
             b.set_margin_top(18);

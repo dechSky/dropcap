@@ -1,12 +1,12 @@
 // 여러 창이 함께 쓰는 작은 부품: 출처 글자 원형, 안전한 사진 칸, 칩, 글자.
 use crate::app::{bg, ui};
 use crate::theme;
+use dropcap_core::byte_cache::{self, ByteLru};
 use dropcap_core::category::NewsCategory;
 use dropcap_core::models::{relative_time, NewsItem};
 use gtk::prelude::*;
 use gtk::{gdk, glib, pango};
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -100,27 +100,19 @@ pub fn icon(name: &str, size: i32) -> gtk::Image {
     i
 }
 
-// MARK: 사진(S-07): 안전 로더로만. 메모리에는 160장까지.
+// MARK: 사진(S-07): 안전 로더로만. 메모리에는 풀린 크기 64MB 까지(최근 사용 순 — 맥 ImageMemoryCache).
+// 예전엔 장 수(160장)로만 묶어 1400px RGBA 텍스처만으로 1GB 가까이 될 수 있었다.
 thread_local! {
-    static TEXTURES: RefCell<(HashMap<String, gdk::Texture>, Vec<String>)> = RefCell::new((HashMap::new(), vec![]));
+    static TEXTURES: RefCell<ByteLru<gdk::Texture>> = RefCell::new(ByteLru::new(byte_cache::TEXTURE_LIMIT));
 }
 
 pub fn cached_texture(url: &str) -> Option<gdk::Texture> {
-    TEXTURES.with(|t| t.borrow().0.get(url).cloned())
+    TEXTURES.with(|t| t.borrow_mut().get(url))
 }
 
 fn remember_texture(url: &str, tex: &gdk::Texture) {
-    TEXTURES.with(|t| {
-        let mut t = t.borrow_mut();
-        if !t.0.contains_key(url) {
-            t.1.push(url.to_string());
-            if t.1.len() > 160 {
-                let old = t.1.remove(0);
-                t.0.remove(&old);
-            }
-        }
-        t.0.insert(url.to_string(), tex.clone());
-    });
+    let cost = byte_cache::rgba_bytes(tex.width(), tex.height());
+    TEXTURES.with(|t| t.borrow_mut().insert(url, tex.clone(), cost));
 }
 
 // 사진 하나를 안전 로더로 받아 텍스처로(메인 루프에서 cb)

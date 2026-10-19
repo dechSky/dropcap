@@ -1,7 +1,7 @@
 import Foundation
 import WebKit
 
-// 본문 완전성 점검(mac/READER-CUT.md): 우리가 추린 본문이 원문 페이지에 보이는 본문을 얼마나 담았나.
+// 본문 완전성 점검: 우리가 추린 본문이 원문 페이지에 보이는 본문을 얼마나 담았나.
 // ReadSweep 에 DROPCAP_TEST_READSWEEP_FULL=1 을 함께 주면 기사마다 원문을 스크립트까지 다 띄워(그림·영상만 막음)
 // Readability 와 다른 방법(itemprop·article·문단이 몰린 곳)으로 본문 영역을 골라 글자 수를 재고, 우리 글에 없는 문단을 센다.
 // 기록에는 숫자만 남긴다(기사 글은 남기지 않음).

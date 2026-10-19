@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import Dropcap
 
-// 성능·저장·같은 소식 통합·키보드(PERF-KEYS.md). 바깥 서버·실제 기록 없이 돈다.
+// 성능·저장·같은 소식 통합·키보드. 바깥 서버·실제 기록 없이 돈다.
 
 private func news(_ title: String, _ source: String, tier: String = "press", hoursAgo: Double = 1, ko: String? = nil) -> NewsItem {
     NewsItem(id: "\(source)-\(title.hashValue)", title: title, titleKo: ko, link: "https://\(source).com/\(abs(title.hashValue))",

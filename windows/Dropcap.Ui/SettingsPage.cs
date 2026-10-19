@@ -74,14 +74,30 @@ public sealed class SettingsPage(AppModel model, IPlatform platform, Scrapbook? 
         return o;
     }
 
-    public object SourceRow(Source s, bool removable)
+    // 유료 자물쇠 설명(맥 sourceRow 와 같은 문구). 없거나 모르는 값이면 무료로 봄
+    public static string? PaywallHelp(string? paywall) => paywall switch
+    {
+        "hard" => "구독해야 읽을 수 있음",
+        "metered" => "한 달 몇 건 무료",
+        _ => null,
+    };
+
+    // media: 매체 묶음 안에서 그릴 때 매체 이름(짧은 이름을 위해). 분야 칩·국내/해외·유료 자물쇠는 설정 › 구독 정리(SourceDirectory)
+    public object SourceRow(Source s, bool removable, string? media = null)
     {
         var enabled = model.State.Enabled.GetValueOrDefault(s.Id);
         var notify = model.Notifies(s.Id);
+        var paywallHelp = PaywallHelp(s.Paywall);
         return new
         {
             id = s.Id,
             name = s.Name,
+            shortName = media is null ? s.Name : SourceDirectory.ShortName(s, media),
+            section = s.SectionId,
+            sectionName = Sections.Name(s.SectionId),
+            region = SourceDirectory.RegionLabel(s),
+            paywall = paywallHelp is null ? null : s.Paywall,
+            paywallHelp,
             initial = Letter(s.Name, dropThe: true),
             color = ItemView.SafeColor(s.Color),
             kind = s.ItemKind.Raw(),
@@ -174,6 +190,87 @@ public sealed class SettingsPage(AppModel model, IPlatform platform, Scrapbook? 
         };
     }
 
+    // 설정 › 구독 정리(SourceDirectory): 찾기·상태는 창이 열려 있는 동안만, 보기(매체별·분야별·지역별)는 기억(prefs)
+    public const string LayoutKey = "sourceLayout";
+    private string sourceQuery = "";
+    private SourceDirectory.Status sourceStatus = SourceDirectory.Status.All;
+    public SourceDirectory.Layout SourceLayout => SourceDirectory.ParseLayout(Prefs.Get(LayoutKey, "media")) ?? SourceDirectory.Layout.Media;
+
+    // view·ready 가 함께 보낸 찾기·보기·상태를 받는다(보내지 않은 것은 그대로). 모르는 값은 오류
+    public void ApplyDirectory(JsonObject a)
+    {
+        if (a.ContainsKey("query")) sourceQuery = a.Str("query");
+        if (a.ContainsKey("layout"))
+        {
+            var l = SourceDirectory.ParseLayout(a.Str("layout")) ?? throw new ArgumentOutOfRangeException("layout");
+            if (l != SourceLayout) Prefs.Set(LayoutKey, l.Raw());
+        }
+        if (a.ContainsKey("status")) sourceStatus = SourceDirectory.ParseStatus(a.Str("status")) ?? throw new ArgumentOutOfRangeException("status");
+    }
+
+    public object DirectoryView()
+    {
+        var all = Resources.Config.Sources;
+        var custom = model.State.CustomSources;
+        bool On(string id) => model.State.Enabled.GetValueOrDefault(id);
+        var layout = SourceLayout;
+        var shown = SourceDirectory.Filter(all, sourceQuery, sourceStatus, On);
+        var mine = SourceDirectory.Sorted(SourceDirectory.Filter(custom, sourceQuery, sourceStatus, On));
+        var catalog = ChannelCatalog.All.Where(s => SourceDirectory.Matches(s, sourceQuery)).ToList();
+        var searching = SourceDirectory.Fold(sourceQuery).Length > 0;
+        var groups = SourceDirectory.Groups(all, shown, layout, On);
+        return new
+        {
+            query = sourceQuery,
+            searching,
+            layout = layout.Raw(),
+            layouts = SourceDirectory.Layouts.Select(l => new { id = l.Raw(), label = l.Label() }).ToList(),
+            status = sourceStatus.Raw(),
+            statuses = SourceDirectory.Statuses.Select(x => new { id = x.Raw(), label = x.Label() }).ToList(),
+            summary = SourceDirectory.SummaryText(all.Concat(custom), On),
+            count = SourceDirectory.CountText(shown.Count + mine.Count, all.Count + custom.Count),
+            empty = shown.Count == 0 && mine.Count == 0 && catalog.Count == 0,
+            emptyText = "찾는 출처가 없습니다. 이름·주소를 다시 확인하거나 위 '채널 추가'에 주소를 넣어 보세요.",
+            // 내 채널: 걸린 것이 있거나, 거르지 않을 때(비어 있으면 안내)
+            mine = new
+            {
+                show = mine.Count > 0 || (!searching && sourceStatus == SourceDirectory.Status.All),
+                label = $"내 채널 {custom.Count}",
+                rows = mine.Select(s => SourceRow(s, removable: true)).ToList(),
+            },
+            groups = groups.Select(g =>
+            {
+                var allOn = g.Sources.All(s => On(s.Id));
+                var media = layout == SourceDirectory.Layout.Media ? g.Title : null;
+                return new
+                {
+                    id = g.Id,
+                    title = g.Title,
+                    on = g.On,
+                    total = g.Total,
+                    countLabel = $"{g.On}/{g.Total} 켬",
+                    single = layout == SourceDirectory.Layout.Media && g.Total == 1, // 피드가 하나뿐인 매체는 묶음 없이 그냥 줄
+                    allOn,
+                    bulk = allOn ? "모두 끄기" : "모두 켜기",
+                    bulkHelp = g.Sources.Count < g.Total ? $"보이는 {g.Sources.Count}곳에만" : $"이 묶음 {g.Total}곳 모두",
+                    ids = g.Sources.Select(s => s.Id).ToList(), // 묶음 켜기·끄기는 보이는(거른) 것에만
+                    initial = Letter(g.Title, dropThe: true),
+                    color = ItemView.SafeColor(g.Sources[0].Color),
+                    rows = g.Sources.Select(s => SourceRow(s, removable: false, media)).ToList(),
+                };
+            }).ToList(),
+            // 추천 채널: 맨 아래 접힌 묶음(찾기 적용, 찾는 중이면 펼침)
+            recommended = new
+            {
+                label = $"추천 채널 {catalog.Count}",
+                count = catalog.Count,
+                groups = ChannelCatalog.Groups
+                    .Select(g => new { label = g, rows = catalog.Where(s => s.Group == g).Select(CatalogRow).ToList() })
+                    .Where(g => g.rows.Count > 0).ToList(),
+            },
+        };
+    }
+
     public object View()
     {
         var st = model.State.Settings;
@@ -232,6 +329,7 @@ public sealed class SettingsPage(AppModel model, IPlatform platform, Scrapbook? 
                     label = $"추천 · {g}",
                     rows = ChannelCatalog.All.Where(s => s.Group == g).Select(CatalogRow).ToList(),
                 }).ToList(),
+                directory = DirectoryView(),   // 설정 › 구독 정리: 찾기·보기·상태가 반영된 목록(화면은 이것을 그림)
             },
             filters = new
             {
@@ -350,9 +448,10 @@ public sealed class SettingsPage(AppModel model, IPlatform platform, Scrapbook? 
         switch (cmd)
         {
             case "ready":
+                ApplyDirectory(a);
                 await Summarizer.AvailableAsync(); // P-04: Ollama 가 켜져 있는지(1.5초 안에)
                 return View();
-            case "view": return View();
+            case "view": ApplyDirectory(a); return View();
             case "set": Set(a.Str("key"), a); return null;
             case "keywords":
                 var must = SplitKeywords(a.Str("must"));
@@ -381,6 +480,16 @@ public sealed class SettingsPage(AppModel model, IPlatform platform, Scrapbook? 
                 return null;
             case "setNotify": model.SetNotify(Known(a.Str("id")).Id, a.Bool("on")); return null;
             case "setEnabled": model.SetEnabled(Known(a.Str("id")).Id, a.Bool("on")); return null;
+            // 묶음 모두 켜기·끄기: 모르는 id 가 하나라도 있으면 아무것도 바꾸지 않는다. 저장·확인은 한 번
+            case "setEnabledMany":
+            {
+                var ids = (a["ids"] as JsonArray ?? throw new ArgumentException("ids"))
+                    .Select(n => n is JsonValue v && v.TryGetValue<string>(out var id) ? id : throw new ArgumentException("ids")).ToList();
+                var known = model.AllSources.Select(x => x.Id).ToHashSet();
+                if (ids.Any(id => !known.Contains(id))) throw new KeyNotFoundException("출처를 찾지 못함");
+                model.SetEnabled(ids, a.Bool("on"));
+                return null;
+            }
             // G-13: 분야별 정책·숨긴 출처 되돌리기·관심 분야 다시 고르기
             case "setPolicy": SetPolicy(a.Str("id"), a.Str("key"), a); return null;
             case "unhide":

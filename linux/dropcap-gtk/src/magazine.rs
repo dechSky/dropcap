@@ -51,6 +51,9 @@ pub struct Magazine {
     current_scroll: RefCell<Option<gtk::ScrolledWindow>>,
     serial: Cell<u64>,
     syncing: Cell<bool>,
+    toggled: RefCell<std::collections::HashSet<String>>, // 지난 호 묶음 중 기본(이번 주·지난주 펼침, 달별 접힘)과 다르게 연 것·접은 것
+    refresh: gtk::Button,    // 머리 막대 새로 고침(확인 중엔 눌리지 않음)
+    last_check: gtk::Label,  // '마지막 확인 n분 전'
 }
 
 thread_local! {
@@ -150,6 +153,16 @@ fn build(first: Page) -> Rc<Magazine> {
     let tv = adw::ToolbarView::new();
     let hb = adw::HeaderBar::new();
     hb.set_title_widget(Some(&gtk::Label::new(None)));
+    // 새로 고침: 머리 막대 오른쪽. 예전엔 숨은 Ctrl+R 뿐이라 매거진에서 새로 고칠 수 있는지 보이지 않았다
+    let refresh = gtk::Button::from_icon_name("view-refresh-symbolic");
+    refresh.set_tooltip_text(Some("새로 고침 — 지금 확인 (Ctrl+R)"));
+    refresh.update_property(&[gtk::accessible::Property::Label("새로 고침")]);
+    refresh.connect_clicked(|_| ui().core.check_now());
+    let last_check = gtk::Label::new(None);
+    last_check.add_css_class("dim-label");
+    last_check.add_css_class("caption");
+    hb.pack_end(&refresh);
+    hb.pack_end(&last_check);
     tv.add_top_bar(&hb);
     tv.set_content(Some(&body));
     window.set_content(Some(&tv));
@@ -164,7 +177,22 @@ fn build(first: Page) -> Rc<Magazine> {
         current_scroll: RefCell::new(None),
         serial: Cell::new(0),
         syncing: Cell::new(false),
+        toggled: RefCell::new(Default::default()),
+        refresh,
+        last_check,
     });
+    m.update_refresh();
+    {
+        // '마지막 확인 n분 전'을 30초마다 다시 셈(창이 닫히면 멈춤)
+        let weak = Rc::downgrade(&m);
+        glib::timeout_add_seconds_local(30, move || match weak.upgrade() {
+            Some(m) => {
+                m.update_refresh();
+                glib::ControlFlow::Continue
+            }
+            None => glib::ControlFlow::Break,
+        });
+    }
     MAG.with(|x| *x.borrow_mut() = Some(m.clone()));
     m.fill_sidebar();
     {
@@ -182,11 +210,25 @@ fn build(first: Page) -> Rc<Magazine> {
             }
         });
     }
-    m.sidebar.connect_row_activated(|_, row| {
-        if row.widget_name() == SETTINGS_ROW {
-            crate::settings::open(None);
-        }
-    });
+    {
+        let weak = Rc::downgrade(&m);
+        m.sidebar.connect_row_activated(move |_, row| {
+            let name = row.widget_name();
+            if name == SETTINGS_ROW {
+                crate::settings::open(None);
+            } else if let (Some(id), Some(m)) = (name.strip_prefix(GROUP_ROW), weak.upgrade()) {
+                // 지난 호 묶음 머리: 펼침·접음
+                let id = id.to_string();
+                {
+                    let mut t = m.toggled.borrow_mut();
+                    if !t.remove(&id) {
+                        t.insert(id);
+                    }
+                }
+                m.fill_sidebar();
+            }
+        });
+    }
     m.install_shortcuts();
     m.window.connect_close_request(|_| {
         MAG.with(|x| *x.borrow_mut() = None);
@@ -196,6 +238,9 @@ fn build(first: Page) -> Rc<Magazine> {
     if !LISTENING.with(|l| l.replace(true)) {
         ui().listen(|e| {
             let Some(m) = current() else { return };
+            if matches!(e, UiEvent::State | UiEvent::Checking(_)) {
+                m.update_refresh();
+            }
             if matches!(e, UiEvent::State | UiEvent::Layout | UiEvent::Magazine | UiEvent::Preparing(_)) {
                 m.fill_sidebar();
             }
@@ -258,13 +303,28 @@ impl Magazine {
         let scraps = ui.scrapbook.borrow().scraps.len();
         add(self, "edit-cut-symbolic", &format!("스크랩북 {scraps}"), None, Page::Scrapbook);
         add(self, "system-search-symbolic", "검색", None, Page::Search);
+        // 지난 호: 이번 주 · 지난주 · 그 앞은 달별(처음엔 접힘, 머리를 누르면 펼침). 빈 날은 줄마다 두지 않고 묶음 끝에 한 줄로
         let archive = ui.core.archive();
-        if !archive.is_empty() {
-            self.sidebar.append(&header("지난 호"));
-            for i in archive {
+        let current = self.page.borrow().clone();
+        for g in dropcap_core::magazine::archive_groups(&archive, chrono::Utc::now()) {
+            // 지금 보고 있는 지난 호가 든 묶음은 늘 펼침(Ctrl+[ ] 로 넘어가도 고른 줄이 보이게)
+            let showing = matches!(&current, Page::Issue(i) if g.issues.contains(i));
+            let open = showing || g.folded == self.toggled.borrow().contains(&g.id);
+            let title = if g.id == "this" { "지난 호 · 이번 주".to_string() } else { g.title.clone() };
+            let h = gtk::Label::new(Some(&format!("{} {title}", if open { "▾" } else { "▸" })));
+            h.set_xalign(0.0);
+            h.add_css_class("dc-side-head");
+            let hr = gtk::ListBoxRow::builder().child(&h).selectable(false).activatable(true).build();
+            hr.set_widget_name(&format!("{GROUP_ROW}{}", g.id));
+            hr.set_tooltip_text(Some(if open { "접기" } else { "펼치기" }));
+            self.sidebar.append(&hr);
+            if !open {
+                continue;
+            }
+            for i in g.issues {
                 let icon = if i.kind == dropcap_core::magazine::IssueKind::Weekly { "accessories-dictionary-symbolic" } else { "text-x-generic-symbolic" };
-                // 이름은 오른쪽 머리와 같은 title(), 기사가 너무 적은 호는 흐리게 + 도움말 '기록 적음'(머리에는 글로)
-                let (thin, tip) = (i.is_thin(), if i.is_thin() { format!("기록 적음 — 소식 {}건", i.count) } else { i.title() });
+                // 이름은 오른쪽 머리와 같은 title(), 기사가 너무 적은 호는 흐리게 + 도움말 '기록 적음' 이유(머리에는 글로)
+                let (thin, tip) = (i.is_thin(), dropcap_core::magazine::thin_reason(&i).unwrap_or_else(|| i.title()));
                 add(self, icon, &i.title(), None, Page::Issue(i));
                 if let Some((r, _)) = self.rows.borrow().last() {
                     r.set_tooltip_text(Some(&tip));
@@ -272,6 +332,16 @@ impl Magazine {
                         r.set_opacity(0.55);
                     }
                 }
+            }
+            if g.empty_days > 0 {
+                // 고를 수 없는 줄 — 그 기간에 호가 없는 날 수
+                let l = gtk::Label::new(Some(&format!("{}일 비어 있음", g.empty_days)));
+                l.set_xalign(0.0);
+                l.add_css_class("dim-label");
+                l.set_margin_start(25);
+                let r = gtk::ListBoxRow::builder().child(&l).selectable(false).activatable(false).build();
+                r.set_tooltip_text(Some("이날들은 모인 소식이 없어 호를 엮지 않았습니다"));
+                self.sidebar.append(&r);
             }
         }
         // 맨 아래 '설정' 줄: 지면이 아니라 설정 창을 연다(고를 수 없는 줄 — 고른 지면은 그대로, row-activated 에서 받음)
@@ -285,6 +355,14 @@ impl Magazine {
         let p = self.page.borrow().clone();
         self.select_row_for(&p);
         self.syncing.set(false);
+    }
+
+    // 새로 고침 단추·'마지막 확인' 글(확인 중엔 눌리지 않게)
+    fn update_refresh(&self) {
+        let core = &ui().core;
+        let checking = core.is_checking();
+        self.refresh.set_sensitive(!checking);
+        self.last_check.set_text(&if checking { "확인하는 중…".to_string() } else { dropcap_core::magazine::last_check_text(core.state().last_check, chrono::Utc::now()) });
     }
 
     fn select_row_for(&self, p: &Page) {
@@ -450,6 +528,7 @@ impl Magazine {
 }
 
 const SETTINGS_ROW: &str = "dc-settings-row"; // 옆 목록 맨 아래 '설정' 줄
+const GROUP_ROW: &str = "dc-issue-group:"; // 지난 호 묶음 머리(뒤에 묶음 id)
 
 // 옆 목록에서 이 지면에 해당하는 칸(스토리 상세는 '스토리')
 fn sidebar_key(p: &Page) -> Page {

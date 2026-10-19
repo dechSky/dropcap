@@ -1,6 +1,6 @@
 namespace Dropcap.Core.Tests;
 
-// 캐러셀·슬라이드 속 본문 글(mac/READER-CUT.md '5단계 결과', 규칙 carousel-slides) — 맥 CarouselTests 와 같은 꼴.
+// 캐러셀·슬라이드 속 본문 글(규칙 carousel-slides) — 맥 CarouselTests 와 같은 꼴.
 // 실제 꼴은 Google 블로그 큰 발표 기사(맥 Fixtures/reader-cut/carousel-cards — 글·주소를 바꾸고 표지 낱말만 원래 자리에), 나머지는 지어낸 HTML.
 public class ReaderCutCarouselTests
 {
@@ -80,6 +80,35 @@ public class ReaderCutCarouselTests
         Assert.True(At(b, "Gallery card") < 0, "본문 뒤 캐러셀");
         Assert.True(At(b, "Sidebar card") < 0, "aside 안 캐러셀");
         Assert.True(At(b, Para(8)) >= 0);
+    }
+
+    // 보안 낮음 L2: 추천 머리말이 캐러셀 바깥 바로 앞 형제(또는 한 겹 감싼 상자의 앞 형제)이고 칸에 링크가 없어도(onclick 카드) 화면 밖 칸을 넣지 않는다
+    [JsFact]
+    public async Task RecommendHeadOutsideRoot()
+    {
+        string Card(int i) => $"<div class=\"swiper-slide\" aria-hidden=\"true\" onclick=\"go({i})\"><p>Related card {i} follows the council debate on the new harbor budget.</p></div>";
+        var html = Page("<h2>Related stories</h2><div class=\"swiper\"><div class=\"swiper-wrapper\">" + string.Concat(Enumerable.Range(1, 3).Select(Card)) + $"</div></div><p>{Para(41)}</p>"
+            + "<div class=\"section-head\"><h3>You may also like</h3></div><div class=\"box\"><div class=\"glide\"><div class=\"glide__slide\" aria-hidden=\"true\"><p>Wrapped card nine follows the council debate on the harbor.</p></div></div></div>"
+            + $"<p>{Para(42)}</p><h2>Building the pier</h2><div class=\"swiper\"><div class=\"swiper-slide\" aria-hidden=\"true\"><p>{SlideText(7)}</p></div></div>");
+        var b = Blocks(await ExtractJs.OneAsync(html));
+        Assert.True(At(b, "Related card") < 0, "바로 앞 형제 제목");
+        Assert.True(At(b, "Wrapped card") < 0, "감싼 상자의 앞 형제 제목");
+        Assert.True(At(b, SlideText(7)) >= 0, "추천이 아닌 앞 제목은 그대로");
+    }
+
+    // 보안 낮음 L3: 칸 수(50)·칸 글 양(본문 글자 2배, 적어도 3000자) 상한
+    [JsFact]
+    public async Task SlideCap()
+    {
+        var photos = string.Concat(Enumerable.Range(0, 80).Select(i => $"<div class=\"swiper-slide\"><img src=\"https://img.example.com/g{i}.jpg\"></div>"));
+        var b1 = Blocks(await ExtractJs.OneAsync(Page($"<div class=\"swiper\">{photos}</div>")));
+        Assert.Equal(50, b1.Count(x => x.Type == BlockKind.Img && (x.Src ?? "").Contains("/g")));
+        Assert.Contains(b1, x => (x.Src ?? "").EndsWith("/g0.jpg"));
+        var texts = string.Concat(Enumerable.Range(0, 80).Select(i => $"<div class=\"swiper-slide\"><p>{SlideText(i)}</p></div>"));
+        var b2 = Blocks(await ExtractJs.OneAsync(Page($"<div class=\"swiper\">{texts}</div>")));
+        var n = Enumerable.Range(0, 80).Count(i => At(b2, SlideText(i)) >= 0);
+        Assert.True(At(b2, SlideText(0)) >= 0 && n >= 20 && n <= 35, $"글 양 상한({n}칸)");
+        Assert.True(At(b2, Para(5)) >= 0);
     }
 
     // 칸이 없는 'carousel' 상자는 그대로

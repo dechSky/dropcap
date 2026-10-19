@@ -39,13 +39,18 @@ final class WidgetExporter {
         [it.image, Magazine.shared.storedImage(it.key)].compactMap { $0 }.first { !ImageKey.isJunk($0) }
     }
 
+    // 쓰기를 기다리는 중인가(시험이 2초 묶음을 어림 잠 대신 이것으로 기다린다)
+    private(set) var pending = false
+
     func scheduleExport() {
         guard enabled else { return }
         running?.cancel()
+        pending = true
         running = Task {
             try? await Task.sleep(for: .seconds(2)) // 잇따른 변경은 한 번으로
             guard !Task.isCancelled else { return }
             await export()
+            pending = false
         }
     }
 

@@ -375,12 +375,15 @@ pub fn live_weekly(db: &Database, interest: &Editorial) -> Issue {
     make_issue(db, IssueKind::Weekly, week_range(now).0, now + Duration::seconds(60), "live-weekly", interest)
 }
 
-// 하루가 지나면 그날 호를, 주가 지나면 그 주 호를 발행해 지난 호에 남긴다(지난 3일 일간 + 지난주 주간)
+// 하루가 지나면 그날 호를, 주가 지나면 그 주 호를 발행해 지난 호에 남긴다.
+// 빈 날은 최근 DUE_DAYS 일까지 메운다(매거진 채우기로 넣은 지난 기사도 그날 호가 생기게 — 예전엔 1~3일 전만이라 4일 넘은 날은 호가 없었다).
+// 이미 있는 호는 건너뛰고, 4일 넘은 날은 기사 수만 먼저 세어 없으면 엮지 않는다(확인마다 14일을 다시 엮지 않게)
+pub const DUE_DAYS: i64 = 14;
 pub fn publish_due(db: &Database, interest: &Editorial, now: DateTime<Utc>) -> Vec<Issue> {
     let local_now = now.with_timezone(&Local);
     let today = local_now.date_naive();
     // 일간 호의 기간은 '오늘 호'와 같게: 전날 18시 ~ 그날 18시. 어제 호는 오늘 정오까지는 새 기사가 오면 다시 엮는다.
-    for back in (1..=3).rev() {
+    for back in (1..=DUE_DAYS).rev() {
         let day = today - Duration::days(back);
         let id = format!("daily-{}", day.format("%Y-%m-%d"));
         let refresh = back == 1 && local_now.hour() < 12;
@@ -389,15 +392,23 @@ pub fn publish_due(db: &Database, interest: &Editorial, now: DateTime<Utc>) -> V
         }
         let from = local_midnight(day) - Duration::hours(6);
         let to = local_midnight(day) + Duration::hours(18);
+        if back > 3 && db.article_count(from, to) == 0 {
+            continue;
+        }
         let issue = make_issue(db, IssueKind::Daily, from, to, &id, interest);
         if issue.count > 0 {
             db.save_issue(&issue);
         }
     }
-    let ws = week_range(local_midnight(today)).0;
-    let (last, last_end) = week_range(ws - Duration::hours(1));
-    let id = format!("weekly-{}", week_id(last));
-    if !db.has_issue(&id) {
+    // 주간: 지난주와 지지난주(채운 기사가 지지난주에 걸칠 수 있음)
+    let mut ws = week_range(local_midnight(today)).0;
+    for n in 0..2 {
+        let (last, last_end) = week_range(ws - Duration::hours(1));
+        ws = last;
+        let id = format!("weekly-{}", week_id(last));
+        if db.has_issue(&id) || (n > 0 && db.article_count(last, last_end) == 0) {
+            continue;
+        }
         let issue = make_issue(db, IssueKind::Weekly, last, last_end, &id, interest);
         if issue.count > 0 {
             db.save_issue(&issue);
@@ -414,26 +425,39 @@ pub fn publish_due(db: &Database, interest: &Editorial, now: DateTime<Utc>) -> V
     archive_order(db.issues(120))
 }
 
-// 기사 하나를 스토리에 넣는다: 대표 기사와 같은 소식이면 그 스토리에, 아니면 새 스토리. (스토리 id, 기존 스토리에 붙었는지)
-fn assign(db: &Database, it: &NewsItem, when: DateTime<Utc>, clusters: &mut Vec<Cluster>, reps: &mut HashMap<String, NewsItem>) -> (String, bool) {
-    if let Some(i) = clusters.iter().position(|c| reps.get(&c.id).map(|r| story_match::same(it, r)).unwrap_or(false)) {
-        clusters[i].size += 1;
-        clusters[i].last = clusters[i].last.max(when);
-        clusters[i].first = clusters[i].first.min(when);
-        if it.tier == "lab" {
-            clusters[i].title = it.display_title().to_string(); // 공식 발표 제목을 스토리 이름으로
-        }
-        db.save_cluster(&clusters[i]);
-        return (clusters[i].id.clone(), true);
+// 대표 기사와 같은 소식인 스토리(앞에 있는 것 = 최근에 커진 것 먼저)
+fn matching_story(it: &NewsItem, clusters: &[Cluster], reps: &HashMap<String, NewsItem>) -> Option<usize> {
+    clusters.iter().position(|c| reps.get(&c.id).map(|r| story_match::same(it, r)).unwrap_or(false))
+}
+
+fn grow(db: &Database, c: &mut Cluster, it: &NewsItem, when: DateTime<Utc>) {
+    c.size += 1;
+    c.last = c.last.max(when);
+    c.first = c.first.min(when);
+    if it.tier == "lab" {
+        c.title = it.display_title().to_string(); // 공식 발표 제목을 스토리 이름으로
     }
-    let c = Cluster {
+    db.save_cluster(c);
+}
+
+fn new_story(it: &NewsItem, when: DateTime<Utc>) -> Cluster {
+    Cluster {
         id: uuid::Uuid::new_v4().to_string().to_uppercase(),
         title: it.display_title().to_string(),
         tokens: story_match::tokens(&it.title),
         first: when,
         last: when,
         size: 1,
-    };
+    }
+}
+
+// 기사 하나를 스토리에 넣는다: 대표 기사와 같은 소식이면 그 스토리에, 아니면 새 스토리. (스토리 id, 기존 스토리에 붙었는지)
+fn assign(db: &Database, it: &NewsItem, when: DateTime<Utc>, clusters: &mut Vec<Cluster>, reps: &mut HashMap<String, NewsItem>) -> (String, bool) {
+    if let Some(i) = matching_story(it, clusters, reps) {
+        grow(db, &mut clusters[i], it, when);
+        return (clusters[i].id.clone(), true);
+    }
+    let c = new_story(it, when);
     db.save_cluster(&c);
     reps.insert(c.id.clone(), it.clone());
     let id = c.id.clone();
@@ -442,12 +466,60 @@ fn assign(db: &Database, it: &NewsItem, when: DateTime<Utc>, clusters: &mut Vec<
 }
 
 // 새로 들어온 기사 전부(같은 소식으로 묶여 알림에서 빠진 것도 포함)를 받아 스토리로 묶어 넣는다.
-// 돌려주는 것: 팔로우한 스토리에 새로 붙은 보도(스토리, 기사)
+// 돌려주는 것: 팔로우한 스토리에 새로 붙은 보도(스토리, 기사). 못 넣은 기사는 버린다(처음 옮기기 등) — 확인은 ingest_retrying
 pub fn ingest(db: &Database, items: &[NewsItem], followed: &[String]) -> Vec<(Cluster, NewsItem)> {
+    ingest_retrying(db, &mut Vec::new(), items, followed)
+}
+
+// DB 에 넣지 못한 기사(디스크 가득·오래 잠김)를 끝없이 쌓지 않는 상한(맥 Editor.retryLimit)
+pub const RETRY_LIMIT: usize = 3000;
+
+// 못 넣은 기사를 앱을 껐다 켜도 남게 두는 파일(자료 폴더, 맥 Fix4 와 같음): NewsItem 배열 JSON, RETRY_LIMIT 건까지
+pub const RETRY_FILE: &str = "ingest-retry.json";
+
+// 읽을 파일 크기 상한(RETRY_LIMIT 건이면 수 MB — 넘으면 앱이 쓴 파일이 아니다)
+pub const RETRY_FILE_MAX: u64 = 64 << 20;
+
+// 없거나 깨졌거나 너무 크면 빈 것
+pub fn load_retry(file: &std::path::Path) -> Vec<NewsItem> {
+    if std::fs::metadata(file).map_or(true, |m| m.len() > RETRY_FILE_MAX) {
+        return vec![];
+    }
+    let Ok(data) = std::fs::read(file) else { return vec![] };
+    let mut v: Vec<NewsItem> = serde_json::from_slice(&data).unwrap_or_default();
+    let cut = v.len().saturating_sub(RETRY_LIMIT);
+    v.split_off(cut)
+}
+
+// 원자적으로 쓰기(임시 파일 → rename). 비면 파일을 지운다. 쓰기 실패(디스크 가득 등)면 false — 부르는 쪽은 메모리에만 둔다
+pub fn save_retry(file: &std::path::Path, items: &[NewsItem]) -> bool {
+    if items.is_empty() {
+        return match std::fs::remove_file(file) {
+            Ok(()) => true,
+            Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+        };
+    }
+    let start = items.len().saturating_sub(RETRY_LIMIT);
+    let Ok(json) = serde_json::to_vec(&items[start..]) else { return false };
+    let tmp = file.with_extension("json.tmp");
+    let ok = std::fs::write(&tmp, &json).and_then(|_| std::fs::rename(&tmp, file)).is_ok();
+    if !ok {
+        let _ = std::fs::remove_file(&tmp);
+        log::warn!("[DB] 다시 넣을 기사 {}건을 파일에 남기지 못해 이번 실행 동안만 기억합니다", items.len());
+    }
+    ok
+}
+
+// 받아 넣기(맥 Editor.ingest): 앞서 못 넣은 기사(retry)를 먼저 넣고, 이번에 못 넣은 것은 retry 에 남긴다.
+// 앱 상태에는 이미 '본 글'로 남아 피드에서 다시 오지 않으므로, 여기서 버리면 매거진에서 영영 빠진다.
+// 한 번 못 넣으면(잠김·가득) 나머지도 못 넣는다 — 기사마다 잠금을 기다리지 않고 바로 다음으로 미룬다.
+pub fn ingest_retrying(db: &Database, retry: &mut Vec<NewsItem>, fresh: &[NewsItem], followed: &[String]) -> Vec<(Cluster, NewsItem)> {
     let mut grown = vec![];
+    let items: Vec<NewsItem> = std::mem::take(retry).into_iter().chain(fresh.iter().cloned()).collect();
     if items.is_empty() {
         return grown;
     }
+    let mut failed: Vec<NewsItem> = vec![];
     let since = Utc::now() - Duration::days(7);
     let mut clusters: Vec<Cluster> = db.recent_clusters(since);
     // 스토리마다 대표 기사 하나(뜻 비교용)
@@ -458,25 +530,50 @@ pub fn ingest(db: &Database, items: &[NewsItem], followed: &[String]) -> Vec<(Cl
         }
     }
     for it in items {
+        if !failed.is_empty() {
+            failed.push(it);
+            continue;
+        }
         let now = Utc::now();
         // 이미 있는 기사는 스토리를 다시 정하지 않는다(대표가 자기 자신이면 '같은 출처'로 보여 새 스토리가 생기던 문제)
-        if db.exists(&it.key()) {
-            db.upsert(it, None, now);
-            continue;
-        }
         // 기사만 스토리로 묶는다(논문·릴리스·커뮤니티 글은 양이 많고 성격이 달라 제외)
-        if it.item_kind() != ItemKind::Article && it.item_kind() != ItemKind::Video {
-            db.upsert(it, None, now);
+        if db.exists(&it.key()) || (it.item_kind() != ItemKind::Article && it.item_kind() != ItemKind::Video) {
+            if !db.upsert(&it, None, now) {
+                failed.push(it);
+            }
             continue;
         }
-        let (cid, joined) = assign(db, it, it.date.unwrap_or(now), &mut clusters, &mut reps);
-        if joined && followed.contains(&cid) {
-            if let Some(c) = clusters.iter().find(|c| c.id == cid) {
-                grown.push((c.clone(), it.clone()));
+        let when = it.date.unwrap_or(now);
+        // 기사를 먼저 넣고, 넣었을 때만 스토리를 키운다(못 넣은 기사를 다시 넣을 때 두 번 세지 않게)
+        match matching_story(&it, &clusters, &reps) {
+            Some(i) => {
+                let cid = clusters[i].id.clone();
+                if !db.upsert(&it, Some(&cid), now) {
+                    failed.push(it);
+                    continue;
+                }
+                grow(db, &mut clusters[i], &it, when);
+                if followed.contains(&cid) {
+                    grown.push((clusters[i].clone(), it.clone()));
+                }
+            }
+            None => {
+                let c = new_story(&it, when);
+                if !db.upsert(&it, Some(&c.id), now) {
+                    failed.push(it);
+                    continue;
+                }
+                db.save_cluster(&c);
+                reps.insert(c.id.clone(), it.clone());
+                clusters.push(c);
             }
         }
-        db.upsert(it, Some(&cid), now);
     }
+    if !failed.is_empty() {
+        log::warn!("[DB] 기사 {}건을 넣지 못해 다음 받아 넣기 때 다시 넣습니다", failed.len());
+    }
+    let cut = failed.len().saturating_sub(RETRY_LIMIT);
+    *retry = failed.split_off(cut); // 오래된 것부터 버림
     grown
 }
 
@@ -562,30 +659,55 @@ pub fn story_items(db: &Database, id: &str, filter: &crate::source_filter::Sourc
     filter.visible(&db.items_in_cluster(id).into_iter().map(|s| s.item).collect::<Vec<_>>())
 }
 
-// 스토리: 최근 2주 동안 지금 보이는 출처로만 두 곳 이상이 다룬 것(출처를 끄면 그 스토리의 보도 수도 줄어 목록에서 빠질 수 있음)
-pub fn stories(db: &Database, filter: &crate::source_filter::SourceFilter) -> Vec<Cluster> {
-    db.recent_clusters(Utc::now() - Duration::days(14))
+// 스토리 카드 하나: 스토리와 보이는 보도들(카드가 DB 를 다시 묻지 않게 — 맥 Magazine.StoryCard)
+#[derive(Debug, Clone)]
+pub struct StoryCard {
+    pub cluster: Cluster,
+    pub items: Vec<NewsItem>,
+}
+
+// 스토리: 최근 2주 동안 지금 보이는 출처로만 두 곳 이상이 다룬 것(출처를 끄면 그 스토리의 보도 수도 줄어 목록에서 빠질 수 있음).
+// 목록 전체를 문장 두 번(스토리 · 보도)으로 — 예전엔 스토리마다 따로 물어 기록이 쌓일수록 느려졌다
+pub fn story_list(db: &Database, now: DateTime<Utc>, filter: &crate::source_filter::SourceFilter) -> Vec<StoryCard> {
+    let since = now - Duration::days(14);
+    let mut members = db.story_members(since);
+    db.recent_clusters(since)
         .into_iter()
         .filter(|c| c.size >= 2)
         .filter_map(|mut c| {
-            let items = story_items(db, &c.id, filter);
+            let items = filter.visible(&members.remove(&c.id).unwrap_or_default().into_iter().map(|s| s.item).collect::<Vec<_>>());
             let outlets: HashSet<&str> = items.iter().map(|i| i.source_id.as_str()).collect();
             if outlets.len() < 2 {
                 return None;
             }
             c.size = items.len() as i64;
-            Some(c)
+            Some(StoryCard { cluster: c, items })
         })
         .collect()
 }
 
-// 스토리 목록: 최근 24시간 안에 보도가 붙은 것(지금 커지는 스토리)과 나머지. 큰 것·최근 것이 앞
-pub fn story_groups(db: &Database, now: DateTime<Utc>, filter: &crate::source_filter::SourceFilter) -> (Vec<Cluster>, Vec<Cluster>) {
+pub fn stories(db: &Database, filter: &crate::source_filter::SourceFilter) -> Vec<Cluster> {
+    story_list(db, Utc::now(), filter).into_iter().map(|c| c.cluster).collect()
+}
+
+// 스토리 목록 화면: 최근 24시간 안에 보도가 붙은 것(지금 커지는 스토리)과 나머지. 큰 것·최근 것이 앞
+pub fn story_cards(db: &Database, now: DateTime<Utc>, filter: &crate::source_filter::SourceFilter) -> (Vec<StoryCard>, Vec<StoryCard>) {
     let score = |c: &Cluster| c.size as f64 + (24.0 - (now - c.last).num_seconds() as f64 / 3600.0).max(0.0) / 6.0;
-    let mut all = stories(db, filter);
-    all.sort_by(|a, b| score(b).partial_cmp(&score(a)).unwrap_or(std::cmp::Ordering::Equal).then(b.last.cmp(&a.last)));
+    let mut all = story_list(db, now, filter);
+    all.sort_by(|a, b| score(&b.cluster).partial_cmp(&score(&a.cluster)).unwrap_or(std::cmp::Ordering::Equal).then(b.cluster.last.cmp(&a.cluster.last)));
     let cut = now - Duration::hours(24);
-    all.into_iter().partition(|c| c.last >= cut)
+    all.into_iter().partition(|c| c.cluster.last >= cut)
+}
+
+pub fn story_groups(db: &Database, now: DateTime<Utc>, filter: &crate::source_filter::SourceFilter) -> (Vec<Cluster>, Vec<Cluster>) {
+    let (live, past) = story_cards(db, now, filter);
+    (live.into_iter().map(|c| c.cluster).collect(), past.into_iter().map(|c| c.cluster).collect())
+}
+
+// 분야 사진 고르기용 최근 기사: 한 번 읽어 분야마다 나눈다(예전엔 분야마다 3000건씩 다시 읽음)
+pub fn section_recent(db: &Database, ids: &[String], since: DateTime<Utc>) -> HashMap<String, Vec<NewsItem>> {
+    let recent: Vec<NewsItem> = db.items(since, None, 3000).into_iter().map(|s| s.item).collect();
+    ids.iter().map(|id| (id.clone(), recent.iter().filter(|i| i.in_section(id)).cloned().collect())).collect()
 }
 
 
@@ -598,6 +720,74 @@ impl Issue {
     pub fn is_thin(&self) -> bool {
         self.count < THIN_ISSUE
     }
+}
+
+// 새로 고침 옆 '마지막 확인 n분 전'(맥 Magazine.lastCheckText 와 같은 글)
+pub fn last_check_text(d: Option<DateTime<Utc>>, now: DateTime<Utc>) -> String {
+    let Some(d) = d else { return "아직 확인 전".into() };
+    let s = (now - d).num_seconds().max(0);
+    match s {
+        0..=59 => "마지막 확인 방금".into(),
+        60..=3599 => format!("마지막 확인 {}분 전", s / 60),
+        3600..=86399 => format!("마지막 확인 {}시간 전", s / 3600),
+        _ => format!("마지막 확인 {}일 전", s / 86400),
+    }
+}
+
+// 기록 적음 이유(지난 호 머리) — 그날 모인 소식이 적은 까닭(맥 Magazine.thinReason 과 같은 글)
+pub fn thin_reason(issue: &Issue) -> Option<String> {
+    issue.is_thin().then(|| format!("기록 적음 — 앱을 쓰기 전이거나 켠 출처가 적던 때라 모인 소식이 {}건뿐입니다", issue.count))
+}
+
+// 지난 호 목록 묶음: 이번 주 · 지난주 · 그 앞은 달별(접혀 있음). 주간 호는 그 주 묶음 맨 위(archive_order 그대로).
+// 빈 날: 묶음 기간 중 첫 기록 날부터 어제까지 일간 호가 없는 날 수(앱을 쓰기 전 날은 세지 않음) — 맥 archiveGroups 와 같은 규칙
+#[derive(Debug, Clone)]
+pub struct ArchiveGroup {
+    pub id: String,
+    pub title: String,
+    pub issues: Vec<Issue>,
+    pub empty_days: i64,
+    pub folded: bool,
+}
+pub fn archive_groups(issues: &[Issue], now: DateTime<Utc>) -> Vec<ArchiveGroup> {
+    let (this_from, this_to) = week_range(now);
+    let (last_from, last_to) = week_range(this_from - Duration::hours(1));
+    let local = |d: DateTime<Utc>| d.with_timezone(&Local).date_naive();
+    let today = local(now);
+    let anchor = |i: &Issue| if i.kind == IssueKind::Weekly { local(i.from) } else { local(i.to - Duration::seconds(60)) };
+    let days: HashSet<NaiveDate> = issues.iter().filter(|i| i.kind == IssueKind::Daily).map(anchor).collect();
+    let Some(first) = days.iter().min().copied().or_else(|| issues.iter().map(anchor).min()) else { return vec![] };
+    let mut groups: Vec<(ArchiveGroup, NaiveDate, NaiveDate)> = vec![];
+    for i in issues {
+        let d = anchor(i);
+        let (id, title, from, to, folded) = if d >= local(this_from) {
+            ("this".to_string(), "이번 주".to_string(), local(this_from), local(this_to), false)
+        } else if d >= local(last_from) {
+            ("last".to_string(), "지난주".to_string(), local(last_from), local(last_to), false)
+        } else {
+            let m = NaiveDate::from_ymd_opt(d.year(), d.month(), 1).unwrap();
+            let next = if d.month() == 12 { NaiveDate::from_ymd_opt(d.year() + 1, 1, 1) } else { NaiveDate::from_ymd_opt(d.year(), d.month() + 1, 1) }.unwrap();
+            // 달 묶음은 지난주 앞까지만(지난주와 같은 날을 두 번 세지 않게)
+            (format!("m-{:04}-{:02}", d.year(), d.month()), format!("{}년 {}월", d.year(), d.month()), m, next.min(local(last_from)), true)
+        };
+        match groups.iter_mut().find(|g| g.0.id == id) {
+            Some(g) => g.0.issues.push(i.clone()),
+            None => groups.push((ArchiveGroup { id, title, issues: vec![i.clone()], empty_days: 0, folded }, from, to)),
+        }
+    }
+    groups
+        .into_iter()
+        .map(|(mut g, from, to)| {
+            let mut d = from.max(first);
+            while d < to.min(today) {
+                if !days.contains(&d) {
+                    g.empty_days += 1;
+                }
+                d += Duration::days(1);
+            }
+            g
+        })
+        .collect()
 }
 
 // 지난 호 목록: 최신부터 호의 끝 시각 순(주간은 그 주 끝 — 토요일 호 바로 위)
@@ -717,3 +907,4 @@ pub fn pick_weekly_quotes(scraps: &[crate::scrapbook::Scrap], now: DateTime<Utc>
     v.truncate(limit);
     v
 }
+

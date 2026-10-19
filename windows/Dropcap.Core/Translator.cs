@@ -14,7 +14,7 @@ public sealed class Translator
     public const string EngineGoogle = "Google 번역";
     public const string EngineNone = "번역 안 함";
 
-    // 번역 방식(W4 · 맥과 같은 설정 키 translateEngine · 값 auto|apple|google|off — mac/TRANSLATE.md).
+    // 번역 방식(W4 · 맥과 같은 설정 키 translateEngine · 값 auto|apple|google|off).
     // 윈도우엔 기기 내 번역이 없어 auto = Google. apple(맥에서 '기기 내만'으로 고른 기록을 가져온 것)은 기기 밖으로 보내지 않는다는 뜻이라 여기선 번역 안 함.
     public static readonly string[] Modes = ["auto", "apple", "google", "off"];
     public static string NormalizeMode(string? v) => v is not null && Modes.Contains(v) ? v : "auto"; // 모르는 값은 자동(맥과 같음)
@@ -23,7 +23,7 @@ public sealed class Translator
     // 지금 번역 방식(AppModel 이 설정을 넣어 줌 — 시험은 바꿔 끼움)
     public Func<string> ModeSource { get; set; } = () => "auto";
     private string? lastMode;
-    // 방식이 바뀌면 캐시를 비운다(앞서 다른 방식으로 한 번역이 섞이지 않게 — 맥 TRANSLATE.md 케이스 11)
+    // 방식이 바뀌면 캐시를 비운다(앞서 다른 방식으로 한 번역이 섞이지 않게 — 맥과 같음)
     private void FollowMode()
     {
         var m = NormalizeMode(ModeSource());
@@ -35,6 +35,14 @@ public sealed class Translator
 
     private readonly ConcurrentDictionary<string, string> cache = new();
     public string LastEngine { get; private set; } = EngineNone;
+
+    // 번역 요청 하나의 전체 시간 상한(시험에서만 줄인다). 넘으면 원문 그대로 — 확인이 제목 번역을 기다리다 멈추지 않게
+    internal TimeSpan RequestDeadline { get; set; } = TimeSpan.FromSeconds(15);   // 예전 요청 상한(15초)과 같게
+    // 시간 상한에 걸린 뒤 잠시는 구글을 부르지 않는다(묶음 실패 뒤 문단마다 다시 보내며 상한을 수십 번 기다리지 않게)
+    public static readonly TimeSpan GoogleBackoff = TimeSpan.FromSeconds(60);
+    private long quietUntil;   // Environment.TickCount64 기준(벽시계가 바뀌어도 그대로)
+    private bool Resting => Environment.TickCount64 < Interlocked.Read(ref quietUntil);
+    private void Rest() => Interlocked.Exchange(ref quietUntil, Environment.TickCount64 + (long)GoogleBackoff.TotalMilliseconds);
 
     // 시험에서 네트워크 없이 바꿔 끼우기 위한 자리(text, target) → 번역 또는 null
     internal Func<string, string, Task<string?>>? Backend { get; set; }
@@ -48,7 +56,7 @@ public sealed class Translator
         cache[source] = translated;
     }
 
-    // T-01: 한글 비율 20% 미만이면 번역 대상. 글자가 하나도 없거나(숫자·기호뿐) 주소 하나뿐인 글은 번역할 것이 없다(맥 TRANSLATE.md 케이스 8)
+    // T-01: 한글 비율 20% 미만이면 번역 대상. 글자가 하나도 없거나(숫자·기호뿐) 주소 하나뿐인 글은 번역할 것이 없다(맥과 같음)
     public static bool LooksForeign(string text)
     {
         var s = text.Where(c => !char.IsWhiteSpace(c)).ToArray();
@@ -263,12 +271,29 @@ public sealed class Translator
 
     private async Task<string?> GoogleOnce(string text, string target)
     {
-        if (Backend is { } b) return await b(text, target);
+        if (Resting) return null;
+        using var cts = new CancellationTokenSource();
+        var work = Backend is { } b ? b(text, target) : GoogleRequest(text, target, cts.Token);
+        var deadline = Task.Delay(RequestDeadline, cts.Token);
+        if (await Task.WhenAny(work, deadline) != work)
+        {
+            cts.Cancel();   // 요청을 끊는다
+            Rest();
+            return null;
+        }
+        cts.Cancel();   // 기다리던 시계를 치운다
+        try { return await work; }
+        catch (OperationCanceledException) { Rest(); return null; }   // 요청 자체의 시간 상한(SafeHttp)에 걸림
+        catch { return null; }
+    }
+
+    private async Task<string?> GoogleRequest(string text, string target, CancellationToken ct)
+    {
         var q = FeedParser.Prefix(text, RequestLimit);
         var url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=" + target + "&dt=t&q=" + Uri.EscapeDataString(q);
         try
         {
-            var r = await SafeHttp.GetAsync(url, timeout: TimeSpan.FromSeconds(15), maxBody: 2L << 20);   // 번역 응답은 2MB 까지(보안 점검)
+            var r = await SafeHttp.GetAsync(url, timeout: RequestDeadline, maxBody: 2L << 20, ct: ct);   // 번역 응답은 2MB 까지(보안 점검)
             if (r.Status != 200) return null;
             using var doc = JsonDocument.Parse(r.Body);
             if (doc.RootElement.ValueKind != JsonValueKind.Array || doc.RootElement.GetArrayLength() == 0) return null;
@@ -280,6 +305,7 @@ public sealed class Translator
                     sb.Append(seg[0].GetString());
             return sb.Length == 0 ? null : sb.ToString();
         }
+        catch (OperationCanceledException) { throw; }   // 시간 상한 — GoogleOnce 가 쉬기로
         catch
         {
             return null;

@@ -1,4 +1,4 @@
-// 번역 방식 고르기(L4 · 맥·윈도우와 같은 설정 키 translateEngine = auto|apple|google|off — mac/TRANSLATE.md).
+// 번역 방식 고르기(L4 · 맥·윈도우와 같은 설정 키 translateEngine = auto|apple|google|off).
 // '번역 안 함'(과 기기 내 엔진이 없는 리눅스의 apple)이면 기사 본문·배경 제목 번역·같은 소식 묶기용 영어 번역 모두 Google 로 보내지 않는다.
 // 네트워크 없이: 번역 캐시에 미리 넣은 것으로 '자동'의 길을 보고, '번역 안 함'은 캐시도 쓰지 않고 원문·엔진 없음이어야 한다.
 use dropcap_core::app_model::{add_english_titles, AppModel};

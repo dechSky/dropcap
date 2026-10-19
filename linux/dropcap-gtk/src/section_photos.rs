@@ -4,6 +4,7 @@
 // 카드: 흐린 사진 바탕 + 분야색 유리판 + 영문 섹션명·한글 이름 + 흰 테두리를 두른 기울인 사진(나-3).
 use crate::app::{bg, ui};
 use crate::theme;
+use dropcap_core::byte_cache::{self, ByteLru};
 use dropcap_core::models::NewsItem;
 use dropcap_core::sections::{self, NewsSection};
 use gtk::prelude::*;
@@ -15,7 +16,8 @@ use std::rc::Rc;
 
 thread_local! {
     static PHOTOS: RefCell<HashMap<String, PathBuf>> = RefCell::new(HashMap::new());
-    static SURFACES: RefCell<HashMap<String, Rc<(cairo::ImageSurface, cairo::ImageSurface)>>> = RefCell::new(HashMap::new());
+    // 분야 사진 표면(흐린 바탕 + 원래 그림): 바이트 상한·최근 사용 순(예전엔 지우지 않음 — S1)
+    static SURFACES: RefCell<ByteLru<Rc<(cairo::ImageSurface, cairo::ImageSurface)>>> = RefCell::new(ByteLru::new(byte_cache::SECTION_SURFACE_LIMIT));
     static LOADING: Cell<bool> = const { Cell::new(false) };
     static LISTENERS: RefCell<Vec<Box<dyn Fn() -> bool>>> = const { RefCell::new(Vec::new()) };
 }
@@ -44,27 +46,39 @@ pub fn load() {
     if LOADING.with(|l| l.replace(true)) {
         return;
     }
-    for s in sections::ALL.iter().filter(|s| photo(&s.id).is_none()) {
-        let core = ui().core.clone();
-        let id = s.id.clone();
-        bg(
-            async move {
-                let db = core.db.clone();
-                let since = chrono::Utc::now() - chrono::Duration::days(3);
-                let recent: Vec<NewsItem> = db.items(since, None, 3000).into_iter().map(|s| s.item).filter(|i| i.in_section(&id)).collect();
-                let mut got = dropcap_core::photo_quality::pick(&db, &recent, 6).await;
-                if got.is_none() {
-                    got = dropcap_core::photo_quality::pick(&db, &feed_items(&core, &id).await, 6).await;
-                }
-                (id, got.map(|g| g.1))
-            },
-            |(id, file)| {
-                let Some(f) = file else { return };
-                PHOTOS.with(|p| p.borrow_mut().insert(id, f));
-                notify();
-            },
-        );
+    let ids: Vec<String> = sections::ALL.iter().filter(|s| photo(&s.id).is_none()).map(|s| s.id.clone()).collect();
+    if ids.is_empty() {
+        return;
     }
+    // 최근 기사는 한 번만 읽어 분야마다 나눈다(예전엔 분야마다 3000건씩 다시 읽음 — S8)
+    let core = ui().core.clone();
+    bg(
+        async move {
+            let since = chrono::Utc::now() - chrono::Duration::days(3);
+            let db = core.db.clone();
+            tokio::task::spawn_blocking(move || dropcap_core::magazine::section_recent(&db, &ids, since)).await.unwrap_or_default()
+        },
+        move |by: HashMap<String, Vec<NewsItem>>| {
+            for (id, recent) in by {
+                let core = ui().core.clone();
+                bg(
+                    async move {
+                        let db = core.db.clone();
+                        let mut got = dropcap_core::photo_quality::pick(&db, &recent, 6).await;
+                        if got.is_none() {
+                            got = dropcap_core::photo_quality::pick(&db, &feed_items(&core, &id).await, 6).await;
+                        }
+                        (id, got.map(|g| g.1))
+                    },
+                    |(id, file)| {
+                        let Some(f) = file else { return };
+                        PHOTOS.with(|p| p.borrow_mut().insert(id, f));
+                        notify();
+                    },
+                );
+            }
+        },
+    );
 }
 
 // 그 분야 기본(켤) 출처부터 차례로 받은 글들(사진 있는 글이 4개 나올 때까지 최대 세 곳)
@@ -137,7 +151,7 @@ pub fn shift(hex: &str, hue: f64, bri: f64) -> (f64, f64, f64) {
 // 사진 파일 → (흐린 바탕용 작은 그림, 원래 그림). 한 번 만든 것은 다시 쓴다
 fn surfaces(file: &PathBuf) -> Option<Rc<(cairo::ImageSurface, cairo::ImageSurface)>> {
     let key = file.to_string_lossy().to_string();
-    if let Some(s) = SURFACES.with(|m| m.borrow().get(&key).cloned()) {
+    if let Some(s) = SURFACES.with(|m| m.borrow_mut().get(&key)) {
         return Some(s);
     }
     let tex = gdk::Texture::from_filename(file).ok()?;
@@ -156,8 +170,9 @@ fn surfaces(file: &PathBuf) -> Option<Rc<(cairo::ImageSurface, cairo::ImageSurfa
         cr.source().set_filter(cairo::Filter::Good);
         cr.paint().ok()?;
     }
+    let cost = byte_cache::rgba_bytes(w, h) + byte_cache::rgba_bytes(sw, sh);
     let s = Rc::new((small, full));
-    SURFACES.with(|m| m.borrow_mut().insert(key, s.clone()));
+    SURFACES.with(|m| m.borrow_mut().insert(&key, s.clone(), cost));
     Some(s)
 }
 

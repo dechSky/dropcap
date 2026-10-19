@@ -22,7 +22,7 @@ actor FeedService {
         let c = URLSessionConfiguration.ephemeral
         c.timeoutIntervalForRequest = 20 // 바이트 사이 대기
         // 요청 하나의 전체 시간 상한(기본값은 7일). 아주 천천히 흘러나오는 서버 하나가 확인 전체를 묶어
-        // '확인 중'이 풀리지 않고 그 뒤 확인이 모두 건너뛰어지던 문제(STABILITY.md S2)
+        // '확인 중'이 풀리지 않고 그 뒤 확인이 모두 건너뛰어지던 문제
         c.timeoutIntervalForResource = resourceTimeout
         c.requestCachePolicy = .reloadIgnoringLocalCacheData
         return URLSession(configuration: c)
@@ -161,7 +161,7 @@ actor FeedService {
     }
 
     // 여러 사람이 하위 도메인을 하나씩 나눠 쓰는 공용 호스팅(공용 접미사 목록 PSL 의 짧은 발췌 + 국내 블로그). 여기서는 하위 도메인 하나가 한 사이트다 —
-    // 'a.substack.com' 집계 피드가 'b.substack.com' 글에 실은 본문을 그 글로 보이지 않게(보안 점검 review-3 S1)
+    // 'a.substack.com' 집계 피드가 'b.substack.com' 글에 실은 본문을 그 글로 보이지 않게
     nonisolated static let sharedHosts: [String] = [
         "substack.com", "medium.com", "github.io", "gitlab.io", "blogspot.com", "wordpress.com", "tumblr.com", "ghost.io", "beehiiv.com",
         "netlify.app", "pages.dev", "vercel.app", "herokuapp.com", "neocities.org", "bearblog.dev", "micro.blog", "wixsite.com", "tistory.com",
@@ -261,7 +261,7 @@ final class RequestGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable 
 
     // 판정(시험 대상). 직접 연결은 실제 접속 IP 가 공개 주소여야 하고, 확인한 연결이 하나라도 있어야 통과.
     // 프록시를 거친 연결은 IP 가 프록시 것이라 볼 수 없어, 시스템에 프록시가 실제로 설정된 경우에만 연결 전 이름 확인
-    // (resolvesPublic · 리다이렉트마다)에 맡긴다. 프록시가 이름을 다시 풀어 내부망으로 갈 위험은 받아들임(AUDIT.md §7 M7).
+    // (resolvesPublic · 리다이렉트마다)에 맡긴다. 프록시가 이름을 다시 풀어 내부망으로 갈 위험은 받아들임.
     static func judge(_ hops: [Hop], systemProxy: Bool) -> (safe: Bool, seen: String?) {
         var safe = true
         var verified = false

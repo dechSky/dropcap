@@ -16,6 +16,7 @@ final class AppModel: ObservableObject {
     private let recentLimit = 300 // 검색해서 다시 찾을 수 있게 넉넉히
     private var minuteTimer: Timer?
     private var loop: Task<Void, Never>?
+    private var pendingFill: Set<String> = [] // 켰지만 아직 매거진을 채우지 못한 출처(다음 확인에서 7일치를 넣음)
 
     private init() {
         firstRun = !Store.exists
@@ -35,7 +36,6 @@ final class AppModel: ObservableObject {
         let snapshot = state
         Task { await Magazine.shared.migrateIfNeeded(from: snapshot) }
         Task { try? await Task.sleep(for: .seconds(2)); await Magazine.shared.reclusterIfNeeded() }
-        if !state.magazineBackfilled { Task { await backfillMagazine() } }
         restartLoop()
         // 1분마다: 아침 브리핑 시각인지, 잠시 끄기가 끝났는지
         let t = Timer(timeInterval: 60, repeats: true) { _ in Self.minuteTimerFired() }
@@ -75,12 +75,19 @@ final class AppModel: ObservableObject {
         defer { checking = false }
 
         let active = allSources.filter { state.enabled[$0.id] == true }
+        // 매거진 채우기: 업데이트 뒤 한 번(전부)·처음 켠 출처·다시 켠 출처는 피드가 준 최근 7일치를 매거진에만 넣는다(추가 요청 없음).
+        // 이 출처들은 304(바뀐 것 없음)로 빈손이 되지 않게 조건 없이 받는다 — 요청 수는 같다
+        let fillAll = state.magazineFill < Self.magazineFillVersion
+        let filling = Set(active.map(\.id).filter { fillAll || pendingFill.contains($0) || !state.seeded.contains($0) })
+        if !state.magazineBackfilled, !filling.isEmpty { Magazine.shared.preparing = true }
+        defer { Magazine.shared.preparing = false }
         var got: [(Source, [NewsItem])] = []
         var errors = state.errors
         await withTaskGroup(of: (Source, Result<[NewsItem]?, Error>).self) { group in
             for src in active {
+                let conditional = !filling.contains(src.id)
                 group.addTask {
-                    do { return (src, .success(try await FeedService.shared.items(for: src))) } catch { return (src, .failure(error)) }
+                    do { return (src, .success(try await FeedService.shared.items(for: src, conditional: conditional))) } catch { return (src, .failure(error)) }
                 }
             }
             for await (src, res) in group {
@@ -95,19 +102,29 @@ final class AppModel: ObservableObject {
         }
         state.errors = errors
         // 본 글 기억은 한 번에 고친다: @Published 상태의 사전을 글마다 고치면 그때마다 사전 전체(8000개)가 복사돼
-        // 확인 한 번에 메인 스레드가 수백 ms 멈췄다(STABILITY.md S6)
+        // 확인 한 번에 메인 스레드가 수백 ms 멈췄다
         var seen = state.seen, seeded = state.seeded
         let now = Date()
         var news: [(Source, [NewsItem])] = []
+        var fill: [(Source, [NewsItem])] = []
         for (src, items) in got {
             let firstTime = !seeded.contains(src.id)
             news.append((src, Self.markSeen(items, seen: &seen, firstTime: firstTime, now: now, maxAge: maxAge)))
             if firstTime { seeded.append(src.id) }
+            if filling.contains(src.id) { fill.append((src, Self.magazineFill(items, now: now, cap: src.type == "sitemap" ? 10 : 120))) }
         }
         state.seen = seen
         state.seeded = seeded
         var found: [NewsItem] = []
         for (src, items) in news { found += await kept(items, from: src) }
+        // 채울 글 중 이미 매거진에 있거나 이번 새 글인 것은 빼고(제목 번역을 다시 하지 않게) 받은 출처만 '채움'으로 친다
+        let newKeys = Set(found.map(\.key))
+        var filled: [NewsItem] = []
+        var fillKeys: [String] = []
+        for (_, items) in fill { fillKeys += items.map(\.key).filter { !newKeys.contains($0) } }
+        let missing = await Magazine.shared.missing(fillKeys)
+        for (src, items) in fill { filled += await kept(items.filter { missing.contains($0.key) }, from: src) }
+        pendingFill.subtract(filling) // 받다가 실패한 출처도 뺀다(곧바로 다시 확인을 되풀이하지 않게 — 처음 켠 출처는 다음 확인에서 다시 채움)
 
         found.sort { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
         if !found.isEmpty {
@@ -117,6 +134,19 @@ final class AppModel: ObservableObject {
         found = applyKeywords(found) // 번역 뒤에: 한국어 낱말도 영어 기사에 걸리게
         found = found.filter { !state.hiddenSources.contains($0.sourceId) } // 숨긴 출처는 스토리 대표로도 다시 나오지 않게 처음부터 뺀다
         await addEnglishTitles(&found)
+        if !filled.isEmpty {
+            // 채운 글: 알림·목록 없이 매거진에만, 오래된 것부터(스토리가 시간 순으로 묶이게)
+            let titles = await Translator.shared.translateMany(filled.map(\.title))
+            for i in filled.indices where titles[i] != filled[i].title { filled[i].titleKo = titles[i] }
+            filled = applyKeywords(filled).filter { !state.hiddenSources.contains($0.sourceId) }
+            await addEnglishTitles(&filled)
+            await Magazine.shared.ingest(filled.sorted { ($0.date ?? .distantPast) < ($1.date ?? .distantPast) })
+            NSLog("[매거진] 피드가 준 지난 글 %d건을 채웠습니다(출처 %d곳)", filled.count, fill.count)
+        }
+        if !fill.isEmpty {
+            state.magazineFill = Self.magazineFillVersion
+            state.magazineBackfilled = true
+        }
         await Magazine.shared.ingest(found) // 매거진에는 묶이기 전 전부(여러 시각 비교용)
         notifyGrownStories()
         // 알림을 끈 채널(논문·커뮤니티 등 양 많은 곳)은 매거진에만 싣고, 목록·알림에는 넣지 않는다
@@ -128,11 +158,17 @@ final class AppModel: ObservableObject {
         state.unreadKeys = Array((state.unreadKeys + listed.map(\.key)).suffix(recentLimit))
         state.lastCheck = Date()
         state.seen = Store.pruned(state.seen) // 저장 파일만이 아니라 메모리의 기억도 정리(오래 켜 두면 끝없이 커지고 저장마다 정렬하던 문제)
+        await pruneStorySeen()
         // 분야 정책: 즉시 알릴 것 · 묶음으로 고일 것 · 매거진에만 둘 것
         let quiet = isHushed && !manual // 방해 금지 시간·잠시 끄기·회의 중: 알리지 않고 안 읽은 소식으로만 쌓는다
         let drops = decide(candidates, listed: listed, info: info, quiet: quiet)
         Store.save(state)
         await Magazine.shared.publishDue() // 확인을 마친 뒤에 지난 호를 엮어 빠지는 기사가 없게
+        // 확인 도중에 켠 출처는 이번에 받지 못했으니 곧바로 한 번 더(다음 주기까지 기다리지 않게)
+        let enabledNow = state.enabled
+        if pendingFill.contains(where: { enabledNow[$0] == true }) {
+            Task { await checkAll() }
+        }
         if quiet { return }
         if manual, drops.isEmpty, !listed.isEmpty {
             ToastCenter.shared.showInfo("새 소식 \(listed.count)건", sub: "알릴 만큼 큰 소식은 없어 목록·매거진에만 실었어요")
@@ -152,6 +188,7 @@ final class AppModel: ObservableObject {
         change(&p)
         if p.mode == .instant, !wasInstant { p.less = false } // 설정에서 즉시로 되돌리면 '덜 받기'도 풂
         state.sectionPolicy[section] = p
+        if p.mode == .magazine { prunePending() } // '매거진만'으로 바꾸면 이미 고인 그 분야 소식도 묶음으로 보내지 않음
         Store.save(state)
     }
 
@@ -278,7 +315,7 @@ final class AppModel: ObservableObject {
         }
         state.pending.removeAll { !ordered.contains($0.section) }
         subscriptionsChanged() // 뺀 분야의 출처 글은 바로 안 보이게
-        if !turnedOn.isEmpty { Task { await backfillMagazine(only: Set(turnedOn)) } }
+        if !turnedOn.isEmpty { pendingFill.formUnion(turnedOn); Task { await checkAll() } }
     }
 
     // 출처 수(켜짐/전체)
@@ -336,7 +373,7 @@ final class AppModel: ObservableObject {
         let w = word.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !w.isEmpty else { return }
         update { if !$0.muteKeywords.contains(w) { $0.muteKeywords.append(w) } }
-        state.pending.removeAll { "\($0.item.title) \($0.item.titleKo ?? "")".lowercased().contains(w.lowercased()) }
+        prunePending()
     }
     // 낱말 고르기 메뉴에 보일 제목 낱말
     static func titleWords(_ it: NewsItem) -> [String] {
@@ -364,7 +401,22 @@ final class AppModel: ObservableObject {
             it.important = must.contains { Self.text(it).contains($0) } ? true : nil
             it.watch = watch.isEmpty ? nil : WatchWords.match(it, words: watch)
             return it }
+        prunePending() // 설정에서 더한 '알리지 않음' 낱말도 이미 고인 소식에 적용
         subscriptionsChanged()
+    }
+
+    // 설정이 바뀐 뒤 고인 소식(묶음 대기열)에서 이제 알리지 않을 것을 뺀다:
+    // '알리지 않음' 낱말이 든 것 · 알림을 끈 출처 · '매거진만'이 된 분야
+    func prunePending() {
+        let mute = Self.words(state.settings.muteKeywords)
+        state.pending = Self.prunePending(state.pending, mute: mute, notifies: notifies, magazineOnly: { self.policy($0).mode == .magazine })
+    }
+    nonisolated static func prunePending(_ pending: [AppState.PendingItem], mute: [String], notifies: (String) -> Bool,
+                                         magazineOnly: (String) -> Bool) -> [AppState.PendingItem] {
+        pending.filter { p in
+            let text = Self.text(p.item)
+            return !mute.contains { text.contains($0) } && notifies(p.item.sourceId) && !magazineOnly(p.section)
+        }
     }
     nonisolated static func text(_ it: NewsItem) -> String { "\(it.title) \(it.titleKo ?? "") \(it.summary)".lowercased() }
 
@@ -411,6 +463,15 @@ final class AppModel: ObservableObject {
     nonisolated static func inQuiet(hour h: Int, start: Int, end: Int) -> Bool {
         guard start != end else { return false }
         return start < end ? (h >= start && h < end) : (h >= start || h < end)
+    }
+
+    // 매거진 채우기(업데이트 뒤 한 번·처음 켠 출처): 피드가 이미 준 글 중 최근 days 일치를 새것부터 cap 건.
+    // 날짜 없는 글은 어느 날 호인지 몰라 뺀다. 예전엔 출처당 25건·3일로 잘라 많이 쓰는 곳은 어제 글부터 빠졌다
+    static let magazineFillVersion = 2
+    nonisolated static func magazineFill(_ items: [NewsItem], now: Date, days: Double = 7, cap: Int) -> [NewsItem] {
+        let cut = now.addingTimeInterval(-days * 24 * 3600)
+        return Array(items.filter { ($0.date.map { $0 > cut && $0 <= now.addingTimeInterval(3600) }) ?? false }
+            .sorted { $0.date! > $1.date! }.prefix(cap))
     }
 
     // 피드의 글을 본 글 기억에 남기고 새 글만 돌려준다
@@ -461,34 +522,6 @@ final class AppModel: ObservableObject {
         ReaderController.open(item, sequence: sequence)
     }
 
-    // 처음 한 번: 켜진 출처에서 최근 3일 기사를 받아 매거진 첫 호를 채운다(알림 없음)
-    private func backfillMagazine(only: Set<String>? = nil) async {
-        Magazine.shared.preparing = true
-        defer { Magazine.shared.preparing = false }
-        let cutoff = Date().addingTimeInterval(-3 * 24 * 3600)
-        var all: [NewsItem] = []
-        for src in allSources where state.enabled[src.id] == true && (only?.contains(src.id) ?? true) {
-            guard var items = try? await FeedService.shared.items(for: src, conditional: false) else { continue }
-            items = items.filter { ($0.date ?? .distantPast) > cutoff }
-            if src.type == "sitemap" {
-                for i in items.indices.prefix(10) { await FeedService.shared.fillTitle(&items[i]) }
-                items = Array(items.prefix(10))
-            }
-            if src.aiOnly {
-                items = items.filter { let t = "\($0.title) \($0.summary)"; return Resources.aiRegex.firstMatch(in: t, range: NSRange(t.startIndex..., in: t)) != nil }
-            }
-            all += items.prefix(25)
-        }
-        let titles = await Translator.shared.translateMany(all.map(\.title))
-        for i in all.indices where titles[i] != all[i].title { all[i].titleKo = titles[i] }
-        await addEnglishTitles(&all)
-        await Magazine.shared.ingest(applyKeywords(all).sorted { ($0.date ?? .distantPast) < ($1.date ?? .distantPast) })
-        await Magazine.shared.publishDue()
-        state.magazineBackfilled = true
-        Store.save(state)
-        NSLog("[매거진] 첫 호를 %d건으로 채웠습니다", all.count)
-    }
-
     // 한국어 제목 기사에 영어 제목을 붙인다(외국 기사와 같은 소식인지 비교하려고)
     private func addEnglishTitles(_ items: inout [NewsItem]) async {
         let idx = items.indices.filter { !Translator.looksForeign(items[$0].title) && items[$0].titleEn == nil }
@@ -516,6 +549,17 @@ final class AppModel: ObservableObject {
         guard state.storySeen[story] != size else { return }
         state.storySeen[story] = size
         Store.save(state)
+    }
+    // DB 정리(최근 20000건)로 지워진 스토리의 '본 보도 수'·요약을 치운다(팔로우한 스토리는 남김). 묻는 사이에 새로 본 것은 그대로
+    func pruneStorySeen() async {
+        let asked = Array(state.storySeen.keys)
+        guard !asked.isEmpty else { return }
+        let live = await Editor.shared.existingStories(asked)
+        state.storySeen = Self.prunedStorySeen(state.storySeen, asked: Set(asked), live: live, followed: Set(state.followedStories))
+        Magazine.shared.keepDigests(Set(state.storySeen.keys))
+    }
+    nonisolated static func prunedStorySeen(_ seen: [String: Int], asked: Set<String>, live: Set<String>, followed: Set<String>) -> [String: Int] {
+        seen.filter { !asked.contains($0.key) || live.contains($0.key) || followed.contains($0.key) }
     }
     func unseenReports(_ c: Database.Cluster) -> Int { max(0, c.size - (state.storySeen[c.id] ?? c.size)) }
 
@@ -549,7 +593,7 @@ final class AppModel: ObservableObject {
 
     // MARK: 잠시 끄기·브리핑·단축키
     var isSnoozed: Bool { Self.snoozeActive(until: state.snoozeUntil, now: Date()) }
-    // 잠시 끄기는 길어야 '내일 아침 8시'(32시간 안). 이틀보다 먼 끝은 시계가 앞서 있던 때 켠 것으로 보고 풀었다고 본다(STABILITY.md S4)
+    // 잠시 끄기는 길어야 '내일 아침 8시'(32시간 안). 이틀보다 먼 끝은 시계가 앞서 있던 때 켠 것으로 보고 풀었다고 본다
     nonisolated static let snoozeMax: TimeInterval = 48 * 3600
     nonisolated static func snoozeActive(until: Date?, now: Date) -> Bool {
         guard let until else { return false }
@@ -665,6 +709,7 @@ final class AppModel: ObservableObject {
 
     func setNotify(_ sourceId: String, _ on: Bool) {
         state.notify[sourceId] = on
+        if !on { prunePending() } // 끄면 이미 고인 그 출처 소식도 묶음으로 보내지 않음
         Store.save(state)
     }
 
@@ -748,6 +793,15 @@ final class AppModel: ObservableObject {
         if on { Task { await checkAll() } }
     }
 
+    // 설정 › 구독의 묶음 켜기·끄기: 여러 출처를 한 번에(저장·확인은 한 번만)
+    func setEnabled(ids: [String], _ on: Bool) {
+        let change = ids.filter { (state.enabled[$0] == true) != on }
+        guard !change.isEmpty else { return }
+        for id in change { state.enabled[id] = on }
+        subscriptionsChanged()
+        if on { Task { await checkAll() } }
+    }
+
     // 기록 가져오기·되돌리기(Backup)에서만: 상태 여러 항목을 한 번에 바꾼다
     func replaceState(_ change: (AppState) -> AppState) {
         let before = state.settings
@@ -766,6 +820,7 @@ final class AppModel: ObservableObject {
         if state.settings != before { FocusMonitor.shared.invalidate() }
         if state.settings.style == .system, before.style != .system { SystemNotifier.requestAuthorization() }
         if state.settings.intervalMinutes != before.intervalMinutes { restartLoop() }
+        if state.settings.limits != before.limits { Magazine.shared.refresh() } // 보도 수 문턱은 매거진 '주요' 지면도 정함
     }
 
     // 견본 카드. 실제 기사를 다시 띄우면 같은 소식이 또 온 것처럼 보이므로 쓰지 않는다

@@ -376,6 +376,122 @@ public class SettingsPageTests : IDisposable
         await Do("onboarding", new { });
         Assert.Equal(1, platform.Onboarding);
     }
+
+    // 설정 › 구독 정리(SourceDirectory): 찾기·보기·상태를 view 가 받아 묶음·요약·수를 돌려준다
+    private async Task<JsonNode> Dir(object args) => Json(await Do("view", args))["sources"]!["directory"]!;
+    private static List<string> Ids(JsonNode n) => n.AsArray().Select(x => x!["id"]!.GetValue<string>()).ToList();
+
+    [Fact]
+    public async Task DirectoryDefaultsToMediaGroupsWithShortNames()
+    {
+        model.State.Enabled["yna-politics"] = true;
+        var d = await Dir(new { });
+        Assert.Equal("media", d["layout"]!.GetValue<string>());
+        Assert.Equal("all", d["status"]!.GetValue<string>());
+        Assert.Equal(["매체별", "분야별", "지역별"], d["layouts"]!.AsArray().Select(n => n!["label"]!.GetValue<string>()));
+        Assert.Equal(["전체", "켠 것", "끈 것"], d["statuses"]!.AsArray().Select(n => n!["label"]!.GetValue<string>()));
+        Assert.Equal($"{Resources.Config.Sources.Count}곳", d["count"]!.GetValue<string>());
+        Assert.Equal("켠 출처 1곳 · 정치 1", d["summary"]!.GetValue<string>());
+        Assert.False(d["empty"]!.GetValue<bool>());
+        Assert.True(d["mine"]!["show"]!.GetValue<bool>());   // 거르지 않으면 비어 있어도 보임(안내)
+        Assert.Equal("내 채널 0", d["mine"]!["label"]!.GetValue<string>());
+        var groups = d["groups"]!.AsArray();
+        Assert.Equal(Resources.Config.Sources.Count, groups.Sum(g => g!["rows"]!.AsArray().Count));
+        var yna = groups.First(g => g!["id"]!.GetValue<string>() == "media:yna")!;
+        Assert.Equal("연합뉴스", yna["title"]!.GetValue<string>());
+        Assert.Equal($"1/{yna["total"]!.GetValue<int>()} 켬", yna["countLabel"]!.GetValue<string>());
+        Assert.False(yna["single"]!.GetValue<bool>());
+        Assert.Equal("모두 켜기", yna["bulk"]!.GetValue<string>());
+        var pol = yna["rows"]!.AsArray().First(r => r!["id"]!.GetValue<string>() == "yna-politics")!;
+        Assert.Equal("정치", pol["shortName"]!.GetValue<string>());   // 묶음 안에서는 매체 이름을 뗀 이름
+        Assert.Equal("연합뉴스 정치", pol["name"]!.GetValue<string>());
+        Assert.Equal("politics", pol["section"]!.GetValue<string>());
+        Assert.Equal("정치", pol["sectionName"]!.GetValue<string>());
+        Assert.Equal("국내", pol["region"]!.GetValue<string>());
+        Assert.Null(pol["paywall"]);
+        // 유료 자물쇠: hard · metered
+        var rows = groups.SelectMany(g => g!["rows"]!.AsArray()).ToList();
+        var nyt = rows.First(r => r!["id"]!.GetValue<string>() == "nyt-home")!;
+        Assert.Equal(("hard", "구독해야 읽을 수 있음"), (nyt["paywall"]!.GetValue<string>(), nyt["paywallHelp"]!.GetValue<string>()));
+        Assert.Equal("해외", nyt["region"]!.GetValue<string>());
+        var verge = rows.First(r => r!["id"]!.GetValue<string>() == "verge")!;
+        Assert.Equal("한 달 몇 건 무료", verge["paywallHelp"]!.GetValue<string>());
+        // 출처가 하나뿐인 매체는 묶음 없이 그냥 줄
+        Assert.Contains(groups, g => g!["single"]!.GetValue<bool>() && g["total"]!.GetValue<int>() == 1);
+        // 추천 채널: 거르지 않으면 전부
+        Assert.Equal(ChannelCatalog.All.Count, d["recommended"]!["count"]!.GetValue<int>());
+        // 예전 필드도 그대로(tiers·custom·catalog)
+        Assert.Equal(3, Json(page.View())["sources"]!["tiers"]!.AsArray().Count);
+    }
+
+    [Fact]
+    public async Task DirectorySearchStatusAndLayoutRemembered()
+    {
+        var total = Resources.Config.Sources.Count;
+        var d = await Dir(new { query = "연합 뉴스" });   // 띄어쓰기 무시
+        Assert.True(d["searching"]!.GetValue<bool>());
+        Assert.Equal(["media:yna"], Ids(d["groups"]!));
+        var n = d["groups"]![0]!["rows"]!.AsArray().Count;
+        Assert.Equal($"{total}곳 중 {n}곳", d["count"]!.GetValue<string>());
+        Assert.False(d["mine"]!["show"]!.GetValue<bool>()); // 찾는 중 걸린 내 채널이 없으면 숨김
+
+        // 찾기는 다음 view 에도 남는다(보내지 않으면 그대로) · 분야별로 바꾸면 기억(prefs)
+        d = await Dir(new { layout = "section" });
+        Assert.Equal("section", d["layout"]!.GetValue<string>());
+        Assert.Equal("연합 뉴스", d["query"]!.GetValue<string>());
+        Assert.All(Ids(d["groups"]!), id => Assert.StartsWith("section:", id));
+        Assert.Equal("section", Prefs.Get(SettingsPage.LayoutKey, ""));
+        Assert.Equal("section", Json(new SettingsPage(model, platform).View())["sources"]!["directory"]!["layout"]!.GetValue<string>());
+
+        // 상태: 켠 것만 · 결과 없음 안내
+        model.State.Enabled["yna-economy"] = true;
+        d = await Dir(new { query = "", status = "on", layout = "region" });
+        Assert.Equal(["region:kr"], Ids(d["groups"]!));
+        Assert.Equal(["yna-economy"], Ids(d["groups"]![0]!["rows"]!));
+        Assert.Equal("모두 끄기", d["groups"]![0]!["bulk"]!.GetValue<string>());
+        Assert.Equal(["yna-economy"], d["groups"]![0]!["ids"]!.AsArray().Select(x => x!.GetValue<string>()));
+        d = await Dir(new { query = "없는출처이름", status = "all" });
+        Assert.True(d["empty"]!.GetValue<bool>());
+        Assert.StartsWith("찾는 출처가 없습니다", d["emptyText"]!.GetValue<string>());
+        Assert.Equal(0, d["recommended"]!["count"]!.GetValue<int>());
+
+        await Assert.ThrowsAnyAsync<Exception>(() => Do("view", new { layout = "tier" }));
+        await Assert.ThrowsAnyAsync<Exception>(() => Do("view", new { status = "maybe" }));
+    }
+
+    [Fact]
+    public async Task DirectoryFiltersMyChannels()
+    {
+        var src = Custom("custom-sample", "https://example.com/feed");
+        model.State.CustomSources.Add(src);
+        model.State.Enabled[src.Id] = false;
+        var d = await Dir(new { query = "sample" });
+        Assert.Equal([src.Id], Ids(d["mine"]!["rows"]!));
+        Assert.Equal("내 채널 1", d["mine"]!["label"]!.GetValue<string>());
+        d = await Dir(new { query = "", status = "on" });
+        Assert.Empty(d["mine"]!["rows"]!.AsArray());
+        Assert.False(d["mine"]!["show"]!.GetValue<bool>());
+    }
+
+    [Fact]
+    public async Task SetEnabledManySavesOnceAndRejectsUnknown()
+    {
+        var checks = 0;
+        model.RunCheck = () => { checks++; return Task.CompletedTask; };
+        string[] ids = ["yna-politics", "yna-economy"];
+        await Assert.ThrowsAnyAsync<Exception>(() => Do("setEnabledMany", new { ids = new[] { "yna-politics", "nope" }, on = true }));
+        Assert.False(model.State.Enabled.ContainsKey("yna-politics"));   // 모르는 id 가 있으면 아무것도 안 바꿈
+        Assert.Equal(0, checks);
+
+        await Do("setEnabledMany", new { ids, on = true });
+        Assert.All(ids, id => Assert.True(model.State.Enabled[id]));
+        Assert.Equal(1, checks);                                          // 출처마다가 아니라 한 번
+
+        await Do("setEnabledMany", new { ids, on = false });
+        Assert.All(ids, id => Assert.False(model.State.Enabled[id]));
+        Assert.Equal(1, checks);                                          // 끌 때는 확인 안 함
+        await Assert.ThrowsAnyAsync<Exception>(() => Do("setEnabledMany", new { on = true }));
+    }
 }
 
 // 번역 방식 고르기(W4): 설정 › 일반 › 번역

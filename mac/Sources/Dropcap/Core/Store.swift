@@ -20,6 +20,7 @@ struct AppState: Codable {
     var interestCategory: [String: Double] = [:]  // 분야별로 연 횟수(관심사)
     var interestSource: [String: Double] = [:]
     var magazineBackfilled = false      // 처음 매거진을 채웠는지
+    var magazineFill = 0                // 매거진 채우기 방식 판(2 = 피드가 준 7일치를 확인 때 함께 넣음 — 업데이트 뒤 한 번 채움)
     var notify: [String: Bool] = [:]    // 출처별 알림(없으면 출처 기본값)
     var followedStories: [String] = []  // 팔로우한 스토리(새 보도가 붙으면 알림)
     var storySeen: [String: Int] = [:]  // 스토리를 마지막으로 봤을 때의 보도 수('새 보도 N')
@@ -67,7 +68,7 @@ struct AppState: Codable {
         var autoQuietFullscreen = true  // 전체 화면 앱 사용 중에는 조용히(고임)
         var autoQuietSharing = true     // 화면 공유·기록 중
         var autoQuietCalendar = false   // 캘린더 일정 중(켤 때 권한을 묻는다)
-        var translateEngine: Translator.Mode = .auto // 번역 방식: auto·apple·google·off(윈도우·리눅스와 같은 키·값, mac/TRANSLATE.md)
+        var translateEngine: Translator.Mode = .auto // 번역 방식: auto·apple·google·off(윈도우·리눅스와 같은 키·값)
 
         var limits: PolicyLimits {
             PolicyLimits(totalCap: totalDailyCap, krThreshold: krThreshold, intlThreshold: intlThreshold, bigThreshold: bigThreshold)
@@ -138,6 +139,7 @@ struct AppState: Codable {
         interestCategory = (try? c.decodeIfPresent([String: Double].self, forKey: .interestCategory)) ?? [:]
         interestSource = (try? c.decodeIfPresent([String: Double].self, forKey: .interestSource)) ?? [:]
         magazineBackfilled = (try? c.decodeIfPresent(Bool.self, forKey: .magazineBackfilled)) ?? false
+        magazineFill = (try? c.decodeIfPresent(Int.self, forKey: .magazineFill)) ?? 0
         notify = (try? c.decodeIfPresent([String: Bool].self, forKey: .notify)) ?? [:]
         followedStories = (try? c.decodeIfPresent([String].self, forKey: .followedStories)) ?? []
         storySeen = (try? c.decodeIfPresent([String: Int].self, forKey: .storySeen)) ?? [:]

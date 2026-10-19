@@ -12,12 +12,11 @@
 | Windows (C# · WinUI 3 + WebView2) | 맥과 같은 기능을 옮김(맥에서 시험·컴파일 점검), 윈도우 실기 확인 남음 | [`windows/README.md`](windows/README.md) |
 | Linux (Rust · GTK4 · libadwaita) | 맥과 같은 기능을 옮김(맥에서 GTK 로 실행 확인), 리눅스 배포판 실기 확인 남음 | [`linux/README.md`](linux/README.md) |
 
-세 판이 갖춰야 할 기능과 판별 상태는 [`docs/FEATURES.md`](docs/FEATURES.md) 하나에 있습니다. 문서 전체 지도는 [`docs/README.md`](docs/README.md).
+기능 목록은 [`docs/FEATURES.md`](docs/FEATURES.md), 시험은 [`docs/TESTING.md`](docs/TESTING.md), 디자인 토큰은 [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## 맥 판
 
 - macOS 14 이상. 기기 내 번역·3줄 요약·저녁 정리(Apple Intelligence)와 유리(Liquid Glass) 물방울은 macOS 26 이상
-- 앱 크기 약 31MB(애플 실리콘·인텔 공용 실행 파일 24MB + Pretendard 글꼴 6MB · 2026-10-14 빌드)
 
 ### 매거진 (⌥⌘M)
 - **오늘 호 · 이번 주 · 지난 호**(하루·한 주가 지나면 자동 발행). 표지 기사 + 분야별 지면(분야색 유리 띠 머리) + 구독 채널 지면(영상·논문·릴리스·커뮤니티·팟캐스트). 이번 주는 달력 한 주(지난 주간과 이어짐), 주간 표지는 그 주 가장 많이 다룬 이야기.
@@ -44,7 +43,7 @@
 - 키보드: ↑↓ 또는 J·K 이동 · ⏎ 열기 · S 나중에 읽기 · O 브라우저 · M 읽음/안 읽음. 매거진은 ⌘1 오늘 · ⌘2 이번 주 · ⌘3 스토리 · ⌘4 스크랩북 · ⌘F 검색 · ⌘[ ⌘] 지면 넘기기 · ⌘R 새로 확인 · ⌘, 설정(옆 목록 맨 아래 '설정' 줄도). 어디서나 ⌥⌘N 가장 최근 안 읽은 소식 · ⌥⌘M 매거진.
 
 ### 구독·연동
-- 기본 출처 148곳(국내 83 · 해외 65, `shared/sources.json`). 처음에 고른 분야의 출처가 켜집니다. 설정 › 구독에서 아무 주소나 추가(웹사이트 피드 자동 발견·Substack·Medium·YouTube·GitHub 릴리스·Reddit·arXiv·팟캐스트), OPML 내보내기·가져오기.
+- 기본 출처 147곳(국내 82 · 해외 65, `shared/sources.json`). 처음에 고른 분야의 출처가 켜집니다. 설정 › 구독에서 아무 주소나 추가(웹사이트 피드 자동 발견·Substack·Medium·YouTube·GitHub 릴리스·Reddit·arXiv·팟캐스트), OPML 내보내기·가져오기.
 - 위젯('오늘의 소식': 오늘의 표지·최신 소식·안 읽은 수), 단축어('최신 소식 가져오기'·'주소를 나중에 읽기로 저장'·'매거진 열기'), Spotlight(저장·스크랩), 서비스 메뉴 'Dropcap 에 저장', `dropcap://save?url=…`, 북마클릿, 노트 폴더로 스크랩 내보내기.
 - **내 기록 내보내기·가져오기**(설정 › 일반): 저장·스크랩·폴더·구독·분야·알림 설정·낱말·숨긴 출처를 JSON 하나로. 가져오기는 없는 것만 더하고, 가져오기 전 기록을 남겨 되돌릴 수 있습니다(집·회사 Mac 옮기기).
 
@@ -75,7 +74,7 @@ DROPCAP_DATA_DIR=$(mktemp -d) .build/debug/Dropcap                     # 시험�
 DROPCAP_TEST_TOAST=1 .build/debug/Dropcap                               # 실행하자마자 알림 미리 보기
 DROPCAP_TEST_URL=<기사 주소> .build/debug/Dropcap                        # 읽기 창 바로 열기
 DROPCAP_TEST_MAGAZINE=1 .build/debug/Dropcap                             # 매거진 바로 열기
-DROPCAP_TEST_READSWEEP=<결과 폴더> .build/debug/Dropcap                  # 기본 출처 본문 추출 전수 점검(mac/READSWEEP.md)
+DROPCAP_TEST_READSWEEP=<결과 폴더> .build/debug/Dropcap                  # 기본 출처 본문 추출 전수 점검
 DROPCAP_LIVE_TESTS=1 swift test                                         # 실제 서버로 피드·주소 해석 시험
 ```
 
@@ -98,7 +97,7 @@ mac/
   Tests/       시험
   scripts/     빌드·아이콘
 windows/  linux/           다른 판(각 README)
-docs/                      기능 목록(FEATURES)·직접 확인 목록(CHECKLIST)·문서 지도(README)
+docs/                      기능 목록(FEATURES)·시험(TESTING)·디자인(DESIGN)·아이콘(ICON)
 ```
 
 ## 라이선스

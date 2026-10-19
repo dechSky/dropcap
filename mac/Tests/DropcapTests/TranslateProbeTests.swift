@@ -4,8 +4,8 @@ import Testing
 import Translation
 @testable import Dropcap
 
-// 읽기 창 번역 품질 점검(mac/TRANSLATE.md). 실제 기사를 빠른 길(스크립트 없음)로 추리고, 앱과 같은 방식으로 번역해
-// 문단별로 나란히 JSON 으로 남긴다. 기사 본문이 들어가므로 결과는 저장소 밖(관리자·작업자 임시 폴더)에 둔다.
+// 읽기 창 번역 품질 점검. 실제 기사를 빠른 길(스크립트 없음)로 추리고, 앱과 같은 방식으로 번역해
+// 문단별로 나란히 JSON 으로 남긴다. 기사 본문이 들어가므로 결과는 저장소 밖(임시 폴더)에 둔다.
 //  DROPCAP_TRANSLATE_PROBE=<결과 폴더>        켜기
 //  DROPCAP_TRANSLATE_PROBE_URLS=<주소 목록 파일>  한 줄에 하나(# 는 주석). 줄 끝에 " ref" 를 붙이면 문단별 단독 번역(기준)도,
 //                                            " apple" 이면 기기 내 번역(받아져 있을 때)도 받는다
@@ -155,7 +155,7 @@ struct TranslateProbeTests {
         }
     }
 
-    // 기기 내 번역 속도(케이스 5): 실제 기사로 '첫 4문단이 바뀌기까지'와 '모두 끝날 때까지'를 잰다. 부하는 bugak load 로 함께 적는다.
+    // 기기 내 번역 속도(케이스 5): 실제 기사로 '첫 4문단이 바뀌기까지'와 '모두 끝날 때까지'를 잰다. 시스템 부하도 함께 적는다.
     //  DROPCAP_TRANSLATE_SPEED=<주소 목록 파일>
     @Test(.enabled(if: ProcessInfo.processInfo.environment["DROPCAP_TRANSLATE_SPEED"] != nil))
     func appleSpeed() async throws {

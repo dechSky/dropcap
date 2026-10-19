@@ -3,7 +3,7 @@ import Foundation
 import Testing
 @testable import Dropcap
 
-// 남은 개선 묶음(mac/EXTRAS.md): 유료 기사 표시·무료 보도 안내 · 회의 중 조용히 · 오늘 호 완독 · 분야별 저녁 정리 · 분야 대표 사진 점수
+// 남은 개선 묶음: 유료 기사 표시·무료 보도 안내 · 회의 중 조용히 · 오늘 호 완독 · 분야별 저녁 정리 · 분야 대표 사진 점수
 
 private func news(_ id: String, source: String, tier: String = "press", link: String? = nil, date: Date = Date(),
                   title: String? = nil, kind: String? = nil) -> NewsItem {
@@ -82,7 +82,7 @@ private func tempDB() throws -> (Database, URL) {
         let all = Resources.config.sources
         for s in all where s.paywall != nil { #expect(["hard", "metered"].contains(s.paywall!), "\(s.id)") }
         #expect(all.first { $0.id == "wsj-markets" }?.paywall == "hard")
-        #expect(all.filter { $0.id.hasPrefix("nyt-") }.allSatisfy { $0.paywall == "hard" }) // 앱은 403 으로 못 읽음(sources-audit)
+        #expect(all.filter { $0.id.hasPrefix("nyt-") }.allSatisfy { $0.paywall == "hard" }) // 앱은 403 으로 못 읽음
         #expect(all.first { $0.id == "verge" }?.paywall == "metered") // 구독 문·isAccessibleForFree=false
         #expect(Sections.meta["wsj-markets"]?.paywall == "hard")
     }

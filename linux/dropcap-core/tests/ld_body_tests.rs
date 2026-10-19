@@ -1,4 +1,4 @@
-// 맥 ld-body-match 를 옮긴 것(teaser-ld-port, mac/READER-CUT.md 3단계 'Verge 짧은 기사 맛보기 오판'):
+// 맥 ld-body-match 를 옮긴 것(teaser-ld-port):
 // 사이트 ld+json articleBody 글자 수가 우리 본문과 ±10% 이내면 '유료 표시+1,500자 미만' 규칙을 쓰지 않는다.
 // 글·주소는 지어냄
 use dropcap_core::article::{ld_body_length, Block};

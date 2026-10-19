@@ -15,6 +15,7 @@ final class ReaderModel: ObservableObject {
     @Published var keyPoints: [String]?  // 3줄 요약
     @Published var summarizing = false
     @Published var engine = ""
+    @Published var progress: (done: Int, total: Int)? // 번역 중 받은 문단 수 / 번역할 문단 수
     @Published var cover: String?        // 표지 사진(피드 → 매거진 기록 → 기사 머리 대표 사진)
     @Published var paywalled = false     // 맛보기만 나옴(유료벽 뒤)
     @Published var partial = false       // 본문 일부만 가져왔을 수 있음
@@ -40,7 +41,14 @@ final class ReaderModel: ObservableObject {
         token = svc.observe(item.link) { [weak self] a in self?.apply(a) }
         let a = await svc.prepare(item)
         apply(a)
-        if let token { svc.stopObserving(item.link, token) }
+        if let token { svc.stopObserving(item.link, token); self.token = nil }
+    }
+
+    // 창을 닫거나 J/K 로 다른 기사로 갈 때(ReaderController): 그만 받고, 번역 중이면 멈춘다
+    func leave() {
+        guard let token else { return }
+        ArticleService.shared.release(item.link, token)
+        self.token = nil
     }
 
     // '다시 받기': 저장한 것을 지우고 처음부터(맛보기·일부만이 풀렸는지, 앱이 고쳐졌는지)
@@ -48,8 +56,10 @@ final class ReaderModel: ObservableObject {
         withMotion(Motion.enter()) { phase = .loading }
         let svc = ArticleService.shared
         let t = svc.observe(item.link) { [weak self] a in self?.apply(a) }
+        token = t
         apply(await svc.reload(item))
         svc.stopObserving(item.link, t)
+        if token == t { token = nil }
     }
 
     private func apply(_ a: PreparedArticle) {
@@ -57,6 +67,7 @@ final class ReaderModel: ObservableObject {
         originalTitle = ArticleService.stripSiteName(a.originalTitle, source: item.sourceName, feedTitle: item.title)
         translated = a.translated
         engine = a.engine
+        progress = a.progress.flatMap { n in a.progressTotal.map { (n, $0) } }
         keyPoints = a.summary
         summarizing = a.summarizing
         summary = a.fallback
@@ -72,6 +83,13 @@ final class ReaderModel: ObservableObject {
         case .failed: next = .failed
         }
         if next != phase { withMotion(Motion.enter()) { phase = next } }
+    }
+
+    // 번역 중 안내: 기기 내 번역은 느려서(기사 하나에 수십 초) 몇 문단째인지 보여 준다. 구글은 지금 그대로
+    nonisolated static func translatingText(engine: String, progress: (done: Int, total: Int)?) -> String {
+        let tail = "위에서부터 차례로 바뀝니다"
+        guard engine == Translator.Engine.apple.rawValue, let p = progress, p.total > 0 else { return "한국어로 바꾸는 중 — " + tail }
+        return "기기 내 번역 중 \(p.done)/\(p.total) — " + tail
     }
 
     // 무료 보도를 먼저 권할 때와 그 이유: 유료로 알려진 곳이거나, 열어 보니 막혔을 때
@@ -232,7 +250,7 @@ struct ReaderView: View {
                 case .translating, .done:
                     keyPointsBox.padding(.top, Space.xl)
                     if model.phase == .translating {
-                        Label("한국어로 바꾸는 중 — 위에서부터 차례로 바뀝니다", systemImage: "character.bubble")
+                        Label(ReaderModel.translatingText(engine: model.engine, progress: model.progress), systemImage: "character.bubble")
                             .font(.dsCallout).foregroundStyle(.secondary)
                             .symbolEffect(.pulse, options: .repeating)
                             .padding(.top, Space.l)
@@ -662,6 +680,7 @@ enum ReaderController {
               let w = host.view.window else { NSSound.beep(); return }
         let next = list[j]
         AppModel.shared.markOpened(next)
+        model.leave()
         host.rootView = ReaderView(model: ReaderModel(item: next, sequence: model.sequence))
         w.title = next.sourceName
     }
@@ -699,7 +718,7 @@ enum ReaderController {
         token = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: w, queue: .main) { [weak w] _ in
             MainActor.assumeIsolated {
                 windows.removeAll { $0 === w || $0 == nil }
-                if let w { hosts.removeValue(forKey: ObjectIdentifier(w)) }
+                if let w { hosts.removeValue(forKey: ObjectIdentifier(w))?.rootView.model.leave() }
                 if let token { NotificationCenter.default.removeObserver(token) }
                 w?.contentViewController = nil
             }

@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import Dropcap
 
-// mac/AUDIT.md 에서 고친 버그들의 시험. 모두 바깥 서버·실제 사용자 기록 없이 돈다.
+// 코드 점검에서 고친 버그들의 시험. 모두 바깥 서버·실제 사용자 기록 없이 돈다.
 
 @Suite struct EntityDecodeTests {
     @Test func decodesCommonAndNumericEntities() {

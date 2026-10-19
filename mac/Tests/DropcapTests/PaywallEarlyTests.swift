@@ -3,7 +3,7 @@ import Foundation
 import Testing
 @testable import Dropcap
 
-// 유료 기사를 목록 단계에서 알리기(paywall-early — mac/READER-CUT.md '4단계'):
+// 유료 기사를 목록 단계에서 알리기(paywall-early):
 // ① 피드가 기사마다 적은 유료 표시(feed-paid-mark) ② 미리 받기에서 맛보기로 판정된 기사(teaser-mark)
 
 private func tempDB() throws -> (Database, URL) {
@@ -135,7 +135,7 @@ private let atomXML = """
     }
 }
 
-// 보안·버그 점검 review-3: B3(다시 맛보기면 시각 갱신) · 시험 빈틈 T1(기사 준비가 부르는 판정 함수 그대로) · 화면 갱신(T4)
+// 다시 맛보기면 시각 갱신 · 기사 준비가 부르는 판정 함수 그대로 · 화면 갱신
 @Suite(.serialized) struct TeaserReview3Tests {
     private func p(_ s: String) -> Block { Block(type: .p, text: s) }
 

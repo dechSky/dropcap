@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import Dropcap
 
-// 캐러셀·슬라이드 속 본문 글(mac/READER-CUT.md '5단계 결과', 규칙 carousel-slides).
+// 캐러셀·슬라이드 속 본문 글(규칙 carousel-slides).
 // 실제 꼴은 Google 블로그 큰 발표 기사(scramble_fixture.py 로 글·주소를 바꿈 — 표지 낱말만 원래 자리에), 나머지는 지어낸 HTML.
 private func para(_ n: Int) -> String {
     "Paragraph \(n) explains how the harbor authority weighed the proposal, listened to residents and set out a schedule for the work."
@@ -98,6 +98,35 @@ private func page(_ middle: String, after: String = "") -> String {
         #expect(at(b, "Gallery card") == nil, "본문 뒤 캐러셀")
         #expect(at(b, "Sidebar card") == nil, "aside 안 캐러셀")
         #expect(at(b, para(8)) != nil)
+    }
+
+    @Test func recommendHeadOutsideRoot() async {
+        // 보안 낮음 L2: 추천 머리말이 캐러셀 바깥 바로 앞 형제(또는 한 겹 감싼 상자의 앞 형제)이고 칸에 링크가 없어도(onclick 카드) 화면 밖 칸을 넣지 않는다
+        let card = { (i: Int) in "<div class=\"swiper-slide\" aria-hidden=\"true\" onclick=\"go(\(i))\"><p>Related card \(i) follows the council debate on the new harbor budget.</p></div>" }
+        let html = page("""
+        <h2>Related stories</h2><div class="swiper"><div class="swiper-wrapper">\((1...3).map(card).joined())</div></div>
+        <p>\(para(41))</p>
+        <div class="section-head"><h3>You may also like</h3></div><div class="box"><div class="glide"><div class="glide__slide" aria-hidden="true"><p>Wrapped card nine follows the council debate on the harbor.</p></div></div></div>
+        <p>\(para(42))</p>
+        <h2>Building the pier</h2><div class="swiper"><div class="swiper-slide" aria-hidden="true"><p>\(slideText(7))</p></div></div>
+        """)
+        let b = await blocks(html)
+        #expect(at(b, "Related card") == nil, "바로 앞 형제 제목")
+        #expect(at(b, "Wrapped card") == nil, "감싼 상자의 앞 형제 제목")
+        #expect(at(b, slideText(7)) != nil, "추천이 아닌 앞 제목은 그대로")
+    }
+
+    @Test func slideCap() async {
+        // 보안 낮음 L3: 칸 수(50)·칸 글 양(본문 글자 2배, 적어도 3000자) 상한 — 수백 칸 갤러리로 본문이 불어나지 않게
+        let photos = (0..<80).map { "<div class=\"swiper-slide\"><img src=\"https://img.example.com/g\($0).jpg\"></div>" }.joined()
+        let b1 = await blocks(page("<div class=\"swiper\">\(photos)</div>"))
+        #expect(b1.filter { $0.type == .img && $0.src?.contains("/g") == true }.count == 50, "칸 50개까지")
+        #expect(b1.contains { $0.src?.hasSuffix("/g0.jpg") == true }, "앞 칸부터")
+        let texts = (0..<80).map { "<div class=\"swiper-slide\"><p>\(slideText($0))</p></div>" }.joined()
+        let b2 = await blocks(page("<div class=\"swiper\">\(texts)</div>"))
+        let n = (0..<80).filter { at(b2, slideText($0)) != nil }.count
+        #expect(at(b2, slideText(0)) != nil && n >= 20 && n <= 35, "글 양 상한(\(n)칸)")
+        #expect(at(b2, para(5)) != nil)
     }
 
     @Test func sameBlockInAllThreeScripts() throws {

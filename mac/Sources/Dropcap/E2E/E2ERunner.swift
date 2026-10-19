@@ -167,6 +167,15 @@ final class E2ERun {
         return true
     }
 
+    // 앱의 1분 점검을 실제로 기다리지 않고 바로 한 번 부른다(타이머가 부르는 그 함수 — 묶음·잠시 끄기 끝·지난 호 발행).
+    // 바로 안 되면 실제 1분 타이머까지 기다린다(timeout). 예전엔 묶음 단계마다 최대 80초를 실제로 기다렸다.
+    @discardableResult
+    func tickUntil(_ timeout: Double, _ cond: () -> Bool) async -> Bool {
+        AppModel.minuteTimerFired()
+        if await until(3, cond) { return true }
+        return await until(timeout, cond)
+    }
+
     // 앱의 자동 확인과 겹치지 않게 기다렸다가 한 번 확인
     func check() async {
         await until(60) { !model.checking }
@@ -254,9 +263,10 @@ final class E2ERun {
         case "recover": await E2EPhases.recover(self)
         case "clicks": await E2EClickPhase.run(self)
         case "header": await E2EHeaderPhase.run(self) // 창 머리 겹침 스냅샷(scripts/e2e/header.sh)
-        case "soak": await E2ESoak.run(self) // 오래 켜 두기(scripts/e2e/soak.sh · STABILITY.md)
-        case "faults": await E2EFaults.run(self) // 실패 처리(scripts/e2e/faults.sh · STABILITY.md)
-        case "probe": await E2EProbe.run(self) // 시작 시간·첫 화면(scripts/e2e/startup.sh · STABILITY.md)
+        case "soak": await E2ESoak.run(self) // 오래 켜 두기(scripts/e2e/soak.sh)
+        case "faults": await E2EFaults.run(self) // 실패 처리(scripts/e2e/faults.sh)
+        case "probe": await E2EProbe.run(self) // 시작 시간·첫 화면(scripts/e2e/startup.sh)
+        case "settings": await E2ESettingsEffects.run(self) // 설정이 실제로 반영되는지(scripts/e2e/settings.sh)
         default: await E2EPhases.main(self)
         }
         note("=== \(phase) 끝: \(steps.filter { $0.pass == true }.count) 통과 · \(steps.filter { $0.pass == false }.count) 실패 · \(steps.filter { $0.pass == nil }.count) 확인 못 함")

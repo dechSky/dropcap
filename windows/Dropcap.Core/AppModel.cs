@@ -24,7 +24,7 @@ public sealed class AppModel
     public static AppModel? Shared { get; private set; }
 
     public AppState State { get; private set; }
-    public bool Checking { get; private set; }
+    public bool Checking => Volatile.Read(ref checking) == 1;
     public bool FirstRun { get; }
     public Magazine Magazine { get; }
     public IAppUi Ui { get; set; }
@@ -39,6 +39,10 @@ public sealed class AppModel
     internal FeedService Feeds { get; set; } = FeedService.Shared;
 
     private CancellationTokenSource? loop;
+    private SynchronizationContext? uiContext;   // Start 를 부른 화면 스레드(이어 하는 확인을 여기로 보냄)
+    private int checking;
+    private readonly HashSet<string> pendingFill = new(); // 켰지만 아직 매거진을 채우지 못한 출처(다음 확인에서 7일치를 넣음)
+    internal HashSet<string> PendingFillForTests => pendingFill;
     private Timer? minuteTimer;
     private readonly bool persist;
 
@@ -64,10 +68,9 @@ public sealed class AppModel
     public void Start(SynchronizationContext? ui = null)
     {
         Magazine.MigrateIfNeeded(State);
-        if (!State.MagazineBackfilled) _ = BackfillMagazineAsync();
         RestartLoop();
         // 1분마다: 아침 브리핑 시각인지, 잠시 끄기가 끝났는지
-        var ctx = ui ?? SynchronizationContext.Current;
+        var ctx = uiContext = ui ?? SynchronizationContext.Current;
         minuteTimer = new Timer(_ =>
         {
             if (ctx is not null) ctx.Post(_ => MinuteTick(), null); else MinuteTick();
@@ -104,24 +107,49 @@ public sealed class AppModel
     // MARK: 확인
     public async Task CheckAllAsync(bool manual = false)
     {
-        if (Checking) return;
-        Checking = true;
+        if (Interlocked.Exchange(ref checking, 1) == 1) return;   // 확인과 설정을 한 번에(두 확인이 겹쳐 알림이 두 번 뜨지 않게)
         Changed?.Invoke();
         try
         {
             var active = AllSources.Where(s => State.Enabled.GetValueOrDefault(s.Id)).ToList();
+            // 매거진 채우기: 업데이트 뒤 한 번(전부)·처음 켠 출처·다시 켠 출처는 피드가 준 최근 7일치를 매거진에만 넣는다(추가 요청 없음).
+            // 이 출처들은 304(바뀐 것 없음)로 빈손이 되지 않게 조건 없이 받는다 — 요청 수는 같다(맥 AppModel.checkAll 과 같은 규칙)
+            var fillAll = State.MagazineFill < MagazineFillVersion;
+            var filling = active.Select(s => s.Id).Where(id => fillAll || pendingFill.Contains(id) || !State.Seeded.Contains(id)).ToHashSet();
+            if (!State.MagazineBackfilled && filling.Count > 0) { Magazine.Preparing = true; Magazine.NotifyChanged(); }
             var results = await Task.WhenAll(active.Select(async src =>
             {
-                try { return (src, Items: await Feeds.ItemsAsync(src), Error: (string?)null); }
+                try { return (src, Items: await Feeds.ItemsAsync(src, conditional: !filling.Contains(src.Id)), Error: (string?)null); }
                 catch (Exception e) { return (src, Items: (List<NewsItem>?)null, Error: e.Message); }
             }));
             var found = new List<NewsItem>();
+            var fill = new List<(Source Src, List<NewsItem> Items)>();
             foreach (var (src, items, error) in results)
             {
                 if (error is not null) { State.Errors[src.Id] = error; continue; }
                 State.Errors.Remove(src.Id);
-                if (items is not null) found.AddRange(await FreshAsync(items, src));
+                if (items is null) continue;
+                if (filling.Contains(src.Id)) fill.Add((src, MagazineFillItems(items, Now(), src.Type == "sitemap" ? 10 : 120)));
+                found.AddRange(await FreshAsync(items, src));
             }
+            // 채울 글 중 이미 매거진에 있거나 이번 새 글인 것은 빼고(제목 번역을 다시 하지 않게)
+            var newKeys = found.Select(i => i.Key).ToHashSet();
+            var fillKeys = fill.SelectMany(f => f.Items).Select(i => i.Key).Where(k => !newKeys.Contains(k)).ToList();
+            var existing = await Task.Run(() => Magazine.Existing(fillKeys));
+            var quietItems = new List<NewsItem>();
+            foreach (var (src, items) in fill)
+                quietItems.AddRange(await KeptAsync(items.Where(i => !newKeys.Contains(i.Key) && !existing.Contains(i.Key)).ToList(), src));
+            pendingFill.ExceptWith(filling); // 받다가 실패한 출처도 뺀다(곧바로 다시 확인을 되풀이하지 않게 — 처음 켠 출처는 다음 확인에서 다시 채움)
+            if (quietItems.Count > 0)
+            {
+                // 채운 글: 알림·목록 없이 매거진에만, 오래된 것부터(스토리가 시간 순으로 묶이게)
+                quietItems = await TranslateTitlesAsync(quietItems);
+                quietItems = await AddEnglishTitlesAsync(ApplyKeywords(quietItems));
+                var ordered = quietItems.Where(i => !State.HiddenSources.Contains(i.SourceId)).OrderBy(i => i.Date ?? DateTimeOffset.MinValue).ToList();
+                await Task.Run(() => Magazine.Ingest(ordered));
+            }
+            if (fill.Count > 0) { State.MagazineFill = MagazineFillVersion; State.MagazineBackfilled = true; }
+            if (Magazine.Preparing) { Magazine.Preparing = false; Magazine.NotifyChanged(); }
 
             found = found.OrderByDescending(i => i.Date ?? DateTimeOffset.MinValue).ToList();
             if (found.Count > 0) found = await TranslateTitlesAsync(found);
@@ -143,6 +171,9 @@ public sealed class AppModel
             var drops = await Task.Run(() => Decide(candidates, listed, quiet));
             Save();
             await Task.Run(() => Magazine.PublishDue()); // 확인을 마친 뒤에 지난 호를 엮어 빠지는 기사가 없게
+            await PruneStorySeenAsync();   // 지난 호를 엮으며 DB 를 정리한 뒤에
+            // 확인 도중에 켠 출처는 이번에 받지 못했으니 곧바로 한 번 더(다음 주기까지 기다리지 않게)
+            if (pendingFill.Any(id => State.Enabled.GetValueOrDefault(id))) CheckAgainSoon();
             if (quiet) return;
             if (manual && drops.Count == 0 && listed.Count > 0)
             {
@@ -154,9 +185,22 @@ public sealed class AppModel
         }
         finally
         {
-            Checking = false;
+            Volatile.Write(ref checking, 0);
             Changed?.Invoke();
         }
+    }
+
+    // 이어 하는 확인은 화면 스레드에서(맥 @MainActor 와 같음) — 스레드 풀에서 돌면 State·pendingFill·알림 창을 화면 밖에서 건드린다.
+    // 지금 확인이 끝나(Checking 이 풀려)야 돌도록 잠깐 뒤에
+    private void CheckAgainSoon()
+    {
+        async void Run()
+        {
+            await Task.Delay(100);
+            try { await CheckAllAsync(); } catch { }
+        }
+        var ctx = uiContext ?? SynchronizationContext.Current;
+        if (ctx is not null) ctx.Post(_ => Run(), null); else Run();
     }
 
     private static async Task<List<NewsItem>> TranslateTitlesAsync(List<NewsItem> items)
@@ -175,6 +219,7 @@ public sealed class AppModel
         var p = change(old);
         if (p.Mode == NotifyMode.Instant && old.Mode != NotifyMode.Instant) p = p with { Less = false }; // 설정에서 즉시로 되돌리면 '덜 받기'도 풂
         State.SectionPolicy[section] = p;
+        if (p.Mode == NotifyMode.Magazine) PrunePending();   // '매거진만'으로 바꾸면 이미 고인 그 분야 소식도 묶음으로 보내지 않음
         Save();
     }
 
@@ -320,7 +365,7 @@ public sealed class AppModel
         }
         State.Pending.RemoveAll(p => !ordered.Contains(p.Section));
         SubscriptionsChanged();   // 뺀 분야의 출처 글은 바로 안 보이게(S-13)
-        if (turnedOn.Count > 0) _ = BackfillMagazineAsync(turnedOn);
+        if (turnedOn.Count > 0) { pendingFill.UnionWith(turnedOn); _ = CheckAllAsync(); }
     }
 
     // 출처 수(켜짐/전체)
@@ -411,6 +456,20 @@ public sealed class AppModel
         State.StorySeen[story] = size;
         Save();
     }
+    // '본 보도 수' 기억에서 DB 에 없는 스토리(정리로 지워진 것)를 지운다 — 본 스토리마다 한 줄씩 끝없이 쌓이지 않게.
+    // DB 를 못 읽으면 그대로 둔다
+    private async Task PruneStorySeenAsync()
+    {
+        if (State.StorySeen.Count == 0) return;
+        HashSet<string> ids;
+        try { ids = await Task.Run(Magazine.StoryIds); } catch { return; }
+        if (PruneStorySeen(State.StorySeen, ids) is { } kept) { State.StorySeen = kept; Save(); }
+    }
+
+    // 지울 것이 있으면 남길 것만 담은 새 사전, 없으면 null
+    public static Dictionary<string, int>? PruneStorySeen(Dictionary<string, int> seen, IReadOnlySet<string> ids) =>
+        seen.Keys.All(ids.Contains) ? null : seen.Where(p => ids.Contains(p.Key)).ToDictionary(p => p.Key, p => p.Value);
+
     public int UnseenReports(Database.Cluster c) => Math.Max(0, c.Size - (State.StorySeen.TryGetValue(c.Id, out var s) ? s : c.Size));
 
     // 팔로우한 스토리에 새 보도가 붙으면 알림(그 출처의 알림을 꺼 두었어도)
@@ -450,8 +509,22 @@ public sealed class AppModel
     public void ReapplyKeywords()
     {
         State.Recent = ApplyKeywords(State.Recent.Select(i => i with { Important = null, Watch = null }));
+        PrunePending();   // 설정에서 더한 '알리지 않음' 낱말도 이미 고인 소식에 적용
         Save();
     }
+
+    // 설정이 바뀐 뒤 고인 소식(묶음 대기열)에서 이제 알리지 않을 것을 뺀다(맥 prunePending):
+    // '알리지 않음' 낱말이 든 것 · 알림을 끈 출처 · '매거진만'이 된 분야
+    public void PrunePending() =>
+        State.Pending = PrunePending(State.Pending, Words(State.Settings.MuteKeywords), Notifies, sec => Policy(sec).Mode == NotifyMode.Magazine);
+
+    public static List<AppState.PendingItem> PrunePending(IEnumerable<AppState.PendingItem> pending, IReadOnlyList<string> mute,
+                                                          Func<string, bool> notifies, Func<string, bool> magazineOnly) =>
+        pending.Where(p =>
+        {
+            var text = $"{p.Item.Title} {p.Item.TitleKo ?? ""} {p.Item.Summary}".ToLowerInvariant();
+            return !mute.Any(text.Contains) && notifies(p.Item.SourceId) && !magazineOnly(p.Section);
+        }).ToList();
 
     // 여러 곳이 같은 소식을 다루면 하나만 알리고 "다른 N곳도 보도"로 묶는다(C-15).
     // 공식 발표 > 언론 > 국내 순으로 대표를 고른다.
@@ -520,7 +593,12 @@ public sealed class AppModel
             o.Add(it);
         }
         if (firstTime) State.Seeded.Add(src.Id);
+        return await KeptAsync(o, src);
+    }
 
+    // 사이트맵은 제목 채우기, AI 만 받는 출처는 AI 글만(C-10)
+    private async Task<List<NewsItem>> KeptAsync(List<NewsItem> o, Source src)
+    {
         var kept = new List<NewsItem>();
         foreach (var it0 in o)
         {
@@ -554,41 +632,14 @@ public sealed class AppModel
         Ui.OpenReader(item);
     }
 
-    // 처음 한 번: 켜진 출처에서 최근 3일 기사를 받아 매거진 첫 호를 채운다(알림 없음)(M-12)
-    private async Task BackfillMagazineAsync(IReadOnlySet<string>? only = null)
+    // 매거진 채우기(업데이트 뒤 한 번·처음 켠 출처, M-12): 피드가 이미 준 글 중 최근 days 일치를 새것부터 cap 건.
+    // 날짜 없는 글은 어느 날 호인지 몰라 뺀다. 예전엔 출처당 25건·3일로 잘라 많이 쓰는 곳은 어제 글부터 빠졌다(맥 magazineFill 과 같은 규칙)
+    public const int MagazineFillVersion = 2;
+    public static List<NewsItem> MagazineFillItems(IEnumerable<NewsItem> items, DateTimeOffset now, int cap, double days = 7)
     {
-        Magazine.Preparing = true;
-        Magazine.NotifyChanged();
-        try
-        {
-            var cutoff = Now().AddDays(-3);
-            var all = new List<NewsItem>();
-            foreach (var src in AllSources.Where(s => State.Enabled.GetValueOrDefault(s.Id) && (only?.Contains(s.Id) ?? true)))
-            {
-                List<NewsItem>? items;
-                try { items = await Feeds.ItemsAsync(src, conditional: false); } catch { continue; }
-                if (items is null) continue;
-                items = items.Where(i => (i.Date ?? DateTimeOffset.MinValue) > cutoff).ToList();
-                if (src.Type == "sitemap")
-                {
-                    items = items.Take(10).ToList();
-                    for (var i = 0; i < items.Count; i++) items[i] = await Feeds.FillTitleAsync(items[i]);
-                }
-                if (src.AiOnly) items = items.Where(i => Resources.AiRegex.IsMatch($"{i.Title} {i.Summary}")).ToList();
-                all.AddRange(items.Take(25));
-            }
-            all = await TranslateTitlesAsync(all);
-            all = await AddEnglishTitlesAsync(all);
-            var ordered = ApplyKeywords(all).OrderBy(i => i.Date ?? DateTimeOffset.MinValue).ToList();
-            await Task.Run(() => { Magazine.Ingest(ordered); Magazine.PublishDue(); });
-            State.MagazineBackfilled = true;
-            Save();
-        }
-        finally
-        {
-            Magazine.Preparing = false;
-            Magazine.NotifyChanged();
-        }
+        var cut = now.AddDays(-days);
+        return items.Where(i => i.Date is { } d && d > cut && d <= now.AddHours(1))
+            .OrderByDescending(i => i.Date).Take(cap).ToList();
     }
 
     // 한국어 제목 기사에 영어 제목을 붙인다(외국 기사와 같은 소식인지 비교하려고)(T-04)
@@ -632,7 +683,10 @@ public sealed class AppModel
     }
 
     // MARK: 잠시 끄기·브리핑·단축키
-    public bool IsSnoozed => (State.SnoozeUntil ?? DateTimeOffset.MinValue) > Now();
+    public bool IsSnoozed => SnoozeActive(State.SnoozeUntil, Now());
+    // 잠시 끄기는 길어야 '내일 아침 8시'(32시간 안). 이틀보다 먼 끝은 시계가 앞서 있던 때 켠 것으로 보고 풀렸다고 본다
+    public static readonly TimeSpan SnoozeMax = TimeSpan.FromHours(48);
+    public static bool SnoozeActive(DateTimeOffset? until, DateTimeOffset now) => until is { } u && u > now && u - now <= SnoozeMax;
 
     public void Snooze(DateTimeOffset? until)
     {
@@ -650,7 +704,7 @@ public sealed class AppModel
     public void MinuteTick()
     {
         var now = Now();
-        if (State.SnoozeUntil is { } s && s <= now) { State.SnoozeUntil = null; Save(); }
+        if (State.SnoozeUntil is not null && !SnoozeActive(State.SnoozeUntil, now)) { State.SnoozeUntil = null; Save(); }   // 끝났거나 시계가 바뀌어 너무 먼 것
         if (now.ToLocalTime().Minute % 30 == 0) _ = Task.Run(() => Magazine.PublishDue()); // 지난 호 발행(M-05)
         DeliverBundles();   // 분야 묶음 시각이 지났으면 고인 소식을 한 방울로(G-07)
         DeliverWatchDigest();   // 지켜볼 낱말 하루 정리(N-27)
@@ -743,6 +797,7 @@ public sealed class AppModel
     public void SetNotify(string sourceId, bool on)
     {
         State.Notify[sourceId] = on;
+        if (!on) PrunePending();   // 끄면 이미 고인 그 출처 소식도 묶음으로 보내지 않음
         Save();
     }
 
@@ -837,11 +892,25 @@ public sealed class AppModel
         Save();
     }
 
+    // 켠 뒤 확인 한 번. 시험은 네트워크 없이 부른 횟수만 세도록 바꿔 끼운다
+    public Func<Task>? RunCheck { get; set; }
+    private void CheckSoon() => _ = RunCheck is { } f ? f() : CheckAllAsync();
+
     public void SetEnabled(string id, bool on)
     {
         State.Enabled[id] = on;
         SubscriptionsChanged();   // 끄면 그 출처 글이 목록·매거진에서 바로 빠지고, 다시 켜면 돌아옴(S-13)
-        if (on) _ = CheckAllAsync();
+        if (on) CheckSoon();
+    }
+
+    // 여러 출처를 한 번에 켜고 끈다(설정 › 구독 묶음의 모두 켜기·끄기). 저장·확인은 한 번만(맥 setEnabled(ids:on:))
+    public void SetEnabled(IEnumerable<string> ids, bool on)
+    {
+        var list = ids.Distinct().ToList();
+        if (list.Count == 0) return;
+        foreach (var id in list) State.Enabled[id] = on;
+        SubscriptionsChanged();
+        if (on) CheckSoon();
     }
 
     public void Update(Action<StateSettings> change)
@@ -851,6 +920,7 @@ public sealed class AppModel
         Focus.Invalidate();
         Save();
         if (State.Settings.IntervalMinutes != before.IntervalMinutes) RestartLoop();
+        if (State.Settings.Limits != before.Limits) Magazine.Refresh();   // 보도 수 문턱은 매거진 '주요' 지면도 정함
     }
 
     // 상태를 통째로 바꾼다(내 기록 가져오기·되돌리기, P-08 — 맥 replaceState)
@@ -861,6 +931,7 @@ public sealed class AppModel
         Focus.Invalidate();
         Save();
         if (State.Settings.IntervalMinutes != interval && loop is not null) RestartLoop();
+        ReapplyKeywords();   // 가져온 낱말을 지금 목록·고인 소식에도(리눅스 replace_state 와 같게)
         Magazine.Refresh();
     }
 

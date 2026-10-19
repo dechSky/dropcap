@@ -3,7 +3,7 @@ import Network
 import Testing
 @testable import Dropcap
 
-// 남은 개선 2차(mac/EXTRAS.md 2차 절): 받는 크기 상한 · 지켜볼 낱말 · 내 기록 내보내기·가져오기 · 점검 남은 작은 문제
+// 남은 개선 2차: 받는 크기 상한 · 지켜볼 낱말 · 내 기록 내보내기·가져오기 · 점검 남은 작은 문제
 
 // 내 Mac 안의 시험 서버: 경로마다 보낼 크기와 Content-Length 를 밝힐지 정한다. 보낸 바이트 수를 센다.
 final class LocalHTTP: @unchecked Sendable {

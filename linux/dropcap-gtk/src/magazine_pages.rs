@@ -81,14 +81,10 @@ pub fn stories(on_story: Rc<dyn Fn(String)>) -> (gtk::Widget, gtk::ScrolledWindo
     bg(
         async move {
             let filter = core.source_filter(); // 지금 보이는 출처로만(S-13)
-            let (live, past) = dropcap_core::magazine::story_groups(&core.db, Utc::now(), &filter);
-            let load = |cs: Vec<Cluster>| -> Vec<(Cluster, Vec<NewsItem>)> {
-                cs.into_iter().map(|c| {
-                    let items = dropcap_core::magazine::story_items(&core.db, &c.id, &filter);
-                    (c, items)
-                }).collect()
-            };
-            (load(live), load(past))
+            // 스토리 목록 전체를 문장 두 번으로, 카드에는 이때 읽은 보도를 넘긴다(스토리마다 DB 를 다시 묻지 않게 — S5)
+            let (live, past) = dropcap_core::magazine::story_cards(&core.db, Utc::now(), &filter);
+            let pairs = |cs: Vec<dropcap_core::magazine::StoryCard>| -> Vec<(Cluster, Vec<NewsItem>)> { cs.into_iter().map(|c| (c.cluster, c.items)).collect() };
+            (pairs(live), pairs(past))
         },
         move |(live, past)| {
             if live.is_empty() && past.is_empty() {

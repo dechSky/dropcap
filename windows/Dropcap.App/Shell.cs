@@ -42,7 +42,7 @@ internal sealed class Shell : IAppUi
         this.ui = ui;
         Platform.EnsureIcon();
         var db = Database.Shared;
-        Magazine = new Magazine(db);
+        Magazine = new Magazine(db, retryFile: Path.Combine(Store.Dir, Magazine.RetryFileName));   // 못 넣은 기사는 껐다 켜도 다시 넣게
         Scrapbook = Scrapbook.Shared;
         platform = new Platform(this);
         Model = new AppModel(this, Magazine);

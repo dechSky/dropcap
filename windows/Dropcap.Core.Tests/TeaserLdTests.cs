@@ -2,7 +2,7 @@ using Dropcap.Core;
 
 namespace Dropcap.Core.Tests;
 
-// 맥 ReaderPhase3Tests.VergeShortArticleTests 를 옮긴 것(teaser-ld-port — mac/READER-CUT.md 3단계 ld-body-match):
+// 맥 ReaderPhase3Tests.VergeShortArticleTests 를 옮긴 것(teaser-ld-port — ld-body-match):
 // 사이트가 늘 isAccessibleForFree=false 라고 적지만 전문을 주는 Verge 짧은 기사가 맛보기('앞부분만')로 잘못 뜨지 않게
 public class TeaserLdTests
 {

@@ -101,6 +101,12 @@ fn notifications_inhibited() -> bool {
     v
 }
 
+// 창을 다시 놓을지(맥 ToastCenter.needsPlace): 숨어 있었거나 위치 설정이 놓을 때와 달라졌으면.
+// 예전엔 숨었을 때만 놓아 알림이 떠 있는 동안 '오른쪽 위'로 바꾸면 다음 알림도 가운데에 떨어졌다.
+pub fn needs_place(visible: bool, placed_right: Option<bool>, right: bool) -> bool {
+    !visible || placed_right != Some(right)
+}
+
 // realize 전에 한 번: layer-shell 이면 layer 로 바꾼다
 pub fn prepare(win: &gtk::Window, right: bool) {
     #[cfg(feature = "layer-shell")]
@@ -282,5 +288,20 @@ pub mod x11 {
     #[cfg(not(target_os = "linux"))]
     pub fn xid(_win: &gtk::Window) -> Option<u32> {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::needs_place;
+
+    // 알림 위치를 바꾸면 떠 있는 창도 다음 알림에서 다시 놓는다(맥 SettingsQATests 와 같은 표)
+    #[test]
+    fn position_change_replaces_shown_window() {
+        assert!(needs_place(true, Some(false), true));
+        assert!(needs_place(true, Some(true), false));
+        assert!(!needs_place(true, Some(true), true));
+        assert!(needs_place(false, Some(true), true));
+        assert!(needs_place(true, None, false));
     }
 }

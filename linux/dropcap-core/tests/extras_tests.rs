@@ -92,7 +92,7 @@ fn free_alternatives_skip_paywalled_hidden_self_and_channels() {
 fn free_reason_order() {
     assert_eq!(paywall::free_reason(false, true, true, Some(PaywallKind::Hard)), None); // 대안이 없으면 상자 없음
     assert_eq!(paywall::free_reason(true, true, false, None), Some("본문을 열지 못했습니다"));
-    assert_eq!(paywall::free_reason(true, false, true, None), Some("다른 곳 보도로 전체를 읽을 수 있어요")); // 맛보기 안내는 본문 위 띠가 따로(READER-CUT.md C②)
+    assert_eq!(paywall::free_reason(true, false, true, None), Some("다른 곳 보도로 전체를 읽을 수 있어요")); // 맛보기 안내는 본문 위 띠가 따로
     assert_eq!(paywall::free_reason(true, false, false, Some(PaywallKind::Hard)), Some("유료 기사입니다"));
     assert_eq!(paywall::free_reason(true, false, false, Some(PaywallKind::Learned)), Some("이곳 기사는 자주 막힙니다"));
     assert_eq!(paywall::free_reason(true, false, false, Some(PaywallKind::Metered)), None); // metered 는 먼저 권하지 않음
@@ -105,7 +105,7 @@ fn sources_json_marks_known_paywalls() {
         assert!(["hard", "metered"].contains(&s.paywall.as_deref().unwrap()), "{}", s.id);
     }
     assert_eq!(all.iter().find(|s| s.id == "wsj-markets").and_then(|s| s.paywall.clone()).as_deref(), Some("hard"));
-    assert!(all.iter().filter(|s| s.id.starts_with("nyt-")).all(|s| s.paywall.as_deref() == Some("hard"))); // 앱은 403 으로 못 읽음(sources-audit)
+    assert!(all.iter().filter(|s| s.id.starts_with("nyt-")).all(|s| s.paywall.as_deref() == Some("hard"))); // 앱은 403 으로 못 읽음
     assert_eq!(all.iter().find(|s| s.id == "verge").and_then(|s| s.paywall.clone()).as_deref(), Some("metered")); // 구독 문·isAccessibleForFree=false
     assert_eq!(sections::META.get("wsj-markets").and_then(|m| m.paywall.clone()).as_deref(), Some("hard"));
 }

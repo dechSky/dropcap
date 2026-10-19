@@ -51,7 +51,7 @@ final class Database: @unchecked Sendable {
         }
     }
 
-    // 다른 연결이 잠깐 잠갔을 때 바로 실패하지 않고 기다린다(STABILITY.md S7). 뒤 스레드는 busyMs 까지,
+    // 다른 연결이 잠깐 잠갔을 때 바로 실패하지 않고 기다린다. 뒤 스레드는 busyMs 까지,
     // 메인 스레드(화면)는 0.1초까지만 — queue.sync 는 부른 스레드에서 돌므로 메인에서 부른 쓰기가 화면을 멈추지 않게
     private func installBusyHandler() {
         sqlite3_busy_handler(db, { ctx, count in
@@ -191,6 +191,30 @@ final class Database: @unchecked Sendable {
         var found = false
         queue.sync { run("SELECT 1 FROM items WHERE key=?", [.text(key)]) { _ in found = true } }
         return found
+    }
+
+    // 이미 있는 key 들(400개씩 한 번에 — 채우기 전 거르기)
+    func existing(_ keys: [String]) -> Set<String> {
+        var out = Set<String>()
+        for chunk in stride(from: 0, to: keys.count, by: 400).map({ Array(keys[$0..<min($0 + 400, keys.count)]) }) {
+            queue.sync {
+                run("SELECT key FROM items WHERE key IN (\(Array(repeating: "?", count: chunk.count).joined(separator: ",")))",
+                    chunk.map { .text($0) }) { st in if let k = Self.text(st, 0) { out.insert(k) } }
+            }
+        }
+        return out
+    }
+
+    // 기사 날짜(없으면 처음 본 때)가 [from, to) 안인 기사 수(빈 날 호를 엮기 전에 — 기사를 다 꺼내지 않고)
+    func articleCount(from: Date, to: Date) -> Int {
+        var n = 0
+        queue.sync {
+            run("""
+            SELECT COUNT(*) FROM items WHERE COALESCE(date, first_seen) >= ? AND COALESCE(date, first_seen) < ?
+              AND COALESCE(json_extract(json,'$.kind'),'article') = 'article'
+            """, [.real(from.timeIntervalSince1970), .real(to.timeIntervalSince1970)]) { st in n = Int(sqlite3_column_int64(st, 0)) }
+        }
+        return n
     }
 
     // 기사 날짜(없으면 처음 본 때)가 [from, to) 안인 것. articlesOnly 면 기사만(논문·릴리스 등 구독 채널 글 제외), channelsOnly 면 그 반대
@@ -400,6 +424,20 @@ final class Database: @unchecked Sendable {
                               first: Date(timeIntervalSince1970: sqlite3_column_double(st, 3)),
                               last: Date(timeIntervalSince1970: sqlite3_column_double(st, 4)),
                               size: Int(sqlite3_column_int64(st, 5)))
+            }
+        }
+        return out
+    }
+
+    // 주어진 스토리 id 가운데 아직 DB 에 있는 것(정리로 지워진 스토리의 기억을 치울 때)
+    func existingClusters(_ ids: [String]) -> Set<String> {
+        var out = Set<String>()
+        queue.sync {
+            for chunk in stride(from: 0, to: ids.count, by: 500).map({ Array(ids[$0..<min($0 + 500, ids.count)]) }) {
+                let marks = chunk.map { _ in "?" }.joined(separator: ",")
+                run("SELECT id FROM clusters WHERE id IN (\(marks))", chunk.map { .text($0) }) { st in
+                    if let id = Self.text(st, 0) { out.insert(id) }
+                }
             }
         }
         return out

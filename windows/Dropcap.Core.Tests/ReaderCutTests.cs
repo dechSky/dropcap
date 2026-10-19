@@ -6,7 +6,7 @@ using Dropcap.Ui;
 
 namespace Dropcap.Core.Tests;
 
-// 읽기 창 본문 잘림·군더더기(mac/READER-CUT.md 2단계를 윈도우에). 맥 ReaderCutTests 와 같은 꼴.
+// 읽기 창 본문 잘림·군더더기. 맥 ReaderCutTests 와 같은 꼴.
 // 고정 HTML 은 실제 사이트의 꼴만 본뜬 것이고 글은 지어낸 것(맥 Fixtures/reader-cut 을 그대로 씀).
 
 // 추출 스크립트(web/extract.js)를 머리 없는 Chromium(WebView2 와 같은 엔진)에서 돌리는 시험은

@@ -4,7 +4,7 @@ import SwiftUI
 import Testing
 @testable import Dropcap
 
-// 읽기 창 본문 잘림·군더더기(mac/READER-CUT.md). 고정 HTML 은 실제 사이트의 꼴만 본뜬 것이고 글은 지어낸 것.
+// 읽기 창 본문 잘림·군더더기. 고정 HTML 은 실제 사이트의 꼴만 본뜬 것이고 글은 지어낸 것.
 private func para(_ n: Int, _ topic: String = "city budget") -> String {
     "Paragraph \(n) explains how the \(topic) committee reviewed the plan, heard from residents and agreed to publish a timeline."
 }

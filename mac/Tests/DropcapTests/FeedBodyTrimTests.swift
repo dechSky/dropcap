@@ -3,7 +3,6 @@ import Testing
 @testable import Dropcap
 
 // 피드 본문 전문(NewsItem.feedBody)은 피드 기록 DB 의 items 줄에만 남고, 앱 상태(최근·나중에 읽기·고인 소식)·스크랩·백업에는 빠진다
-// (mac/READER-CUT.md '3단계 결과 — 저장에서 빼기')
 @Suite struct FeedBodyTrimTests {
     private let body = "<p>" + String(repeating: "Long feed paragraph text. ", count: 2_300) + "</p>" // 약 60KB
     private func item(_ n: Int, body: String? = nil) -> NewsItem {

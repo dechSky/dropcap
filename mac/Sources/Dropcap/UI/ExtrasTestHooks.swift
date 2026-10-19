@@ -4,7 +4,7 @@ import SwiftUI
 // 시험 장치(M9): 디버그 빌드(swift build·swift test·e2e·clicksweep)에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
 #if DEBUG
 
-// 시험용 환경 변수(남은 개선 묶음 · mac/EXTRAS.md). 실제 기록을 건드리지 않게 DROPCAP_DATA_DIR 와 함께 쓴다.
+// 시험용 환경 변수(남은 개선 묶음). 실제 기록을 건드리지 않게 DROPCAP_DATA_DIR 와 함께 쓴다.
 //  DROPCAP_TEST_EXTRAS=<폴더>        피드를 받은 뒤(DROPCAP_TEST_EXTRAS_WAIT 초, 기본 100) 아래를 찍는다
 //    · 유료 기사 읽기 창(같은 스토리의 무료 보도 권하기) → paywall-reader.png
 //    · 매거진 오늘 호(진행률) → today-progress.png, 대표 기사를 모두 읽음으로 → today-done.png

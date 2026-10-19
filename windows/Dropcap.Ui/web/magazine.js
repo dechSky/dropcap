@@ -76,10 +76,30 @@
     $('#nScraps').textContent = `스크랩북 ${s.scraps}`;
     $('#secs').innerHTML = s.sections.length ? '<div class="sh">분야</div>' + s.sections.map((x) =>
       `<button class="nav tint" style="${tint(x)}" data-go="section:${esc(x.id)}">${ic(x.icon)}<span>${esc(x.name)}</span></button>`).join('') : '';
-    $('#archive').innerHTML = s.archive.length ? '<div class="sh">지난 호</div>' + s.archive.map((a) =>
-      `<button class="nav${a.thin ? ' thin' : ''}" data-go="issue:${esc(a.id)}" title="${esc(a.thin ? `기록 적음 — 소식 ${a.count}건` : a.title)}">${ic(a.weekly ? 'books' : 'doc.rich')}<span>${esc(a.title)}</span></button>`).join('') : '';
+    // 지난 호: 이번 주 · 지난주 · 그 앞은 달별(처음엔 접힘). 빈 날은 줄마다 두지 않고 묶음 끝에 한 줄로
+    const row = (a) => `<button class="nav${a.thin ? ' thin' : ''}" data-go="issue:${esc(a.id)}" title="${esc(a.reason || a.title)}">${ic(a.weekly ? 'books' : 'doc.rich')}<span>${esc(a.title)}</span></button>`;
+    $('#archive').innerHTML = (s.groups || []).map((g) => {
+      // 지금 보고 있는 지난 호가 든 묶음은 늘 펼침(Ctrl+[ ] 로 넘어가도 고른 줄이 보이게)
+      const open = g.rows.some((a) => page === 'issue:' + a.id) || g.folded === agToggled.has(g.id);
+      return `<details class="ag" data-g="${esc(g.id)}" data-folded="${g.folded ? 1 : 0}"${open ? ' open' : ''}><summary class="sh">${esc(g.title)}</summary>`
+        + g.rows.map(row).join('')
+        + (g.emptyDays > 0 ? `<div class="nav empty" title="이날들은 모인 소식이 없어 호를 엮지 않았습니다">${ic('calendar')}<span>${g.emptyDays}일 비어 있음</span></div>` : '')
+        + '</details>';
+    }).join('');
+    const ck = $('#check');
+    ck.classList.toggle('spin', !!s.checking);
+    ck.disabled = !!s.checking;
+    $('#lastCheck').textContent = s.checking ? '확인하는 중…' : (s.lastCheck || '');
     markSide();
   }
+  const agToggled = new Set(); // 지난 호 묶음 중 기본(이번 주·지난주 펼침, 달별 접힘)과 다르게 연 것·접은 것
+  $('#archive').addEventListener('toggle', (e) => {
+    const d = e.target; if (!d.matches || !d.matches('details.ag')) return;
+    if (d.open === (d.dataset.folded === '1')) agToggled.add(d.dataset.g); else agToggled.delete(d.dataset.g);
+  }, true);
+  $('#check').addEventListener('click', () => { $('#check').classList.add('spin'); $('#check').disabled = true; bridge.send('check'); });
+  // '마지막 확인 n분 전'을 30초마다 다시 셈
+  setInterval(() => { if (!document.hidden) bridge.send('sidebar').then(renderSide); }, 30000);
   function markSide() {
     const key = page.startsWith('story:') ? 'stories' : page;
     document.querySelectorAll('.side .nav').forEach((b) => b.classList.toggle('on', b.dataset.go === key));

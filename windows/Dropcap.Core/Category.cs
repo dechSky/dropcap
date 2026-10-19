@@ -76,8 +76,10 @@ public static class Categories
     public static bool IsOther(this NewsCategory c) => Of(c).Id == data.Fallback;
 
     // 먼저 걸리는 분야로 정한다(자료의 classifyOrder 순서 — 보안·정책처럼 성격이 뚜렷한 것부터)
+    [ThreadStatic] internal static int ClassifyCalls;   // 시험용: 낱말 분류를 몇 번 했는지(이 스레드)
     public static NewsCategory Classify(string text)
     {
+        ClassifyCalls++;
         var t = text.ToLowerInvariant();
         foreach (var d in data.Order)
             if (d.Matches(t)) return new(d.Id);

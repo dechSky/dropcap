@@ -31,6 +31,8 @@ internal sealed class WebWindow
     private string query;
     private IDisposable? attach;
     private CoreWebView2? core;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? motion; // 창 열기 움직임(닫히면 멈춤)
+    private bool closed;
     private static CoreWebView2Environment? env;
     private static readonly SemaphoreSlim envGate = new(1, 1);
 
@@ -46,7 +48,7 @@ internal sealed class WebWindow
         Hwnd = WinRT.Interop.WindowNative.GetWindowHandle(Window);
         AppWindow.Resize(Scaled(size));
         if (File.Exists(Platform.IconPath)) AppWindow.SetIcon(Platform.IconPath);
-        Window.Closed += (_, _) => { attach?.Dispose(); Closed?.Invoke(); };
+        Window.Closed += (_, _) => { closed = true; motion?.Stop(); attach?.Dispose(); Closed?.Invoke(); };
         _ = InitAsync();
     }
 
@@ -155,6 +157,7 @@ internal sealed class WebWindow
     // 창 열기(docs/DESIGN.md · 맥 WindowMotion 과 같은 규칙): 제자리에서 0.96 → 1 로 살짝 커지며 내용이 나타난다(0.25초, 들어옴 곡선).
     // 모든 앱 창(읽기·매거진·분야 고르기·설정)이 이것으로 열린다. 시스템 '애니메이션 효과'가 꺼져 있으면 그냥 나타난다.
     // WinUI 창 자체는 투명도를 바꿀 수 없어 창 틀은 바로 보이고 내용(WebView)만 0 → 1 로 흐려졌다가 또렷해진다.
+    // 움직이는 도중 창을 닫으면 타이머를 멈춘다(닫힌 창의 AppWindow 를 부르지 않게).
     public void Present()
     {
         var to = new RectInt32(AppWindow.Position.X, AppWindow.Position.Y, AppWindow.Size.Width, AppWindow.Size.Height);
@@ -165,10 +168,12 @@ internal sealed class WebWindow
         AppWindow.MoveAndResize(from);
         Window.Activate();
         var t0 = DateTime.UtcNow;
-        var timer = Window.DispatcherQueue.CreateTimer();
+        motion?.Stop();
+        var timer = motion = Window.DispatcherQueue.CreateTimer();
         timer.Interval = TimeSpan.FromMilliseconds(10);
         timer.Tick += (tm, _) =>
         {
+            if (closed) { tm.Stop(); return; } // 움직이는 도중 닫힌 창은 건드리지 않는다
             var k = Math.Min(1, (DateTime.UtcNow - t0).TotalSeconds / Motion.Standard);
             var e = Motion.Enter(k);
             int L(int a, int b) => (int)Math.Round(a + (b - a) * e);

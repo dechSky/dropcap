@@ -43,7 +43,7 @@ enum FeedError: LocalizedError {
 enum FeedParser {
     struct Entry { var id: String; var title: String; var link: String; var date: Date?; var summary: String; var image: String? = nil; var body: String? = nil; var paid: Bool? = nil }
 
-    // 피드가 실어 준 본문 전문(content:encoded · Atom content). 읽기 창이 사이트 HTML 이 앞부분만 줄 때 대신 쓴다(Politico 등 — mac/READER-CUT.md '피드 전문 우선').
+    // 피드가 실어 준 본문 전문(content:encoded · Atom content). 읽기 창이 사이트 HTML 이 앞부분만 줄 때 대신 쓴다(Politico 등).
     // 글이 bodyMinText 자 미만이면 요약일 뿐이라 두지 않는다. script·style·주석을 빼고 bodyMaxHTML 자까지(넘으면 마지막 문단 끝에서 자름)
     static let bodyMinText = 1000
     static let bodyMaxHTML = 60_000

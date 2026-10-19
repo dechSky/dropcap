@@ -18,7 +18,7 @@ public static class BodyCleanup
         return EnglishByline.IsMatch(text) ? text.Trim() : null;
     }
 
-    // 군더더기 줄(sources-audit _KR1·_KR2·_INTL1·_INTL2 '섞여 들어온 것'): 짧은 줄만, 글자째 맞을 때만(맥 BodyCleanup.junkLine 과 같은 규칙)
+    // 군더더기 줄(기사 끝에 '섞여 들어온 것'): 짧은 줄만, 글자째 맞을 때만(맥 BodyCleanup.junkLine 과 같은 규칙)
     private static readonly Regex JunkLine = new("""
         ^\s*(?:
           [\w.+-]+@[\w-]+(?:\.[\w-]+)+ | \S{1,20}\s+[\w.+-]+@[\w-]+(?:\.[\w-]+)+                # 메일만 · 매체명+메일

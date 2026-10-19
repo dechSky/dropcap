@@ -1,7 +1,7 @@
 # Dropcap 디자인 시스템
 
-코드: `mac/Sources/Dropcap/UI/DesignSystem.swift` (토큰 한 곳). 이 문서는 원칙·토큰 표·쓰는 법·하지 말 것, 그리고 1단계 점검 결과를 담는다.
-윈도우·리눅스는 2단계에서 같은 이름·같은 값으로 옮긴다.
+코드: `mac/Sources/Dropcap/UI/DesignSystem.swift` (토큰 한 곳). 이 문서는 원칙·토큰 표·쓰는 법·하지 말 것을 담는다.
+윈도우·리눅스는 같은 이름·같은 값을 쓴다(아래 '윈도우·리눅스').
 
 ## 원칙
 
@@ -107,66 +107,6 @@ WindowMotion.present(w)                               // w.makeKeyAndOrderFront 
 
 ---
 
-## 1단계 점검 결과 (2026-10-16, main bc75cc9)
-
-`grep` 으로 맥 화면 코드(UI·Reader·Toast·App, E2E 제외) 전부를 셌다.
-
-### 움직임 — 같은 역할, 다른 값
-
-| 역할 | 지금 쓰는 값(파일:줄) | 제안 |
-|---|---|---|
-| 마우스 올림 | easeOut 0.15 (ImageTools:27, MenuStyles:109, ReaderView:798) · spring .3/.8 (SectionPhotos:93) · spring .35/.75 (MagazineView:790) · spring .4/.8 (MagazineView:586) · spring .3/.75 (ToastView:114) | `snap` |
-| 고름·펼침 | spring .3/.8 (SectionPhotos:94) · spring .35/.85 (MagazineView:1350) · spring .4/.85 (SectionViews:209) · easeOut 0.18 (SectionViews:44, ReaderView:524) · easeOut 0.12 (KeyNav:70) | `snap` / `quick` |
-| 사진 뜸 | easeOut 0.25 (MenuView:376) · 0.3 (ReaderView:105,893, ToastView:351) · 0.35 (ReaderView:932, SectionPhotos:22) · 0.5 (RemoteImage:124) | `enter(slow)` + `fade` |
-| 내용 바뀜(읽기 로딩→본문) | easeOut 0.2 (ReaderView:48) · 0.3 (ReaderView:74) | `enter()` |
-| 작은 알림 들어옴/나감 | spring .3 / easeOut .25 (ReaderView:317-318) · spring .35/.85 / easeOut .25 (ReaderView:413-416) | `snap` / `exit()` |
-| 스크롤로 옮김 | easeOut 0.15 (MenuView:122) · 0.2 (MagazineView:360) · easeInOut 0.25 (ReaderView:185) | `change()` |
-| 지면 머리 깔림 | easeOut .5 · spring .6/.85+.06 · easeOut .5+.12 · spring .9/.9+.1 · 표지 spring .7/.85+.15 (MagazineView:332,448-460) — 다섯 개가 제각각, 끝까지 1초 넘음 | `settle` + `stagger` (0.66초) |
-| 카드 차례로 깔림 | spring .55/.86 + 0.05씩 최대 0.4 (MagazineView:805) · spring .5/.85 + 0.05 최대 0.5 (:1205) · spring .5/.86 + 0.05 최대 0.4 (:1496) · spring .4/.85 + 0.14+0.045 (ToastView:469) | `settle` + `stagger` |
-| 지면 넘김 | spring .62/.9 + 회전 28°/70° 넘김(MagazineView:64,120,151) | `settle`, 들어옴 `rise` · 나감 `fade` |
-| 호 다시 엮임 | easeOut 0.4 (MagazineView:387,397) · spring .5/.85 (:366) | `settle` |
-| 새 기사 띠 | spring .45/.8 + move(top) (MagazineView:377-380) | `snap` + `rise` |
-| 오늘 다 읽음 | spring .5/.85 + scale .98 (TodayViews:27,42) | `settle` + `pop` |
-| 알림 패널 들어옴 | spring .5/.82 (ToastCenter:80,89) | 예외(물방울 연출) |
-| 전환 종류 | opacity · opacity+offset(8) · opacity+scale(.8/.98) · move(top)+opacity · move(bottom)+opacity · pageTurn | `fade` · `rise` · `pop` 셋 |
-| 동작 줄이기 | 따르는 곳 10곳 남짓, 나머지(카드 올림·깔림·지면 머리·사진 등)는 안 따름 | 모두 `withMotion` / `.motion` |
-
-### 창 열기
-
-| 창 | 지금 | 제안 |
-|---|---|---|
-| 읽기 창 (ReaderView:705-720) | 카드 자리에서 투명 0.2 → 창 크기로 0.38초 커짐 | `WindowMotion.present` |
-| 매거진 (MagazineView:1235-1254) | 움직임 없음 | 같음 |
-| 분야 고르기 (SectionViews:265-276) | 움직임 없음 | 같음 |
-| 설정·사진 번역 (App/ImageTools:276) | 움직임 없음 | 같음 |
-| 알림 패널 (ToastCenter) | 페이드 0.14 / 0.2, 포커스 뺏지 않음 | 예외(그대로) |
-
-→ 읽기 창만 혼자 크게 움직이고 나머지는 툭 뜬다. 이것이 "창 열기가 정리 안 돼 보임"의 주 원인.
-
-### 글자
-
-`.app()`/`.display()` 로 **크기 30가지 남짓**(9·9.5·10·10.5·11·11.5·12·12.5·13·13.5·14·14.5·15·15.5·16·17·18·19·20·22·26·28·30·34·38·44) × 굵기 6가지. 0.5pt 차이(11 vs 11.5, 12 vs 12.5, 13 vs 13.5)가 같은 역할에 섞여 있다. `.font(.caption)` 29곳은 Pretendard 설정을 따르지 않는다. → 10개 역할로.
-
-### 간격
-
-padding 값 29가지(1~80), spacing 18가지. 4 배수 아님: 1·3·5·7·9·11·13·14·18·22·26·30·34 / 1·3·5·7·9·11·14·18·22·26. 많이 쓰는 14(29곳)·18(13곳)은 12·16 으로, 28(11곳)은 24·32 로 맞춘다.
-
-### 모서리
-
-2·3·4·5·6·7·8·9·10·12·14·16·22 — 13가지. 카드만 12·14·16 셋이 섞임(선택 고리 16, 카드 14, 안내 상자 12). → 4가지 + Capsule.
-
-### 그림자
-
-검정 투명도 0.06~0.5, 번짐 6~26 로 18가지 조합. 카드 올림이 0.16→0.28(MagazineView:584)과 0.06→0.18(:775)로 다르다. → 5단계.
-
-### 색
-
-`.secondary` 117곳·`.tertiary` 23곳은 시스템 색이라 문제 없음. 유료 주황·발행 중 빨강이 이름 없이 흩어져 있고(`Color.orange` 16곳), 바탕이 `textBackgroundColor`/`windowBackgroundColor`/`Color(white:)` 로 섞임. → 의미 이름.
-
-### 유리
-
-`.regularMaterial` 9 · `.thinMaterial` 2 · `glassEffect` 2(물방울). → 창 머리·막대는 regular 하나.
-
 ## 윈도우·리눅스
 
 같은 이름·같은 값을 쓴다.
@@ -188,21 +128,3 @@ padding 값 29가지(1~80), spacing 18가지. 4 배수 아님: 1·3·5·7·9·11
 
 - `DROPCAP_TEST_WINDOW_MOTION=<폴더>`(디버그 빌드만): 화면 밖 창으로 `WindowMotion.present` 를 실제로 돌려 1/60초마다 배율·투명도를 재고 `window-open-<n>.png`·`window-open.txt` 를 남긴다. 앱을 앞으로 띄우지 않는다.
 - 조용한 시험(`E2EQuietUI`)이 숨긴 창은 `WindowMotion` 이 다시 보이게 하지 않는다(`ignoresMouseEvents` 로 알아봄).
-
-## 미리보기
-
-저장소 밖 `newsletter-wt/design-shots/` — 토큰 견본, 움직임 전·후 곡선, 창 열기 선택지 프레임, 지면 머리 차례, '경쾌' 변형. 곡선·프레임은 값으로 계산해 그린 모의 그림이다(앱 화면 녹화 아님). 앱 창 전·후 스냅샷은 2단계에서 화면을 바꾼 뒤 찍는다.
-
-## 남은 것 (2026-10-16 마무리 시점, wt/design 6043e4b 다음)
-
-다음에 이어 할 순서:
-1. **MagUI 병합 뒤 맞추기** — `wt/mag-settings` 가 `SettingsView` 구독 탭(sources)을 통째로 다시 쓰고 `MagazineView` 옆 목록·`ReaderView` 단축키를 고친다. 그쪽이 main 에 들어오면 `git merge main` 후 새 코드의 숫자(글자·간격·모서리·움직임)를 토큰으로 바꾼다. 같은 줄을 둘이 고친 곳은 MagUI 동작 + 토큰. 특히 `MagazineView` 옆 목록 바닥 '설정' 단추(safeAreaInset, MagUI 62b9599)의 간격 18·8 → `Space.l`·`Space.s`. 구독 탭은 MagUI WIP 라 그쪽이 main 에 들어온 뒤.
-2. **스크랩북 클릭 순회** — 조용한 클릭 순회의 스크랩북 '직접 클릭이 닿지 않음' 실패는 main 에도 있다(대상만 다름, 기존 불안정). 다만 스크랩북 카드 귀퉁이를 `AXScrollArea` 가 덮는 1건은 바뀐 판에서만 나왔다 — 카드 모서리 12→14 영향인지 확인.
-3. **리눅스 글자·간격** — 화면 코드 안의 `text(…, 12.5, …)`·`set_margin_*(n)`·`Box::new(_, n)` 숫자를 `motion.rs` 옆 `ds.rs`(새로) 토큰으로. 매거진 카드·표지·테마 CSS 는 이미 맞춤.
-4. **윈도우 창 열기 실물 확인** — `WebWindow.Present()` 는 맥에서 컴파일만 확인. 윈도우 기기에서 창 틀이 0.96→1 로 커지고 내용이 흐려졌다 또렷해지는지, `MoveAndResize` 가 깜빡이지 않는지 본다. 깜빡이면 ② '페이드만'(내용 투명도만)으로 줄인다.
-5. 맥 `Settings` 장면(설정 창)은 시스템이 열어 `WindowMotion` 을 안 쓴다 — 필요하면 `SettingsLink` 대신 직접 창을 만드는 방법 검토(동작은 바꾸지 않게).
-
-주의:
-- `WindowMotion.present` 는 조용한 시험(`E2EQuietUI`)이 숨긴 창을 `ignoresMouseEvents` 로 알아보고 건드리지 않는다 — 이 조건을 바꾸면 시험 창이 사용자 화면에 보인다.
-- 윈도우 CSS 에서 높이의 절반 모서리(알약 모양)는 `99px` 로 둔다 — 토큰 `--r-control` 로 바꾸면 스위치가 네모나진다(한 번 겪음).
-- 전·후 스냅샷: `newsletter-wt/design-shots/` (저장소 밖).

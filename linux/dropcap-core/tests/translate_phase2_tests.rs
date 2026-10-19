@@ -1,4 +1,4 @@
-// 번역 2단계(mac/TRANSLATE.md, 맥 TranslatePhase2Tests 와 같은 꼴): 네트워크 없이 — Google 부르기를 가짜로 바꿔 끼운다.
+// 번역 2단계(맥 TranslatePhase2Tests 와 같은 꼴): 네트워크 없이 — Google 부르기를 가짜로 바꿔 끼운다.
 // 리눅스에는 기기 내 엔진이 없어 흘려 주기·기기 내 사례는 해당 없음(auto = Google, apple = 보내지 않음 — translate_off_tests).
 use dropcap_core::translator::{self, looks_foreign, polish, restore_names, Engine, GoogleCall, Translator};
 use futures::FutureExt;

@@ -1,6 +1,6 @@
 namespace Dropcap.Core.Tests;
 
-// 번역 2단계(mac/TRANSLATE.md '2단계 반영' — 맥 TranslatePhase2Tests 와 같은 꼴): 네트워크 없이 엔진 부르기를 가짜로 바꿔 끼운다.
+// 번역 2단계(맥 TranslatePhase2Tests 와 같은 꼴): 네트워크 없이 엔진 부르기를 가짜로 바꿔 끼운다.
 // 윈도우엔 기기 내 번역이 없어 흘려 주기(케이스 5)·기기 내만 시험은 없다. 방식이 바뀌면 캐시 비우기는 TranslateOffTests.
 public class TranslatePhase2Tests
 {

@@ -139,7 +139,7 @@ fn full_body_not_marked() {
     assert!(book.teasers().is_empty());
 }
 
-// review-3 B3: 다시 맛보기로 판정되면 시각을 새로 써서, 계속 맛보기인 기사가 처음 판정 30일 뒤에 빠지지 않는다
+// 다시 맛보기로 판정되면 시각을 새로 써서, 계속 맛보기인 기사가 처음 판정 30일 뒤에 빠지지 않는다
 #[test]
 fn teaser_again_refreshes_time() {
     let d = tempfile::tempdir().unwrap();
@@ -153,7 +153,7 @@ fn teaser_again_refreshes_time() {
     assert!(db.teaser_links(Utc::now() + Duration::days(2)).contains(link)); // 고치기 전: 29+2일 → 빠짐
 }
 
-// review-3 B1 · 시험 빈틈 T1: 기사 준비(ArticleService.judge_teaser — run 이 부르는 그 함수)가 앱 핵심의 연결을 거쳐
+// 기사 준비(ArticleService.judge_teaser — run 이 부르는 그 함수)가 앱 핵심의 연결을 거쳐
 // 목록 표시를 바꾸고, 바뀔 때만 화면에 다시 그리라고 알린다(맥 @Published · 윈도우 TeasersChanged 와 같음)
 #[test]
 fn service_judgement_marks_list_and_tells_screen() {

@@ -110,8 +110,25 @@ pub struct Fetched {
 
 pub const MAX_REDIRECTS: usize = 10;
 
+// 시험에서만: 이 작업 안에서는 내 컴퓨터 안의 시험 서버(127.0.0.1)를 받게(맥 allowLocalForTests)
+#[cfg(test)]
+tokio::task_local! {
+    static ALLOW_LOCAL: bool;
+}
+#[cfg(test)]
+fn local_allowed() -> bool {
+    ALLOW_LOCAL.try_with(|v| *v).unwrap_or(false)
+}
+#[cfg(not(test))]
+fn local_allowed() -> bool {
+    false
+}
+
 // 이 주소로 요청해도 되는가: 공개 주소 + 실제로 풀린 IP 가 모두 공개 + 프록시 자신의 이름이 아님
 async fn allowed(url: &str) -> bool {
+    if local_allowed() {
+        return true;
+    }
     if !url_safety::resolves_public(url).await {
         return false;
     }
@@ -119,8 +136,21 @@ async fn allowed(url: &str) -> bool {
     !url_safety::host_of(url).map(|h| proxy_hosts().contains(&h)).unwrap_or(true)
 }
 
-// 안전 검사를 거쳐 받는다(리다이렉트는 단계마다 같은 검사, S-04). 304 는 status 로 알려 준다.
+// 요청 하나의 전체 시간 상한(리다이렉트를 따라가는 것·본문 받기까지 모두 — 맥 timeoutIntervalForResource 60초).
+// 클라이언트의 20초는 요청(리다이렉트 한 단계)마다라, 리다이렉트 10번이면 ~220초까지 묶일 수 있었다
+pub const REQUEST_DEADLINE: Duration = Duration::from_secs(60);
+
 pub async fn get(url: &str, headers: &[(&str, String)], limit: usize) -> Result<Fetched, FeedError> {
+    get_within(url, headers, limit, REQUEST_DEADLINE).await
+}
+
+// deadline 은 시험에서만 줄인다
+pub async fn get_within(url: &str, headers: &[(&str, String)], limit: usize, deadline: Duration) -> Result<Fetched, FeedError> {
+    tokio::time::timeout(deadline, get_once(url, headers, limit)).await.unwrap_or_else(|_| Err(FeedError::Net("시간 초과".into())))
+}
+
+// 안전 검사를 거쳐 받는다(리다이렉트는 단계마다 같은 검사, S-04). 304 는 status 로 알려 준다.
+async fn get_once(url: &str, headers: &[(&str, String)], limit: usize) -> Result<Fetched, FeedError> {
     let mut current = url.to_string();
     let mut hops = 0;
     let resp = loop {
@@ -146,6 +176,7 @@ pub async fn get(url: &str, headers: &[(&str, String)], limit: usize) -> Result<
     // 실제 접속 IP 를 한 번 더(프록시를 거치면 프록시 IP 라 이름 확인에 맡김). 모르면 막는다.
     let proxied = system_proxy_configured();
     match resp.remote_addr() {
+        _ if local_allowed() => {}
         Some(a) if !proxied && !is_public_ip(&a.ip()) => return Err(FeedError::Blocked(format!("접속 IP {}", a.ip()))),
         None if !proxied => return Err(FeedError::Blocked("접속 IP 확인 안 됨".into())),
         _ => {}
@@ -244,6 +275,41 @@ mod tests {
         assert!(matches!(net_err(r.unwrap_err()), FeedError::Blocked(_)));
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(!accepted.load(std::sync::atomic::Ordering::SeqCst), "연결이 나가면 안 됨");
+    }
+
+    // S2: 아주 천천히 흘러나오는 서버 하나가 요청을 오래 묶지 않는다 — 요청 전체(리다이렉트·본문까지) 시간 상한(맥 slowDripFeedIsCutByDeadline)
+    #[tokio::test]
+    async fn slow_drip_is_cut_by_deadline() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for s in listener.incoming() {
+                let Ok(mut s) = s else { return };
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 1024];
+                    let _ = s.read(&mut buf);
+                    let _ = s.write_all(b"HTTP/1.1 200 OK\r\ncontent-type: application/xml\r\n\r\n<rss>");
+                    // 한 바이트씩 0.2초마다 — 바이트 사이 대기(20초)에는 영영 걸리지 않는다
+                    for _ in 0..600 {
+                        std::thread::sleep(Duration::from_millis(200));
+                        if s.write_all(b" ").and_then(|_| s.flush()).is_err() {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+        let started = std::time::Instant::now();
+        let url = format!("http://127.0.0.1:{port}/feed");
+        let r = ALLOW_LOCAL.scope(true, get_within(&url, &[], MAX_BODY, Duration::from_millis(800))).await;
+        assert!(r.is_err(), "상한에 걸려 실패해야 함");
+        assert!(started.elapsed() < Duration::from_secs(4), "상한(0.8초)에서 끊겨야 함: {:?}", started.elapsed());
+    }
+
+    #[test]
+    fn request_deadline_matches_mac() {
+        assert_eq!(REQUEST_DEADLINE, Duration::from_secs(60));
     }
 
     #[tokio::test]

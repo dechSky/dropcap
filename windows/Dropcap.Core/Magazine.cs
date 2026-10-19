@@ -79,10 +79,13 @@ public sealed class Magazine
     public event Action? Changed;
     public event Action? ImagesChanged;
 
-    public Magazine(Database db, FeedService? feeds = null)
+    // retryFile: 못 넣은 기사를 앱을 껐다 켜도 남게 둘 파일(자료 폴더의 ingest-retry.json). 넘기지 않으면(시험) 메모리에만
+    public Magazine(Database db, FeedService? feeds = null, string? retryFile = null)
     {
         this.db = db;
         this.feeds = feeds ?? FeedService.Shared;
+        this.retryFile = retryFile;
+        retry = LoadRetry(retryFile);
         Archive = ArchiveOrder(db.Issues());
     }
 
@@ -99,50 +102,101 @@ public sealed class Magazine
         PublishDue();
     }
 
-    // 새로 들어온 기사 전부(같은 소식으로 묶여 알림에서 빠진 것도 포함)
-    public void Ingest(IReadOnlyList<NewsItem> items, bool enrich = true)
+    // DB 에 넣지 못한 기사(디스크 가득·오래 잠김). 앱 상태에는 이미 '본 글'로 남아 피드에서 다시 오지 않으므로 여기 두었다가
+    // 다음 받아 넣기 때 먼저 다시 넣는다. 끝없이 쌓이지 않게 RetryLimit 건까지(오래된 것부터 버림)
+    public const int RetryLimit = 3000;
+    private List<NewsItem> retry = new();
+    private readonly string? retryFile;
+    internal int RetryCount { get { lock (gate) return retry.Count; } }
+    public const string RetryFileName = "ingest-retry.json";
+
+    // 시작 때 읽기: NewsItem 배열 JSON. 없거나 깨졌으면 빈 것, 상한 넘으면 최근 것만
+    private static List<NewsItem> LoadRetry(string? file)
     {
-        if (items.Count == 0) return;
+        if (file is null) return new();
+        try
+        {
+            if (!File.Exists(file)) return new();
+            var list = Json.Decode<List<NewsItem>>(File.ReadAllText(file))?.Where(i => i is not null).ToList() ?? new();
+            return list.Count > RetryLimit ? list.GetRange(list.Count - RetryLimit, RetryLimit) : list;
+        }
+        catch { return new(); }
+    }
+
+    // 바뀔 때마다 원자적으로 쓰기, 비면 지우기. 쓰기 실패(디스크 가득)면 메모리에만 둔다
+    private void SaveRetry(List<NewsItem> before)
+    {
+        if (retryFile is null || (before.Count == 0 && retry.Count == 0)) return;
+        try
+        {
+            if (retry.Count == 0) File.Delete(retryFile);
+            else Store.AtomicWrite(retryFile, Json.Encode(retry));
+        }
+        catch { }
+    }
+
+    // 새로 들어온 기사 전부(같은 소식으로 묶여 알림에서 빠진 것도 포함)
+    // 매거진에 이미 있는 key(채우기 전 — 이미 있는 글은 번역·넣기를 건너뛰게)
+    public HashSet<string> Existing(IEnumerable<string> keys) => db.Existing(keys);
+
+        public void Ingest(IReadOnlyList<NewsItem> fresh, bool enrich = true)
+    {
         lock (gate)
         {
-            var since = DateTimeOffset.Now.AddDays(-7);
-            var clusters = db.RecentClusters(since);
-            // 스토리마다 대표 기사 하나(뜻 비교용)
-            var reps = new Dictionary<string, NewsItem>();
-            foreach (var c in clusters) if (db.ItemsInCluster(c.Id).LastOrDefault()?.Item is { } first) reps[c.Id] = first;
-            foreach (var it in items)
+            if (fresh.Count == 0 && retry.Count == 0) return;
+            var before = retry;
+            var items = retry.Concat(fresh).ToList();
+            retry = new();
+            var failed = new List<NewsItem>();
+            try
             {
-                var when = it.Date ?? DateTimeOffset.Now;
-                // 이미 있는 기사는 스토리를 다시 정하지 않는다(대표가 자기 자신이면 '같은 출처'로 보여 새 스토리가 생기던 문제)
-                if (db.Exists(it.Key))
+                var since = DateTimeOffset.Now.AddDays(-7);
+                var clusters = db.RecentClusters(since);
+                // 스토리마다 대표 기사 하나(뜻 비교용)
+                var reps = new Dictionary<string, NewsItem>();
+                foreach (var c in clusters) if (db.ItemsInCluster(c.Id).LastOrDefault()?.Item is { } first) reps[c.Id] = first;
+                foreach (var it in items)
                 {
-                    db.Upsert(it, null);
-                    continue;
+                    // 한 번 못 넣었으면 나머지도 못 넣는다(잠김·가득) — 하나마다 잠금을 기다리지 않고 바로 다음으로 미룬다
+                    if (failed.Count > 0) { failed.Add(it); continue; }
+                    var stored = false;
+                    try
+                    {
+                        var when = it.Date ?? DateTimeOffset.Now;
+                        // 이미 있는 기사는 스토리를 다시 정하지 않는다(대표가 자기 자신이면 '같은 출처'로 보여 새 스토리가 생기던 문제)
+                        // 기사만 스토리로 묶는다(논문·릴리스·커뮤니티 글은 양이 많고 성격이 달라 제외)
+                        if (db.Exists(it.Key) || it.ItemKind is not (ItemKind.Article or ItemKind.Video))
+                        {
+                            if (!db.TryUpsert(it, null)) failed.Add(it);
+                            continue;
+                        }
+                        // 기사를 먼저 넣고, 넣었을 때만 스토리를 키운다(못 넣은 기사를 다시 넣을 때 두 번 세지 않게)
+                        var match = clusters.FindIndex(c => reps.TryGetValue(c.Id, out var r) && StoryMatch.Same(it, r));
+                        var cid = match >= 0 ? clusters[match].Id : Guid.NewGuid().ToString().ToUpperInvariant();
+                        if (!db.TryUpsert(it, cid)) { failed.Add(it); continue; }
+                        stored = true;
+                        var (id, joined) = Assign(it, when, clusters, reps, match, cid);
+                        if (joined && IsFollowed(id) && clusters.FirstOrDefault(c => c.Id == id) is { } fc) grown.Add((fc, it));
+                    }
+                    catch (Microsoft.Data.Sqlite.SqliteException) { if (!stored) failed.Add(it); }   // 기사는 들어갔고 스토리 쓰기만 못 했으면 다시 넣지 않음
                 }
-                // 기사만 스토리로 묶는다(논문·릴리스·커뮤니티 글은 양이 많고 성격이 달라 제외)
-                if (it.ItemKind is not (ItemKind.Article or ItemKind.Video))
-                {
-                    db.Upsert(it, null);
-                    continue;
-                }
-                var (cid, joined) = Assign(it, when, clusters, reps);
-                if (joined && IsFollowed(cid) && clusters.FirstOrDefault(c => c.Id == cid) is { } fc) grown.Add((fc, it));
-                db.Upsert(it, cid);
             }
+            catch (Microsoft.Data.Sqlite.SqliteException) { failed = items; }   // 스토리 목록조차 못 읽음 — 통째로 다음에
+            retry = failed.Count > RetryLimit ? failed.GetRange(failed.Count - RetryLimit, RetryLimit) : failed;
+            SaveRetry(before);
             Revision++;
         }
         Changed?.Invoke();
         if (enrich) _ = EnrichImagesAsync();
     }
 
-    // 기사 하나를 스토리에 넣는다: 대표 기사와 같은 소식이면 그 스토리에, 아니면 새 스토리. (스토리 id, 기존 스토리에 붙었는지)
+    // 기사 하나를 스토리에 넣는다: 대표 기사와 같은 소식이면(match) 그 스토리에, 아니면 새 스토리(id). (스토리 id, 기존 스토리에 붙었는지)
     // 스토리의 대표 기사와만 비교한다(낱말을 계속 보태면 눈덩이처럼 아무 기사나 붙는다)
-    private (string Id, bool Joined) Assign(NewsItem it, DateTimeOffset when, List<Database.Cluster> clusters, Dictionary<string, NewsItem> reps)
+    private (string Id, bool Joined) Assign(NewsItem it, DateTimeOffset when, List<Database.Cluster> clusters, Dictionary<string, NewsItem> reps, int match, string id)
     {
-        var i = clusters.FindIndex(c => reps.TryGetValue(c.Id, out var r) && StoryMatch.Same(it, r));
-        if (i >= 0)
+        if (match >= 0)
         {
-            var c = clusters[i];
+            var c = clusters[match];
             c.Size += 1;
             if (when > c.Last) c.Last = when;
             if (when < c.First) c.First = when;
@@ -150,7 +204,7 @@ public sealed class Magazine
             db.SaveCluster(c);
             return (c.Id, true);
         }
-        var n = new Database.Cluster(Guid.NewGuid().ToString().ToUpperInvariant(), it.DisplayTitle, StoryMatch.Tokens(it.Title), when, when, 1);
+        var n = new Database.Cluster(id, it.DisplayTitle, StoryMatch.Tokens(it.Title), when, when, 1);
         clusters.Add(n);
         db.SaveCluster(n);
         reps[n.Id] = it;
@@ -360,11 +414,16 @@ public sealed class Magazine
     // 스토리 목록: 최근 24시간 안에 보도가 붙은 것(지금 커지는 스토리)과 나머지. 큰 것·최근 것이 앞
     public (List<Database.Cluster> Live, List<Database.Cluster> Past) StoryGroups(DateTimeOffset? now = null)
     {
-        var n = now ?? DateTimeOffset.Now;
-        double Rank(Database.Cluster c) => c.Size + Math.Max(0, 24 - (n - c.Last).TotalHours) / 6;
-        var all = Stories().OrderByDescending(Rank).ThenByDescending(c => c.Last).ToList();
-        var cut = n.AddHours(-24);
-        return (all.Where(c => c.Last >= cut).ToList(), all.Where(c => c.Last < cut).ToList());
+        var g = StoryCardGroups(StoryCards(), now ?? DateTimeOffset.Now);
+        return (g.Live.Select(c => c.Cluster).ToList(), g.Past.Select(c => c.Cluster).ToList());
+    }
+
+    public static (List<StoryCard> Live, List<StoryCard> Past) StoryCardGroups(List<StoryCard> cards, DateTimeOffset now)
+    {
+        double Rank(Database.Cluster c) => c.Size + Math.Max(0, 24 - (now - c.Last).TotalHours) / 6;
+        var all = cards.OrderByDescending(c => Rank(c.Cluster)).ThenByDescending(c => c.Cluster.Last).ToList();
+        var cut = now.AddHours(-24);
+        return (all.Where(c => c.Cluster.Last >= cut).ToList(), all.Where(c => c.Cluster.Last < cut).ToList());
     }
 
     // 스토리 한눈에 요약(Ollama 가 있을 때) — 보도 수가 같으면 다시 만들지 않음
@@ -422,25 +481,35 @@ public sealed class Magazine
     public Issue LiveWeekly() =>
         MakeIssue(IssueKind.Weekly, new DateTimeOffset(WeekRange(DateTime.Now).From), DateTimeOffset.Now.AddSeconds(60), "live-weekly");
 
-    // 하루가 지나면 그날 호를, 일요일이 지나면 그 주 호를 발행해 지난 호에 남긴다
+    // 하루가 지나면 그날 호를, 일요일이 지나면 그 주 호를 발행해 지난 호에 남긴다.
+    // 빈 날은 최근 DueDays 일까지 메운다(매거진 채우기로 넣은 지난 기사도 그날 호가 생기게 — 예전엔 1~3일 전만이라 4일 넘은 날은 호가 없었다).
+    // 이미 있는 호는 건너뛰고, 4일 넘은 날은 기사 수만 먼저 세어 없으면 엮지 않는다(확인마다 14일을 다시 엮지 않게)
+    public const int DueDays = 14;
     public void PublishDue(DateTime? todayOverride = null)
     {
         var nowLocal = todayOverride ?? DateTime.Now;
         var today = nowLocal.Date;
         // 일간 호의 기간은 '오늘 호'와 같게: 전날 18시 ~ 그날 18시. 어제 호는 오늘 정오까지는 새 기사가 오면 다시 엮는다.
-        for (var back = 3; back >= 1; back--)
+        for (var back = DueDays; back >= 1; back--)
         {
             var day = today.AddDays(-back);
             var id = "daily-" + DayId(day);
             var refresh = back == 1 && nowLocal.Hour < 12;
             if (db.HasIssue(id) && !refresh) continue;
-            var issue = MakeIssue(IssueKind.Daily, new DateTimeOffset(day.AddHours(-6)), new DateTimeOffset(day.AddHours(18)), id);
+            DateTimeOffset from = new(day.AddHours(-6)), to = new(day.AddHours(18));
+            if (back > 3 && db.ArticleCount(from, to) == 0) continue;
+            var issue = MakeIssue(IssueKind.Daily, from, to, id);
             if (issue.Count > 0) db.SaveIssue(issue);
         }
-        var last = WeekRange(WeekRange(today).From.AddHours(-1));
-        var wid = "weekly-" + WeekId(last.From);
-        if (!db.HasIssue(wid))
+        // 주간: 지난주와 지지난주(채운 기사가 지지난주에 걸칠 수 있음)
+        var week = WeekRange(today).From;
+        for (var n = 0; n < 2; n++)
         {
+            var last = WeekRange(week.AddHours(-1));
+            week = last.From;
+            var wid = "weekly-" + WeekId(last.From);
+            if (db.HasIssue(wid)) continue;
+            if (n > 0 && db.ArticleCount(new DateTimeOffset(last.From), new DateTimeOffset(last.To)) == 0) continue;
             var issue = MakeIssue(IssueKind.Weekly, new DateTimeOffset(last.From), new DateTimeOffset(last.To), wid);
             if (issue.Count > 0) db.SaveIssue(issue);
         }
@@ -461,6 +530,60 @@ public sealed class Magazine
     // 지난 호 목록: 최신부터 호의 끝 시각 순(주간은 그 주 끝 — 토요일 호 바로 위)
     public static List<Issue> ArchiveOrder(IEnumerable<Issue> issues) =>
         issues.OrderByDescending(i => i.To).ThenBy(i => i.Kind == IssueKind.Weekly ? 0 : 1).ToList();
+
+    // 새로 고침 옆 '마지막 확인 n분 전'(맥 Magazine.lastCheckText 와 같은 글)
+    public static string LastCheckText(DateTimeOffset? d, DateTimeOffset now)
+    {
+        if (d is not { } t) return "아직 확인 전";
+        var s = Math.Max(0, (now - t).TotalSeconds);
+        if (s < 60) return "마지막 확인 방금";
+        if (s < 3600) return $"마지막 확인 {(int)(s / 60)}분 전";
+        if (s < 86400) return $"마지막 확인 {(int)(s / 3600)}시간 전";
+        return $"마지막 확인 {(int)(s / 86400)}일 전";
+    }
+
+    // 기록 적음 이유(지난 호 머리) — 그날 모인 소식이 적은 까닭(맥 Magazine.thinReason 과 같은 글)
+    public static string? ThinReason(Issue issue) =>
+        issue.IsThin ? $"기록 적음 — 앱을 쓰기 전이거나 켠 출처가 적던 때라 모인 소식이 {issue.Count}건뿐입니다" : null;
+
+    // 지난 호 목록 묶음: 이번 주 · 지난주 · 그 앞은 달별(접혀 있음). 주간 호는 그 주 묶음 맨 위(ArchiveOrder 그대로).
+    // 빈 날: 묶음 기간 중 첫 기록 날부터 어제까지 일간 호가 없는 날 수(앱을 쓰기 전 날은 세지 않음) — 맥 archiveGroups 와 같은 규칙
+    public sealed record ArchiveGroup(string Id, string Title, List<Issue> Issues, int EmptyDays, bool Folded);
+    public static List<ArchiveGroup> ArchiveGroups(IReadOnlyList<Issue> issues, DateTime nowLocal)
+    {
+        var thisWeek = WeekRange(nowLocal);
+        var lastWeek = WeekRange(thisWeek.From.AddHours(-1));
+        var today = nowLocal.Date;
+        static DateTime Anchor(Issue i) => (i.Kind == IssueKind.Weekly ? i.From.ToLocalTime() : i.To.ToLocalTime().AddSeconds(-60)).Date;
+        var days = issues.Where(i => i.Kind == IssueKind.Daily).Select(Anchor).ToHashSet();
+        if (issues.Count == 0) return new();
+        var first = days.Count > 0 ? days.Min() : issues.Select(Anchor).Min();
+        var order = new List<string>();
+        var groups = new Dictionary<string, (string Title, List<Issue> Issues, DateTime From, DateTime To, bool Folded)>();
+        foreach (var i in issues)
+        {
+            var d = Anchor(i);
+            string key, title; DateTime from, to; bool folded;
+            if (d >= thisWeek.From) (key, title, from, to, folded) = ("this", "이번 주", thisWeek.From, thisWeek.To, false);
+            else if (d >= lastWeek.From) (key, title, from, to, folded) = ("last", "지난주", lastWeek.From, lastWeek.To, false);
+            else
+            {
+                var m = new DateTime(d.Year, d.Month, 1);
+                // 달 묶음은 지난주 앞까지만(지난주와 같은 날을 두 번 세지 않게)
+                (key, title, from, to, folded) = ($"m-{d.Year:0000}-{d.Month:00}", $"{d.Year}년 {d.Month}월", m, m.AddMonths(1) < lastWeek.From ? m.AddMonths(1) : lastWeek.From, true);
+            }
+            if (!groups.ContainsKey(key)) { order.Add(key); groups[key] = (title, new List<Issue>(), from, to, folded); }
+            groups[key].Issues.Add(i);
+        }
+        return order.Select(key =>
+        {
+            var g = groups[key];
+            var n = 0;
+            var end = g.To < today ? g.To : today;
+            for (var d = g.From > first ? g.From : first; d < end; d = d.AddDays(1)) if (!days.Contains(d)) n++;
+            return new ArchiveGroup(key, g.Title, g.Issues, n, g.Folded);
+        }).ToList();
+    }
 
     // 주간 범위: 달력 한 주(한국 달력처럼 일요일부터, 7일). 이번 주 진행 중 호와 지난 주간이 겹치지 않고 이어짐
     public static (DateTime From, DateTime To) WeekRange(DateTime local)
@@ -520,18 +643,30 @@ public sealed class Magazine
     // 스토리의 보도들(꺼진·해지한·숨긴 출처 글은 빠짐, S-13)
     public List<NewsItem> StoryItems(string cluster) => Filter().Visible(db.ItemsInCluster(cluster).Select(s => s.Item));
     public Database.Cluster? Cluster(string id) => db.GetCluster(id);
+    public HashSet<string> StoryIds() => db.ClusterIds();
     public string? ClusterId(string key) => db.ClusterOf(key);
 
     // 스토리: 최근 2주 동안 두 곳 이상이 다룬 것(M-14)
     // 지금 보이는 출처로만 두 곳 이상이 다룬 스토리(출처를 끄면 그 스토리의 보도 수도 줄어 목록에서 빠질 수 있음, S-13). 크기도 보이는 보도 수로
-    public List<Database.Cluster> Stories()
+    public List<Database.Cluster> Stories() => StoryCards().Select(c => c.Cluster).ToList();
+
+    // 스토리 카드 하나: 스토리와 보이는 보도들(카드가 DB 를 다시 묻지 않게)
+    public sealed record StoryCard(Database.Cluster Cluster, List<NewsItem> Items);
+
+    // 스토리 목록 전체를 문장 두 번(스토리 · 보도)으로 — 예전엔 스토리마다 한 번씩 물어 기록이 쌓일수록 느려졌다.
+    // filter 는 뒤 스레드에서 부를 때 화면 쪽에서 미리 떠 둔 것(상태를 뒤 스레드에서 읽지 않게)
+    public List<StoryCard> StoryCards(SourceFilter? filter = null, DateTimeOffset? now = null)
     {
-        var o = new List<Database.Cluster>();
-        foreach (var c in db.RecentClusters(DateTimeOffset.Now.AddDays(-14)).Where(c => c.Size >= 2))
+        var since = (now ?? DateTimeOffset.Now).AddDays(-14);
+        var f = filter ?? Filter();
+        var clusters = db.RecentClusters(since).Where(c => c.Size >= 2).ToList();
+        var members = clusters.Count == 0 ? new() : db.StoryMembers(since);
+        var o = new List<StoryCard>();
+        foreach (var c in clusters)
         {
-            var items = StoryItems(c.Id);
+            var items = f.Visible((members.GetValueOrDefault(c.Id) ?? new()).Select(s => s.Item));
             if (items.Select(i => i.SourceId).Distinct().Count() < 2) continue;
-            o.Add(c with { Size = items.Count });
+            o.Add(new StoryCard(c with { Size = items.Count }, items));
         }
         return o;
     }

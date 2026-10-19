@@ -28,7 +28,8 @@ enum E2ESettings {
         s.story = Magazine.shared.stories().contains { c in Magazine.shared.storyItems(c.id).contains { $0.sourceId == source } }
         s.search = await Magazine.shared.search(term).contains { $0.sourceId == source }
         s.pending = m.state.pending.contains { $0.item.sourceId == source }
-        if waitWidget { await r.sleep(3.5) } // 위젯은 상태가 바뀌면 2초 묶어서 스스로 쓴다(직접 부르지 않음 — 실제 경로 확인)
+        // 위젯은 상태가 바뀌면 2초 묶어서 스스로 쓴다(직접 부르지 않음 — 실제 경로 확인). 예전엔 매번 3.5초를 그냥 기다렸다
+        if waitWidget { await r.sleep(0.3); await r.until(5) { !WidgetExporter.shared.pending } }
         let f = WidgetExporter.shared.dir.appendingPathComponent(WidgetSnapshot.fileName)
         if let d = try? Data(contentsOf: f), let w = WidgetSnapshot.decode(d) {
             s.widget = ([w.cover].compactMap { $0 } + w.latest).contains { $0.key.hasPrefix(source + "|") }
@@ -317,6 +318,8 @@ enum E2ESettings {
         r.record("22", "방해 금지·잠시 끄기 켜기/끄기 → 다음 확인부터",
                  expected: "켬 → 물방울 없음 · 끔 → 바로 다음 확인에서 물방울",
                  actual: qlog.joined(separator: " · "), pass: qOK)
+
+        await E2ESettingsEffects.run(r) // 설정 효과(S 단계): 따로는 scripts/e2e/settings.sh
     }
 }
 

@@ -26,10 +26,8 @@ internal sealed class ToastWindow : IDisposable
     private POINT origin;            // 창 왼쪽 위(화면 픽셀)
     private nint monitor;            // 지금 창이 있는 모니터
     private bool shown;
+    private ToastPosition? placedAt;   // 창을 마지막으로 놓을 때의 위치 설정
     private bool clickable;          // 카드 위라 클릭을 받는 중
-    private double? otherScreenSince;
-    private double? fadeStart;       // 다른 화면으로 옮겨 가는 중(0.14초 사라짐 → 자리 옮김 → 0.2초 나타남)
-    private bool fadeMoved;
     private double lastFrame;
     private double? emptySince;
 
@@ -77,7 +75,8 @@ internal sealed class ToastWindow : IDisposable
         renderer.Dark = Platform.DarkMode();
         Fonts.UsePretendard = Prefs.Get("usePretendard", true);
         // 새 알림은 언제나 마우스가 있는 화면에(N-11)
-        if (!shown || MonitorHandleAt(Cursor()) != monitor) Place();
+        // 이미 떠 있으면 커서가 다른 모니터로 가도 그 자리에 둔다(새 알림도 같은 창에 쌓임)
+        if (ToastEngine.NeedsPlace(shown, placedAt, model.State.Settings.Position)) Place();
     }
 
     private void Start()
@@ -104,7 +103,8 @@ internal sealed class ToastWindow : IDisposable
         monitor = MonitorHandleAt(p);
         scale = s;
         var w = (int)Math.Ceiling(ToastEngine.PanelWidth * scale);
-        var center = model.State.Settings.Position == ToastPosition.Center;
+        placedAt = model.State.Settings.Position;
+        var center = placedAt == ToastPosition.Center;
         var x = center ? work.Left + (work.Width - w) / 2 : work.Right - w - (int)(2 * scale);
         origin = new POINT { X = x, Y = work.Top };
     }
@@ -126,28 +126,15 @@ internal sealed class ToastWindow : IDisposable
         // 잔잔하면 초당 12번만(N-03)
         var fps = engine.FramesPerSecond(now);
         timer.Interval = TimeSpan.FromMilliseconds(fps >= 60 ? 16 : 33);
-        if (fps < 60 && now - lastFrame < 1.0 / 12 && fadeStart is null) return;
+        if (fps < 60 && now - lastFrame < 1.0 / 12) return;
         lastFrame = now;
         Draw(now);
     }
 
     private void Draw(double now)
     {
-        byte alpha = 255;
-        if (fadeStart is { } fs)
-        {
-            var k = now - fs;
-            if (k < 0.14) alpha = (byte)(255 * (1 - k / 0.14));
-            else
-            {
-                if (!fadeMoved) { fadeMoved = true; Place(); }
-                var k2 = (k - 0.14) / 0.2;
-                alpha = (byte)(255 * Math.Clamp(k2, 0, 1));
-                if (k2 >= 1) fadeStart = null;
-            }
-        }
         using var bmp = renderer.RenderBitmap(now, (float)scale);
-        Blit(bmp, alpha);
+        Blit(bmp, 255);
     }
 
     private void Blit(SkiaSharp.SKBitmap bmp, byte alpha)
@@ -183,7 +170,6 @@ internal sealed class ToastWindow : IDisposable
     private void TrackMouse(double now)
     {
         var p = Cursor();
-        FollowCursorScreen(p, now);
         var (x, y) = Local(p);
         var hit = engine.HitTest(x, y);
         SetClickable(hit.Card is not null);
@@ -197,18 +183,6 @@ internal sealed class ToastWindow : IDisposable
         var ex = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
         ex = on ? ex & ~(nint)WS_EX_TRANSPARENT : ex | WS_EX_TRANSPARENT;
         SetWindowLongPtr(hwnd, GWL_EXSTYLE, ex);
-    }
-
-    // 알림이 떠 있는 동안 마우스가 다른 화면에 0.25초 머물면 카드가 살짝 사라졌다가 그 화면에 다시 나타난다(N-11)
-    private void FollowCursorScreen(POINT p, double now)
-    {
-        if (fadeStart is not null || engine.Cards.Count == 0) return;
-        if (MonitorHandleAt(p) == monitor) { otherScreenSince = null; return; }
-        otherScreenSince ??= now;
-        if (now - otherScreenSince < 0.25) return;
-        otherScreenSince = null;
-        fadeStart = now;
-        fadeMoved = false;
     }
 
     private nint Proc(nint h, uint msg, nint wParam, nint lParam)

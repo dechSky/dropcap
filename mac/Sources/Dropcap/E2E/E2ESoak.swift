@@ -5,7 +5,7 @@ import Foundation
 // 시험 장치(M9): 디버그 빌드(swift build·swift test·e2e·clicksweep)에만 들어간다. 배포 빌드(build.sh, -c release)에는 없음.
 #if DEBUG
 
-// 오래 켜 두기 시험(soak, mac/STABILITY.md · scripts/e2e/soak.sh). DROPCAP_TEST_E2E_PHASE=soak 일 때만.
+// 오래 켜 두기 시험(soak· scripts/e2e/soak.sh). DROPCAP_TEST_E2E_PHASE=soak 일 때만.
 // 견본 피드(E2EFeeds)·시험 시계(fakeclock)로 며칠치를 빨리 돌리며, 시험 시각 1시간마다 메모리·열린 파일·스레드·DB·캐시 크기와
 // 메인 스레드 멈춤(가장 긴 지연)을 soak.jsonl 에 남긴다. 사람이 쓰듯 매거진·스토리·검색·읽기 창·사진도 주기적으로 연다.
 // - DROPCAP_SOAK_DAYS(기본 3) · DROPCAP_SOAK_STEP_MIN(확인 간격, 기본 10) · DROPCAP_SOAK_POSTS(확인마다 새 글, 기본 20)
@@ -88,7 +88,7 @@ enum E2ESoak {
         let ready = r.out.appendingPathComponent("soak-ready"), done = r.out.appendingPathComponent("soak-done")
         try? String(getpid()).write(to: ready, atomically: true, encoding: .utf8)
         await r.until(300) { FileManager.default.fileExists(atPath: done.path) }
-        r.record("soak", "오래 켜 두기 \(days)일(시험 시계)", expected: "soak.jsonl 의 지표가 계속 늘지 않음(STABILITY.md 에서 판정)",
+        r.record("soak", "오래 켜 두기 \(days)일(시험 시계)", expected: "soak.jsonl 의 지표가 계속 늘지 않음",
                  actual: "확인 \(steps)번 · 실제 \(Int(ProcessInfo.processInfo.systemUptime - started))초", pass: nil)
     }
 

@@ -20,6 +20,7 @@ public sealed class ImageLoader
     // 머리만 읽어 크기를 본다. 너무 크거나 비어 있으면 false
     public static bool SafeDimensions(SKImageInfo info) => info.Width > 0 && info.Height > 0 && (long)info.Width * info.Height <= MaxSourcePixels;
     public const int DiskLimit = 600, DiskKeep = 500;
+    public const long MemoryLimitBytes = 64L << 20;
 
     private readonly string dir;
     private readonly ConcurrentDictionary<string, Task<byte[]?>> inflight = new();
@@ -47,21 +48,40 @@ public sealed class ImageLoader
         }));
     }
 
-    // 그리기용(알림 카드). 메모리에 160개까지.
+    // 그리기용(알림 카드). 메모리에는 풀린 크기로 64MB·160장까지(최근 사용 순 — 오래 안 쓴 것부터 버림).
+    // 예전엔 장 수(160)로만 묶어 큰 사진이면 수백 MB 를 붙들 수 있었다
     public async Task<SKImage?> ImageAsync(string url)
     {
-        lock (memory) if (memory.TryGetValue(url, out var m)) { lru.Remove(m.Node); lru.AddFirst(m.Node); return m.Image; }
+        if (Cached(url) is { } hit) return hit;
         var bytes = await JpegAsync(url);
         if (bytes is null) return null;
         var img = SKImage.FromEncodedData(bytes);
         if (img is null) return null;
         lock (memory)
         {
-            if (!memory.ContainsKey(url)) memory[url] = (img, lru.AddFirst(url));
-            while (memory.Count > 160 && lru.Last is { } last) { memory[last.Value].Image.Dispose(); memory.Remove(last.Value); lru.RemoveLast(); }
+            // 같은 주소를 동시에 불러 먼저 담긴 것이 있으면 그것을 쓰고 이 그림은 버린다
+            if (memory.TryGetValue(url, out var won)) { img.Dispose(); Touch(won.Node); return won.Image; }
+            var cost = Cost(img);
+            if (cost > MemoryLimitBytes) return img;   // 상한보다 큰 한 장은 담지 않는다(부른 쪽이 쓰고 버림)
+            memory[url] = (img, lru.AddFirst(url));
+            memoryBytes += cost;
+            while ((memoryBytes > MemoryLimitBytes || memory.Count > MemoryLimitCount) && lru.Last is { } last && last.Value != url)
+            {
+                var old = memory[last.Value];
+                memoryBytes -= Cost(old.Image);
+                old.Image.Dispose();
+                memory.Remove(last.Value);
+                lru.RemoveLast();
+            }
         }
         return img;
     }
+
+    public const int MemoryLimitCount = 160;
+    private long memoryBytes;
+    // 풀었을 때 크기(가로×세로×4)
+    private static long Cost(SKImage img) => Math.Max(1L, (long)img.Width * img.Height * 4);
+    private void Touch(LinkedListNode<string> node) { lru.Remove(node); lru.AddFirst(node); }
 
     // 받은 사진의 가로 크기(줄인 뒤 — 맥도 1400px 로 줄인 사진의 크기를 본다). 못 받으면 null(R-22 표지 고르기)
     public async Task<int?> WidthAsync(string url)
@@ -72,7 +92,19 @@ public sealed class ImageLoader
         return codec is null ? null : codec.Info.Width;
     }
 
-    public SKImage? Cached(string url) { lock (memory) return memory.TryGetValue(url, out var m) ? m.Image : null; }
+    // 시험용: 메모리에 담은 사진의 풀린 크기 합 · 마지막으로 Shrink 가 푼 크기
+    internal long MemoryBytes { get { lock (memory) return memoryBytes; } }
+    [ThreadStatic] internal static SKSizeI LastDecode;
+
+    public SKImage? Cached(string url)
+    {
+        lock (memory)
+        {
+            if (!memory.TryGetValue(url, out var m)) return null;
+            Touch(m.Node);   // 그릴 때 쓴 것도 '최근 사용'
+            return m.Image;
+        }
+    }
 
     private async Task<byte[]?> LoadAsync(string url)
     {
@@ -101,11 +133,18 @@ public sealed class ImageLoader
         if (codec is null || !SafeDimensions(codec.Info)) return null;
         var info = codec.Info;
         var scale = Math.Min(1f, (float)MaxPixels / Math.Max(info.Width, info.Height));
-        using var full = SKBitmap.Decode(codec);
+        // 원본 전체를 풀지 않는다: JPEG 등은 풀 때 1/2·1/4·1/8 로 줄여 풀 수 있다(줄인 결과보다 작아지지 않는 크기로).
+        // 그 뒤 정확한 크기로 다시 줄인다. 줄여 풀 수 없는 형식(PNG 등)은 예전처럼 다 푼다
+        using var full = DecodeScaled(codec, scale);
         if (full is null) return null;
+        LastDecode = new SKSizeI(full.Width, full.Height);
         using var oriented = Orient(full, codec.EncodedOrigin);
-        var target = scale < 1
-            ? oriented.Resize(new SKImageInfo(Math.Max(1, (int)(oriented.Width * scale)), Math.Max(1, (int)(oriented.Height * scale))), new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear))
+        // 목표 크기는 원본 기준(줄여 풀었어도 결과 크기는 예전과 같게)
+        var (ow, oh) = oriented.Width == full.Width ? (info.Width, info.Height) : (info.Height, info.Width);
+        var tw = Math.Max(1, (int)(ow * scale));
+        var th = Math.Max(1, (int)(oh * scale));
+        var target = oriented.Width != tw || oriented.Height != th
+            ? oriented.Resize(new SKImageInfo(tw, th), new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear))
             : oriented.Copy();
         using (target)
         {
@@ -113,6 +152,25 @@ public sealed class ImageLoader
             using var enc = img.Encode(SKEncodedImageFormat.Jpeg, 82);
             return enc?.ToArray();
         }
+    }
+
+    private static SKBitmap? DecodeScaled(SKCodec codec, float scale)
+    {
+        var info = codec.Info;
+        if (scale < 1)
+        {
+            var dims = codec.GetScaledDimensions(scale);
+            var minW = Math.Max(1, (int)(info.Width * scale));
+            var minH = Math.Max(1, (int)(info.Height * scale));
+            if (dims.Width >= minW && dims.Height >= minH && (dims.Width < info.Width || dims.Height < info.Height))
+            {
+                var bmp = new SKBitmap(new SKImageInfo(dims.Width, dims.Height, SKImageInfo.PlatformColorType, info.AlphaType == SKAlphaType.Unpremul ? SKAlphaType.Premul : info.AlphaType));
+                var r = codec.GetPixels(bmp.Info, bmp.GetPixels());
+                if (r is SKCodecResult.Success or SKCodecResult.IncompleteInput) return bmp;
+                bmp.Dispose();
+            }
+        }
+        return SKBitmap.Decode(codec);
     }
 
     private static SKBitmap Orient(SKBitmap b, SKEncodedOrigin origin)

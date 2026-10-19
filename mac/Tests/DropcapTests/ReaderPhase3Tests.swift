@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import Dropcap
 
-// 읽기 창 3단계(mac/READER-CUT.md '3단계 결과'): 피드 전문 우선 · 표 · 사진 설명 · 본문 중간 추천 상자.
+// 읽기 창 3단계: 피드 전문 우선 · 표 · 사진 설명 · 본문 중간 추천 상자.
 // 실제 꼴은 mac/scripts/scramble_fixture.py 로 글·주소를 바꾼 것(표지 낱말만 원래 자리에), 나머지는 지어낸 HTML.
 private func para(_ n: Int, _ topic: String = "harbor") -> String {
     "Paragraph \(n) explains how the \(topic) authority weighed the proposal, listened to residents and set out a schedule for the work."

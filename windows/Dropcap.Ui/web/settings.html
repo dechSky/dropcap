@@ -90,6 +90,23 @@
       <div class="row err" id="addError" hidden></div>
       <div class="row note">웹사이트·뉴스레터(Substack·Medium)·YouTube 채널·GitHub 릴리스·Reddit·arXiv·팟캐스트 주소를 넣으면 알맞은 피드를 찾아 구독합니다.</div>
     </div>
+    <!-- 출처 찾기·보기·상태(설정 › 구독 정리, 규칙은 Core/SourceDirectory.cs) -->
+    <h3>출처 찾기</h3>
+    <div class="group" id="srcDir">
+      <div class="row dir-search">
+        <span class="dim" data-sic="search"></span>
+        <input class="field" id="srcQuery" placeholder="출처 찾기 — 이름·주소·분야·국내/해외" autocomplete="off" spellcheck="false" aria-label="출처 찾기">
+        <button class="ib" id="srcClear" type="button" title="찾기 지우기" hidden><span data-sic="xmark.circle"></span></button>
+      </div>
+      <div class="row"><span class="lb">보기</span><span class="seg" id="srcLayout" role="radiogroup" aria-label="보기"></span></div>
+      <div class="row"><span class="lb">상태</span><span class="seg" id="srcStatus" role="radiogroup" aria-label="상태"></span></div>
+      <div class="row dir-sum">
+        <button class="ib text" id="srcSummary" type="button" title="켠 것만 보기"></button>
+        <span class="grow"></span>
+        <span class="note" id="srcCount"></span>
+      </div>
+      <div class="row note" id="srcEmpty" hidden></div>
+    </div>
     <div id="sourceLists"></div>
   </section>
 

@@ -18,10 +18,19 @@ public sealed class Database : IDisposable
     public string FilePath { get; }
     public bool Recreated { get; }        // 이번 실행에서 깨진 파일을 치우고 새로 만들었는가
     public int SalvagedScraps { get; }    // 그때 깨진 파일에서 건진 스크랩 수
+    private int statements;
+    internal int Statements => Volatile.Read(ref statements);   // 시험용: 실행한 문장 수(화면 하나에 DB 를 몇 번 묻는지)
 
-    public Database(string file)
+    // 다른 연결이 잠갔을 때 바로 실패하지 않고 기다리는 시간(맥 busy handler 3초).
+    // Microsoft.Data.Sqlite 는 잠김을 CommandTimeout(초) 동안 다시 시도한다(기본 30초 — 한 문장마다 30초를 기다려 받아 넣기가 몇 분씩 묶였다)
+    public const int BusyTimeoutMs = 3000;
+    private readonly int busySeconds;
+
+    // busyTimeoutMs 는 시험에서만 바꾼다(초 단위로 올림, 적어도 1초 — 0 이면 끝없이 기다리므로)
+    public Database(string file, int busyTimeoutMs = BusyTimeoutMs)
     {
         FilePath = file;
+        busySeconds = Math.Max(1, (busyTimeoutMs + 999) / 1000);
         (db, Recreated) = OpenOrRecreate(file);
         Exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;");
         Exec("""
@@ -122,6 +131,7 @@ public sealed class Database : IDisposable
         lock (gate)
         {
             using var cmd = db.CreateCommand();
+            cmd.CommandTimeout = Math.Max(1, busySeconds);
             cmd.CommandText = sql;
             try { cmd.ExecuteNonQuery(); } catch (SqliteException) { }
         }
@@ -131,7 +141,9 @@ public sealed class Database : IDisposable
     {
         lock (gate)
         {
+            Interlocked.Increment(ref statements);
             using var cmd = db.CreateCommand();
+            cmd.CommandTimeout = busySeconds;
             cmd.CommandText = sql;
             for (var i = 0; i < args.Length; i++) cmd.Parameters.AddWithValue("$" + (i + 1), args[i] ?? DBNull.Value);
             // 맥과 같은 ? 자리표시를 $1, $2 … 로
@@ -160,6 +172,13 @@ public sealed class Database : IDisposable
     // MARK: 기사
     public sealed record StoredItem(NewsItem Item, DateTimeOffset FirstSeen, string? Cluster);
 
+    // 넣었으면 true. 잠김(오래)·디스크 가득 등으로 못 넣으면 false — 부르는 쪽이 다시 시도할 수 있게
+    public bool TryUpsert(NewsItem item, string? cluster, DateTimeOffset? firstSeen = null)
+    {
+        try { Upsert(item, cluster, firstSeen); return true; }
+        catch (SqliteException e) { Console.Error.WriteLine($"[DB] 넣기 실패({e.SqliteErrorCode}) {e.Message}"); return false; }
+    }
+
     public void Upsert(NewsItem item, string? cluster, DateTimeOffset? firstSeen = null)
     {
         var seen = firstSeen ?? DateTimeOffset.Now;
@@ -180,6 +199,29 @@ public sealed class Database : IDisposable
         var found = false;
         Run("SELECT 1 FROM items WHERE key=?", [key], _ => found = true);
         return found;
+    }
+
+    // 이미 있는 key 들(400개씩 한 번에 — 매거진 채우기 전 거르기)
+    public HashSet<string> Existing(IEnumerable<string> keys)
+    {
+        var o = new HashSet<string>();
+        foreach (var chunk in keys.Distinct().Chunk(400))
+        {
+            var marks = string.Join(",", chunk.Select(_ => "?"));
+            Run($"SELECT key FROM items WHERE key IN ({marks})", chunk.Cast<object?>().ToArray(), r => o.Add(r.GetString(0)));
+        }
+        return o;
+    }
+
+    // 기사 날짜(없으면 처음 본 때)가 [from, to) 안인 기사 수(빈 날 호를 엮기 전에 — 기사를 다 꺼내지 않고)
+    public int ArticleCount(DateTimeOffset from, DateTimeOffset to)
+    {
+        var n = 0;
+        Run("""
+            SELECT COUNT(*) FROM items WHERE COALESCE(date, first_seen) >= ? AND COALESCE(date, first_seen) < ?
+              AND COALESCE(json_extract(json,'$.kind'),'article') = 'article'
+            """, [Unix(from), Unix(to)], r => n = (int)r.GetInt64(0));
+        return n;
     }
 
     private static StoredItem? ReadStored(SqliteDataReader r)
@@ -251,6 +293,23 @@ public sealed class Database : IDisposable
         return o;
     }
 
+    // 최근 스토리(보도 2건 이상)의 보도들을 한 번에 — 스토리 목록이 스토리마다 따로 묻지 않게
+    public Dictionary<string, List<StoredItem>> StoryMembers(DateTimeOffset since)
+    {
+        var o = new Dictionary<string, List<StoredItem>>();
+        Run("""
+            SELECT json, first_seen, cluster FROM items
+            WHERE cluster IN (SELECT id FROM clusters WHERE last >= ? AND size >= 2)
+            ORDER BY COALESCE(date, first_seen) ASC
+            """, [Unix(since)], r =>
+            {
+                if (ReadStored(r) is not { Cluster: { } c } s) return;
+                if (!o.TryGetValue(c, out var list)) o[c] = list = new();
+                list.Add(s);
+            });
+        return o;
+    }
+
     public List<NewsItem> Search(string q, int limit = 200)
     {
         var o = new List<NewsItem>();
@@ -302,6 +361,14 @@ public sealed class Database : IDisposable
         ON CONFLICT(id) DO UPDATE SET title=excluded.title, tokens=excluded.tokens, first=MIN(clusters.first, excluded.first),
           last=MAX(clusters.last, excluded.last), size=excluded.size
         """, [c.Id, c.Title, string.Join(" ", c.Tokens.Order(StringComparer.Ordinal)), Unix(c.First), Unix(c.Last), c.Size]);
+
+    // DB 에 남은 스토리 id 모두(앱 상태의 스토리 기억 정리용)
+    public HashSet<string> ClusterIds()
+    {
+        var o = new HashSet<string>();
+        Run("SELECT id FROM clusters", [], r => o.Add(r.GetString(0)));
+        return o;
+    }
 
     public Cluster? GetCluster(string id)
     {

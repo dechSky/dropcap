@@ -9,7 +9,7 @@ enum IntentLogic {
     static let maxCount = 20
 
     // 분야: 비우면 전체. 이름(모델·제품) · 영문 값(model) · 앞부분(모델)으로 찾는다.
-    // TODO(작업자 A Section): 분야가 Section 으로 바뀌면 이 목록과 classify 를 그쪽으로 옮긴다
+    // TODO: 분야가 Section 으로 바뀌면 이 목록과 classify 를 그쪽으로 옮긴다
     static var sectionNames: [String] { NewsCategory.allCases.map(\.label) }
 
     enum SectionChoice: Equatable { case all, only(NewsCategory), unknown }

@@ -1,5 +1,5 @@
 #!/bin/bash
-# 위젯 확장이 시작 단계에서 죽지 않는지 본다(mac-crash-fix · mac/E2E.md).
+# 위젯 확장이 시작 단계에서 죽지 않는지 본다(mac-crash-fix).
 #   scripts/check-widget-start.sh [DropcapWidgets.appex 경로]   기본: build/Dropcap.app 안의 것
 # 확장 실행 파일을 직접 띄우면, 입구가 맞으면 'An XPC Service cannot be run directly.' 로 끝나고(정상),
 # 입구가 틀리면 ExtensionFoundation 안에서 SIGTRAP(종료 133)으로 죽는다. 화면에 아무것도 띄우지 않는다.

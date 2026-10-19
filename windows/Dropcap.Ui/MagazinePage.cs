@@ -23,8 +23,12 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
     // MARK: 보기 데이터
     // 색은 라이트·다크 두 벌(#RRGGBB 만 — ItemView.SafeColor)
     public sealed record SideSection(string Id, string Name, string Icon, string Light, string Dark);
-    public sealed record ArchiveRow(string Id, string Title, bool Weekly, bool Thin = false, int Count = 0);   // Thin: 기사가 너무 적은 호('기록 적음' — 흐리게)
-    public sealed record SidebarView(int Saved, int Scraps, List<ArchiveRow> Archive, string Sort, List<SideSection> Sections);
+    public sealed record ArchiveRow(string Id, string Title, bool Weekly, bool Thin = false, int Count = 0, string? Reason = null);   // Thin: 기사가 너무 적은 호('기록 적음' — 흐리게, Reason 은 그 까닭)
+    // 지난 호 묶음(이번 주 · 지난주 · 달별 — Folded 는 처음 접힘), EmptyDays: 그 기간에 호가 없는 날 수
+    public sealed record ArchiveGroupView(string Id, string Title, List<ArchiveRow> Rows, int EmptyDays, bool Folded);
+    // Checking·LastCheck: 새로 고침 단추(확인 중엔 눌리지 않음)와 '마지막 확인 n분 전'
+    public sealed record SidebarView(int Saved, int Scraps, List<ArchiveRow> Archive, string Sort, List<SideSection> Sections,
+        List<ArchiveGroupView>? Groups = null, bool Checking = false, string LastCheck = "");
 
     public sealed record TopicView(string Label, string Icon, string Light, string Dark);   // 카드의 분야 표시(N-05 TopicChip 과 같은 이름)
     public sealed record ChipView(string Id, string Label, string Icon, string Light, string Dark, int Count);
@@ -102,15 +106,18 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
 
     private static (string Light, string Dark) Tint(DualColor c) => (ItemView.SafeColor(c.Light), ItemView.SafeColor(c.Dark));
 
-    // 옆 목록(M-01): 이번 호 · 분야(고른 분야마다) · 모아 보기 · 지난 호
+    // 옆 목록(M-01): 이번 호 · 분야(고른 분야마다) · 모아 보기 · 지난 호(날짜 묶음)
+    private static ArchiveRow Row(Issue i) => new(i.Id, i.Title, i.Kind == IssueKind.Weekly, i.IsThin, i.Count, Magazine.ThinReason(i));
     public SidebarView Sidebar() => new(model.State.Saved.Count, book.Scraps.Count,
-        mag.Archive.Select(i => new ArchiveRow(i.Id, i.Title, i.Kind == IssueKind.Weekly, i.IsThin, i.Count)).ToList(), CurrentSort(),
+        mag.Archive.Select(Row).ToList(), CurrentSort(),
         model.ChosenSections.Select(id =>
         {
             var s = Sections.ById(id);
             var (l, d) = Tint(s is null ? DualColor.Gray : DualColor.Fixed(s.Color));
             return new SideSection(id, s?.Name ?? id, s?.Icon ?? "cat.other", l, d);
-        }).ToList());
+        }).ToList(),
+        Magazine.ArchiveGroups(mag.Archive, DateTime.Now).Select(g => new ArchiveGroupView(g.Id, g.Id == "this" ? "지난 호 · 이번 주" : g.Title, g.Issues.Select(Row).ToList(), g.EmptyDays, g.Folded)).ToList(),
+        model.Checking, Magazine.LastCheckText(model.State.LastCheck, DateTimeOffset.Now));
 
     private ItemView View(NewsItem it, DateTimeOffset now)
     {
@@ -211,7 +218,7 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
         }
         else if (cover is null)
             empty = preparing && live
-                ? new EmptyView(true, "첫 호를 엮는 중…", "구독한 출처에서 최근 사흘 소식을 모으고 번역하고 있어요. 잠시면 됩니다.")
+                ? new EmptyView(true, "첫 호를 엮는 중…", "구독한 출처에서 최근 일주일 소식을 모으고 번역하고 있어요. 잠시면 됩니다.")
                 : new EmptyView(false, live ? "아직 이번 호에 실을 소식이 없습니다" : "이 호에는 소식이 없습니다", "새 소식이 들어오는 대로 지면이 채워집니다.");
 
         var glassIds = new List<string>();
@@ -306,22 +313,31 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
     public async Task<StoriesView> StoriesData()
     {
         var now = model.Now();
+        // 상태(본 보도 수·팔로우·출처)는 여기서 떠 두고 뒤 스레드는 사본만 읽는다(상태 사전을 뒤 스레드에서 읽으면 동시에 고쳐질 때 깨질 수 있다)
+        var snap = new StorySnapshot(model.SourceFilter, new Dictionary<string, int>(model.State.StorySeen), model.State.FollowedStories.ToHashSet(),
+            model.AllSources.GroupBy(s => s.Id).ToDictionary(g => g.Key, g => (string?)g.First().Color));
         var (live, past) = await Task.Run(() =>
         {
-            var g = mag.StoryGroups(now);
-            List<StoryCard> Cards(List<Database.Cluster> list) => list.Select(c => Card(c, mag.StoryItems(c.Id), now)).ToList();
+            // 스토리와 보도를 문장 두 번으로 한꺼번에, 카드에 보도를 넘긴다(스토리마다 DB 를 다시 묻지 않게)
+            var g = Magazine.StoryCardGroups(mag.StoryCards(snap.Filter, now), now);
+            List<StoryCard> Cards(List<Magazine.StoryCard> list) => list.Select(c => Card(c.Cluster, c.Items, now, snap)).ToList();
             return (Cards(g.Live), Cards(g.Past));
         });
         return new StoriesView(live, past);
     }
 
-    private StoryCard Card(Database.Cluster c, List<NewsItem> items, DateTimeOffset now)
+    private sealed record StorySnapshot(SourceFilter Filter, Dictionary<string, int> Seen, HashSet<string> Followed, Dictionary<string, string?> Colors);
+
+    private static StoryCard Card(Database.Cluster c, List<NewsItem> items, DateTimeOffset now, StorySnapshot snap)
     {
         var photo = items.Select(i => i.Image).FirstOrDefault(i => i is not null && !ImageKey.IsJunk(i));
         var sources = items.GroupBy(i => i.SourceName).Take(6)
-            .Select(g => new SourceChip(g.Key, g.First().Initial, ItemView.SafeColor(model.SourceById(g.First().SourceId)?.Color))).ToList();
-        return new StoryCard(c.Id, c.Title, c.Size, model.UnseenReports(c), model.IsFollowing(c.Id), photo, StoryTopicView(items), sources,
+            .Select(g => new SourceChip(g.Key, g.First().Initial, ItemView.SafeColor(Color(g.First().SourceId)))).ToList();
+        var fresh = Math.Max(0, c.Size - (snap.Seen.TryGetValue(c.Id, out var s) ? s : c.Size));   // AppModel.UnseenReports 와 같은 셈
+        return new StoryCard(c.Id, c.Title, c.Size, fresh, snap.Followed.Contains(c.Id), photo, StoryTopicView(items), sources,
             $"첫 보도 {RelativeTime.Format(c.First, now)} · 최근 {RelativeTime.Format(c.Last, now)}");
+
+        string? Color(string id) => snap.Colors.TryGetValue(id, out var col) ? col : Resources.Config.Sources.FirstOrDefault(x => x.Id == id)?.Color;
     }
 
     // 스토리의 분야 표시(M-26): 묶인 보도들의 다수결(대표 기사 하나의 AI 하위 분류를 그대로 쓰면 IT 소식이 'AI·모델'이 됐다 — 맥과 같음)
@@ -607,7 +623,7 @@ public sealed class MagazinePage(AppModel model, Magazine mag, Scrapbook book, I
                 return to;
             }
             case "photos": return PhotoUrls(a["ids"] as JsonArray);
-            case "check": await model.CheckAllAsync(manual: false); return null;
+            case "check": await model.CheckAllAsync(manual: true); return null; // 새로 고침 단추·Ctrl+R 같은 길
 
             // 스크랩북(M-17·M-18)
             case "newFolder":

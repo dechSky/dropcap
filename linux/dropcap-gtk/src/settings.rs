@@ -1,4 +1,5 @@
 // 설정 창(P-01~P-07·G-13, 맥 UI/SettingsView.swift): 일반 · 분야 · 구독 · 거르기.
+use crate::ds::{font, space};
 use crate::app::{bg, ui};
 use crate::strings;
 use crate::theme;
@@ -35,8 +36,8 @@ pub fn open(tab: Option<&str>) {
 }
 
 // 줄 끝에 붙는 짧은 글자(줄바꿈 없이)
-pub(crate) fn tag(text: &str, size: f64, weight: u16, classes: &[&str]) -> gtk::Label {
-    let l = label(text, size, weight, classes);
+pub(crate) fn tag(text: &str, f: (f64, u16), classes: &[&str]) -> gtk::Label {
+    let l = label(text, f, classes);
     l.set_wrap(false);
     l.set_valign(gtk::Align::Center);
     l
@@ -62,8 +63,8 @@ fn build() -> adw::PreferencesWindow {
 }
 
 pub(crate) fn caption(text: &str) -> gtk::Label {
-    let l = label(text, 12.0, 400, &["dc-secondary"]);
-    l.set_margin_top(6);
+    let l = label(text, font::CALLOUT, &["dc-secondary"]);
+    l.set_margin_top(space::S);
     l
 }
 
@@ -244,8 +245,8 @@ fn filters() -> adw::PreferencesPage {
     g.add(&mute);
     g.add(&watch);
     g.add(&caption("지켜볼 낱말이 든 소식은 분야 설정과 상관없이 같은 이야기마다 한 번 알리고, 아침 브리핑 시각에 \"오늘 ○○ 소식 3건\"으로 모아 알립니다. 꼭 알림(★)과 겹치면 ★ 로 표시합니다."));
-    let save_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    save_row.set_margin_top(6);
+    let save_row = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
+    save_row.set_margin_top(space::S);
     let c = caption("쉼표로 나눠 적으면 바로 저장·적용됩니다. 제목·요약에 그 낱말이 들어가면 걸립니다.");
     c.set_hexpand(true);
     save_row.append(&c);
@@ -373,7 +374,7 @@ fn filters() -> adw::PreferencesPage {
     let g = adw::PreferencesGroup::builder().title("단축키").build();
     for (t, k) in [("가장 최근 안 읽은 소식 열기".to_string(), "Ctrl+Alt+N"), (format!("{} 열기", strings::MAGAZINE), "Ctrl+Alt+M")] {
         let r = adw::ActionRow::builder().title(t).build();
-        r.add_suffix(&tag(k, 12.5, 400, &["dc-secondary", "monospace"]));
+        r.add_suffix(&tag(k, font::CALLOUT, &["dc-secondary", "monospace"]));
         g.add(&r);
     }
     if let Some(n) = crate::hotkeys::note() {
@@ -382,7 +383,7 @@ fn filters() -> adw::PreferencesPage {
     // 목록·매거진·읽기 창 안의 키(H-03~H-05)
     for (k, t) in crate::keynav::HELP {
         let r = adw::ActionRow::builder().title(*t).build();
-        r.add_suffix(&tag(k, 12.5, 400, &["dc-secondary", "monospace"]));
+        r.add_suffix(&tag(k, font::CALLOUT, &["dc-secondary", "monospace"]));
         g.add(&r);
     }
     page.add(&g);

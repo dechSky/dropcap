@@ -119,10 +119,10 @@ WindowMotion.present(w)                               // w.makeKeyAndOrderFront 
 | `stagger(i)` | `--stagger`(JS `--d` 0.04초씩 최대 0.3) | `motion::stagger(i)` |
 | `fade/rise/drop/pop` · `page` | `ds-fade/ds-rise/ds-drop/ds-pop` · 지면 넘김 `ds-rise` + `ds-out` | 지면 넘김 `Crossfade`(SETTLE) |
 | `WindowMotion.present` | `WebWindow.Present()` — 창 틀은 0.96→1, 내용(WebView)이 0→1(WinUI 창은 투명도를 못 바꿈) | `motion::present` — 투명도만 0→1(GTK4 는 창 크기 움직임 불가) |
-| `Space` · `Radius` · `Font.ds…` · `Elevation` | `--sp-*` · `--r-*` · `--fs-*` · `--el-*` | 매거진 카드·표지·테마 CSS 의 모서리·그림자·칩 글자를 같은 값으로 |
+| `Space` · `Radius` · `Font.ds…` · `Elevation` | `--sp-*` · `--r-*` · `--fs-*` · `--el-*` | `ds::space::*` · `ds::font::*`(크기·굵기 쌍, `label(…, font::BODY, …)`) · 모서리·그림자는 테마 CSS 에 같은 값 |
 | 동작 줄이기 | `.reduce-motion` + `@media (prefers-reduced-motion)` | `motion::enabled()`(gtk-enable-animations) |
 
-리눅스 화면의 글자 크기·간격(코드 안 `text(…, 12.5, …)` 등)은 아직 숫자 그대로 — 다음 묶음.
+리눅스 화면 코드의 간격·글자는 `ds.rs` 토큰을 쓴다(맥과 같은 예외는 숫자 그대로). CSS 문자열 안 px 는 토큰과 같은 숫자로 적는다.
 
 ## 시험
 

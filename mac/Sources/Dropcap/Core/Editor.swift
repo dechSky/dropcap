@@ -33,8 +33,12 @@ actor Editor {
     // DB 에 넣지 못한 기사(디스크 가득·오래 잠김). 앱 상태에는 '본 글'로 남아 피드에서 다시 오지 않으므로 여기 두었다가
     // 다음 받아 넣기 때 먼저 다시 넣는다. 끝없이 쌓이지 않게 retryLimit 건까지(오래된 것부터 버림)
     // 앱을 끄면 사라지지 않게 retryFile 에도 적는다 — 비면 파일을 지운다. 파일이 깨졌거나 없으면 빈 것으로
+    // 기사 하나에만 정해진 실패(DB 는 멀쩡 — 바로 뒤 기사는 들어감)가 몇 번 났는지. strikeLimit 번이면 그 기사를 버린다(review-4 L4).
+    // 메모리에만 — 앱을 다시 켜면 다시 셈(그래도 켤 때마다 strikeLimit 번까지라 끝없이 막지 않는다)
     private(set) var retry: [NewsItem] = []
+    private var strikes: [String: Int] = [:]
     static let retryLimit = 3000
+    static let strikeLimit = 3
 
     private func keepRetry(_ items: [NewsItem]) {
         let had = !retry.isEmpty
@@ -60,18 +64,17 @@ actor Editor {
         var repKeys: [(id: String, key: StoryKey)] = clusters.compactMap { c in reps[c.id].map { (c.id, StoryKey($0.item)) } }
         var index = Dictionary(clusters.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { a, _ in a })
         var grown: [(Database.Cluster, NewsItem)] = []
-        for it in items {
-            // 한 번 못 넣었으면 나머지도 못 넣는다(잠김·가득) — 하나마다 잠금을 기다리지 않고 바로 다음으로 미룬다
-            if !failed.isEmpty { failed.append(it); continue }
+        // 기사 하나를 넣는다. 못 넣으면 false
+        func put(_ it: NewsItem) -> Bool {
             // 이미 있는 기사는 스토리를 다시 정하지 않는다(대표가 자기 자신이면 '같은 출처'로 보여 새 스토리가 생기던 문제)
-            if db.exists(it.key) { if !db.upsert(it, cluster: nil) { failed.append(it) }; continue }
+            if db.exists(it.key) { return db.upsert(it, cluster: nil) }
             // 기사만 스토리로 묶는다(논문·릴리스·커뮤니티 글은 양이 많고 성격이 달라 제외)
-            if it.itemKind != .article && it.itemKind != .video { if !db.upsert(it, cluster: nil) { failed.append(it) }; continue }
+            if it.itemKind != .article && it.itemKind != .video { return db.upsert(it, cluster: nil) }
             let k = StoryKey(it)
             let when = it.date ?? Date()
             if let id = StoryGrouper.storyFor(k, representatives: repKeys), let i = index[id] {
                 // 기사를 먼저 넣고, 넣었을 때만 스토리를 키운다(못 넣은 기사를 다시 넣을 때 두 번 세지 않게)
-                guard db.upsert(it, cluster: id) else { failed.append(it); continue }
+                guard db.upsert(it, cluster: id) else { return false }
                 clusters[i].size += 1
                 clusters[i].last = max(clusters[i].last, when)
                 clusters[i].first = min(clusters[i].first, when)
@@ -80,13 +83,37 @@ actor Editor {
                 if followed.contains(id) { grown.append((clusters[i], it)) }
             } else {
                 let c = Database.Cluster(id: UUID().uuidString, title: it.displayTitle, tokens: k.tokens, first: when, last: when, size: 1)
-                guard db.upsert(it, cluster: c.id) else { failed.append(it); continue }
+                guard db.upsert(it, cluster: c.id) else { return false }
                 index[c.id] = clusters.count
                 clusters.append(c)
                 repKeys.append((c.id, k))
                 db.saveCluster(c)
             }
+            return true
         }
+        // 실패가 둘 잇따르면 DB 전체 문제(잠김·가득)로 보고 나머지는 하나마다 잠금을 기다리지 않고 바로 다음으로 미룬다.
+        // 실패 뒤 다음 기사가 들어가면 앞 기사만의 실패 — 그 기사가 뒤를 막지 않게 이어 가고, 그런 실패가 strikeLimit 번이면 버린다
+        var down = false
+        var suspect: NewsItem? = nil
+        for it in items {
+            if down { failed.append(it); continue }
+            if put(it) {
+                strikes[it.key] = nil
+                if let f = suspect {
+                    suspect = nil
+                    let n = (strikes[f.key] ?? 0) + 1
+                    if n < Self.strikeLimit { strikes[f.key] = n; failed.append(f) } else { strikes[f.key] = nil }
+                }
+            } else if let f = suspect {
+                down = true
+                failed += [f, it]
+                suspect = nil
+            } else {
+                suspect = it
+            }
+        }
+        if let f = suspect { failed.append(f) }
+        strikes = strikes.filter { k, _ in failed.contains { $0.key == k } }
         return grown
     }
 

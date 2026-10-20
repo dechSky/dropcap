@@ -1,5 +1,6 @@
 // 내 기록 내보내기·가져오기(P-08 · 맥 BackupManager): 파일 고르기 · 가져오기 전 자동 백업 · 되돌리기.
 // 파일 형식은 핵심 backup.rs(맥·윈도우와 같은 JSON). 스크랩 폴더 목록은 화면의 prefs 사본으로 읽고 쓴다(덮어쓰기 방지).
+use crate::ds::space;
 use crate::app::ui;
 use adw::prelude::*;
 use chrono::Utc;
@@ -85,9 +86,9 @@ pub fn group() -> adw::PreferencesGroup {
     let intro = gtk::Label::new(Some("계정도 서버도 없습니다. 모든 기록은 이 컴퓨터 안에만 있습니다."));
     intro.set_xalign(0.0);
     intro.set_wrap(true);
-    intro.set_margin_bottom(8);
+    intro.set_margin_bottom(space::S);
     g.add(&intro);
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
     let exp = gtk::Button::with_label("내 기록 내보내기…");
     let imp = gtk::Button::with_label("가져오기…");
     let und = gtk::Button::with_label("마지막 가져오기 되돌리기");
@@ -104,7 +105,7 @@ pub fn group() -> adw::PreferencesGroup {
     note.set_wrap(true);
     note.add_css_class("dim-label");
     note.add_css_class("caption");
-    note.set_margin_top(8);
+    note.set_margin_top(space::S);
     g.add(&note);
     let msg = gtk::Label::new(None);
     msg.set_xalign(0.0);

@@ -1,5 +1,6 @@
 // Dropcap 리눅스 판(GTK4 · libadwaita). 맥 앱(mac/Sources/Dropcap)과 같은 기능·문구·수치.
 mod add_url_bar;
+mod ds;
 mod app;
 mod backup_ui;
 mod focus_x11;

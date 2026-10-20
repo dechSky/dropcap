@@ -1,6 +1,7 @@
 // 상단바(트레이) 창(U-02~U-08, 맥 UI/MenuView.swift·MenuStyles.swift): 최근 소식(전체·안 읽음·저장) + 몇 가지 동작.
 // 트레이가 떠 있으면 아이콘 근처에 테두리 없이 뜨고 다른 곳을 누르면 닫힌다. 트레이가 없으면 보통 창으로 뜬다.
 // 목록은 맥 기본 모양 '첫 소식 크게'(첫 기사 큰 사진 카드 + 나머지 사진 카드). 사진이 없으면 사진 자리를 만들지 않는다.
+use crate::ds::{font, space};
 use crate::app::{bg, copy_text, open_external, ui};
 use crate::menu_chips::{ChipBar, Pick};
 use crate::widgets::{self, clear_box, icon, label, lines};
@@ -118,15 +119,15 @@ fn build() -> Rc<RefCell<Menu>> {
     root.set_size_request(WIDTH, -1);
 
     // 머리(U-02): 'Dropcap' 제목 + 확인 시각(+방해 금지 표시·잠시 끄기·지금 확인)
-    let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    header.set_margin_start(16);
-    header.set_margin_end(12);
-    header.set_margin_top(14);
-    header.set_margin_bottom(10);
-    let titles = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    let header = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
+    header.set_margin_start(space::L);
+    header.set_margin_end(space::M);
+    header.set_margin_top(space::L);
+    header.set_margin_bottom(space::M);
+    let titles = gtk::Box::new(gtk::Orientation::Vertical, space::XXS);
     titles.set_valign(gtk::Align::Center);
-    let title_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    let t = label("Dropcap", 16.0, 800, &[]);
+    let title_row = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
+    let t = label("Dropcap", (16.0, 800), &[]);
     t.set_wrap(false);
     title_row.append(&t);
     let quiet = icon("weather-clear-night-symbolic", 12);
@@ -137,7 +138,7 @@ fn build() -> Rc<RefCell<Menu>> {
     css(&hush, "image { color: #5856D6; }");
     title_row.append(&hush);
     titles.append(&title_row);
-    let status = label("", 11.0, 400, &["dc-secondary", "numeric"]);
+    let status = label("", font::CAPTION, &["dc-secondary", "numeric"]);
     status.set_wrap(false);
     titles.append(&status);
     header.append(&titles);
@@ -163,9 +164,9 @@ fn build() -> Rc<RefCell<Menu>> {
     let tab_box = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     tab_box.add_css_class("linked");
     tab_box.set_homogeneous(true);
-    tab_box.set_margin_start(14);
-    tab_box.set_margin_end(14);
-    tab_box.set_margin_bottom(8);
+    tab_box.set_margin_start(space::L);
+    tab_box.set_margin_end(space::L);
+    tab_box.set_margin_bottom(space::S);
     let mut tabs = vec![];
     let mut first: Option<gtk::ToggleButton> = None;
     for (t, name) in [(Tab::All, "전체"), (Tab::Unread, "안 읽음"), (Tab::Saved, "저장")] {
@@ -182,39 +183,39 @@ fn build() -> Rc<RefCell<Menu>> {
     root.append(&tab_box);
 
     // 검색칸 + 정렬 메뉴 한 줄(U-04), 그 아래 분야 칩 줄(G-09)
-    let search_row = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-    search_row.set_margin_start(14);
-    search_row.set_margin_end(14);
-    search_row.set_margin_bottom(8);
+    let search_row = gtk::Box::new(gtk::Orientation::Horizontal, space::XS);
+    search_row.set_margin_start(space::L);
+    search_row.set_margin_end(space::L);
+    search_row.set_margin_bottom(space::S);
     let search = gtk::SearchEntry::builder().placeholder_text("제목·출처 검색").hexpand(true).build();
     search_row.append(&search);
     let sort_button = gtk::MenuButton::builder().css_classes(["flat"]).tooltip_text("정렬").build();
     search_row.append(&sort_button);
     root.append(&search_row);
     let chips = ChipBar::new(true);
-    chips.root.set_margin_start(14);
-    chips.root.set_margin_end(14);
-    chips.root.set_margin_bottom(8);
+    chips.root.set_margin_start(space::L);
+    chips.root.set_margin_end(space::L);
+    chips.root.set_margin_bottom(space::S);
     root.append(&chips.root);
     root.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
 
     // 목록(높이 고정: 내용이 줄어도 창 크기를 줄이지 않는다)
-    let list = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    list.set_margin_start(6);
-    list.set_margin_end(6);
-    list.set_margin_top(6);
-    list.set_margin_bottom(6);
+    let list = gtk::Box::new(gtk::Orientation::Vertical, space::XXS);
+    list.set_margin_start(space::S);
+    list.set_margin_end(space::S);
+    list.set_margin_top(space::S);
+    list.set_margin_bottom(space::S);
     let scroll = gtk::ScrolledWindow::builder().hscrollbar_policy(gtk::PolicyType::Never).child(&list).build();
-    let empty = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    let empty = gtk::Box::new(gtk::Orientation::Vertical, space::S);
     empty.set_valign(gtk::Align::Center);
-    empty.set_margin_start(24);
-    empty.set_margin_end(24);
+    empty.set_margin_start(space::XL);
+    empty.set_margin_end(space::XL);
     let empty_icon = icon("x-office-document-symbolic", 30);
     empty_icon.add_css_class("dc-tertiary");
-    let empty_title = label("", 13.0, 500, &[]);
+    let empty_title = label("", font::BODY_STRONG, &[]);
     empty_title.set_xalign(0.5);
     empty_title.set_justify(gtk::Justification::Center);
-    let empty_sub = label("", 11.5, 400, &["dc-secondary"]);
+    let empty_sub = label("", font::CALLOUT, &["dc-secondary"]);
     empty_sub.set_xalign(0.5);
     empty_sub.set_justify(gtk::Justification::Center);
     empty.append(&empty_icon);
@@ -226,9 +227,9 @@ fn build() -> Rc<RefCell<Menu>> {
     stack.set_size_request(WIDTH, LIST_HEIGHT);
     // '저장' 탭에서만: 목록 위 '주소로 추가…' 칸(I-05)
     let add_bar = crate::add_url_bar::build(true);
-    add_bar.set_margin_start(10);
-    add_bar.set_margin_end(10);
-    add_bar.set_margin_top(6);
+    add_bar.set_margin_start(space::M);
+    add_bar.set_margin_end(space::M);
+    add_bar.set_margin_top(space::S);
     add_bar.set_visible(false);
     // 칸이 보여도 창 높이는 그대로(목록 자리를 나눠 씀)
     let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -241,17 +242,17 @@ fn build() -> Rc<RefCell<Menu>> {
     root.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
 
     // 바닥(U-07)
-    let footer = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-    footer.set_margin_start(10);
-    footer.set_margin_end(10);
-    footer.set_margin_top(8);
-    footer.set_margin_bottom(8);
-    let mag = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let footer = gtk::Box::new(gtk::Orientation::Horizontal, space::XS);
+    footer.set_margin_start(space::M);
+    footer.set_margin_end(space::M);
+    footer.set_margin_top(space::S);
+    footer.set_margin_bottom(space::S);
+    let mag = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
     mag.append(&icon("accessories-dictionary-symbolic", 14));
-    let ml = label("매거진 열기", 12.5, 600, &[]);
+    let ml = label("매거진 열기", font::BODY_STRONG, &[]);
     ml.set_wrap(false);
     mag.append(&ml);
-    let sc = label("Ctrl+Alt+M", 11.0, 400, &[]);
+    let sc = label("Ctrl+Alt+M", font::CAPTION, &[]);
     sc.set_wrap(false);
     sc.set_opacity(0.7);
     mag.append(&sc);
@@ -507,7 +508,7 @@ fn render(m: &Rc<RefCell<Menu>>) {
 
     // 정렬 단추: 지금 정렬이 무엇인지(최신순이 아닐 때는 이름까지)
     let sort = u.prefs.borrow().list_sort.clone();
-    let sb = gtk::Box::new(gtk::Orientation::Horizontal, 3);
+    let sb = gtk::Box::new(gtk::Orientation::Horizontal, space::XS);
     let (ic, name) = match sort.as_str() {
         "important" => ("starred-symbolic", Some("중요순")),
         "source" => ("system-users-symbolic", Some("출처별")),
@@ -515,7 +516,7 @@ fn render(m: &Rc<RefCell<Menu>>) {
     };
     sb.append(&icon(ic, 13));
     if let Some(n) = name {
-        let l = label(n, 11.0, 600, &["accent"]);
+        let l = label(n, font::CHIP, &["accent"]);
         l.set_wrap(false);
         sb.append(&l);
     }
@@ -658,12 +659,12 @@ fn time_section(it: &NewsItem, prev: Option<&NewsItem>) -> Option<String> {
 }
 
 fn section_label(text: &str, first: bool) -> gtk::Widget {
-    let h = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    h.set_margin_start(8);
-    h.set_margin_end(8);
-    h.set_margin_top(if first { 4 } else { 12 });
-    h.set_margin_bottom(4);
-    let l = label(text, 11.0, 700, &["dc-secondary"]);
+    let h = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
+    h.set_margin_start(space::S);
+    h.set_margin_end(space::S);
+    h.set_margin_top(if first { space::XS } else { space::M });
+    h.set_margin_bottom(space::XS);
+    let l = label(text, font::CHIP, &["dc-secondary"]);
     l.set_wrap(false);
     h.append(&l);
     let line = gtk::Separator::new(gtk::Orientation::Horizontal);
@@ -675,15 +676,15 @@ fn section_label(text: &str, first: bool) -> gtk::Widget {
 }
 
 fn source_label(name: &str, n: usize, first: bool) -> gtk::Widget {
-    let h = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let h = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
     h.add_css_class("dc-secondary");
-    h.set_margin_start(8);
-    h.set_margin_top(if first { 2 } else { 10 });
-    h.set_margin_bottom(2);
-    let l = label(name, 11.0, 700, &[]);
+    h.set_margin_start(space::S);
+    h.set_margin_top(if first { space::XXS } else { space::M });
+    h.set_margin_bottom(space::XXS);
+    let l = label(name, font::CHIP, &[]);
     l.set_wrap(false);
     h.append(&l);
-    let c = label(&n.to_string(), 10.5, 400, &["dc-tertiary"]);
+    let c = label(&n.to_string(), font::CAPTION, &["dc-tertiary"]);
     c.set_wrap(false);
     h.append(&c);
     h.upcast()
@@ -770,7 +771,7 @@ fn thumb(it: &NewsItem, w: i32, h: i32, radius: i32) -> gtk::DrawingArea {
 
 // 분야 칩 글자(AI 분야는 'AI·모델' 처럼 하위 분류까지)
 fn topic(it: &NewsItem) -> gtk::Label {
-    let l = label(&it.topic_label(), 10.5, 600, &[]);
+    let l = label(&it.topic_label(), font::CHIP, &[]);
     l.set_wrap(false);
     let (r, g, b) = dropcap_core::models::hex_rgb(&it.topic_color(crate::theme::is_dark()));
     css(&l, &format!("label {{ color: rgb({},{},{}); }}", (r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8));
@@ -780,7 +781,7 @@ fn topic(it: &NewsItem) -> gtk::Label {
 // 출처 분야와 다른데 낱말이 강하게 걸린 분야 칩 하나 더(예: 정치 출처의 기준금리 기사 → 정치 · 경제)
 fn extra_topic(it: &NewsItem) -> Option<gtk::Label> {
     let x = it.extra_topic()?;
-    let l = label(&sections::name(&x), 10.5, 600, &[]);
+    let l = label(&sections::name(&x), font::CHIP, &[]);
     l.set_wrap(false);
     let hex = sections::by_id(&x).map(|s| s.color.clone()).unwrap_or_else(|| "#8E8E93".into());
     let (r, g, b) = dropcap_core::models::hex_rgb(&hex);
@@ -804,10 +805,10 @@ fn unread_dot(it: &NewsItem, size: i32) -> gtk::DrawingArea {
 fn hero_card(it: &NewsItem, read: bool, seq: &[NewsItem]) -> gtk::Widget {
     let overlay = gtk::Overlay::new();
     overlay.set_overflow(gtk::Overflow::Hidden);
-    overlay.set_margin_top(4);
-    overlay.set_margin_bottom(4);
-    overlay.set_margin_start(6);
-    overlay.set_margin_end(6);
+    overlay.set_margin_top(space::XS);
+    overlay.set_margin_bottom(space::XS);
+    overlay.set_margin_start(space::S);
+    overlay.set_margin_end(space::S);
     css(&overlay, "overlay { border-radius: 14px; }");
     // 사진 없을 때의 바탕: 옅은 카드
     let base = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -829,27 +830,27 @@ fn hero_card(it: &NewsItem, read: bool, seq: &[NewsItem]) -> gtk::Widget {
     });
     shade.set_visible(false);
     overlay.add_overlay(&shade);
-    let text = gtk::Box::new(gtk::Orientation::Vertical, 5);
+    let text = gtk::Box::new(gtk::Orientation::Vertical, space::XS);
     text.set_valign(gtk::Align::End);
-    text.set_margin_start(13);
-    text.set_margin_end(13);
-    text.set_margin_bottom(13);
-    text.set_margin_top(13);
-    let meta = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    let chip = label(&it.topic_label(), 10.5, 700, &[]);
+    text.set_margin_start(space::M);
+    text.set_margin_end(space::M);
+    text.set_margin_bottom(space::M);
+    text.set_margin_top(space::M);
+    let meta = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
+    let chip = label(&it.topic_label(), font::CHIP, &[]);
     chip.set_wrap(false);
     let (r, g, b) = dropcap_core::models::hex_rgb(&it.topic_color(crate::theme::is_dark()));
-    css(&chip, &format!("label {{ color: white; background: rgba({},{},{},0.85); border-radius: 99px; padding: 2px 7px; }}", (r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8));
+    css(&chip, &format!("label {{ color: white; background: rgba({},{},{},0.85); border-radius: 99px; padding: 2px 8px; }}", (r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8));
     meta.append(&chip);
     if let Some(x) = it.extra_topic() {
-        let c2 = label(&sections::name(&x), 10.5, 700, &[]);
+        let c2 = label(&sections::name(&x), font::CHIP, &[]);
         c2.set_wrap(false);
         let hex = sections::by_id(&x).map(|s| s.color.clone()).unwrap_or_else(|| "#8E8E93".into());
         let (r, g, b) = dropcap_core::models::hex_rgb(&hex);
-        css(&c2, &format!("label {{ color: white; background: rgba({},{},{},0.85); border-radius: 99px; padding: 2px 7px; }}", (r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8));
+        css(&c2, &format!("label {{ color: white; background: rgba({},{},{},0.85); border-radius: 99px; padding: 2px 8px; }}", (r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8));
         meta.append(&c2);
     }
-    let src = label(&format!("{} · {}", it.source_name, widgets::time_text(it)), 11.0, 500, &[]);
+    let src = label(&format!("{} · {}", it.source_name, widgets::time_text(it)), font::CAPTION, &[]);
     src.set_wrap(false);
     src.set_opacity(0.85);
     meta.append(&src);
@@ -857,7 +858,7 @@ fn hero_card(it: &NewsItem, read: bool, seq: &[NewsItem]) -> gtk::Widget {
         meta.append(&p);
     }
     text.append(&meta);
-    let title = label(it.display_title(), 15.5, 700, &[]);
+    let title = label(it.display_title(), font::HEADLINE, &[]);
     lines(&title, 2);
     text.append(&title);
     overlay.add_overlay(&text);
@@ -886,10 +887,10 @@ fn hero_card(it: &NewsItem, read: bool, seq: &[NewsItem]) -> gtk::Widget {
 
 // 사진 카드: 왼쪽 사진(없으면 자리 없음), 오른쪽 제목 두 줄 + 출처·분야·시각
 fn card_row(it: &NewsItem, read: bool, saved: bool, seq: &[NewsItem]) -> gtk::Widget {
-    let h = gtk::Box::new(gtk::Orientation::Horizontal, 11);
+    let h = gtk::Box::new(gtk::Orientation::Horizontal, space::M);
     h.add_css_class("dc-card");
-    h.set_margin_top(2);
-    h.set_margin_bottom(2);
+    h.set_margin_top(space::XXS);
+    h.set_margin_bottom(space::XXS);
     css(&h, "box { padding: 8px; border-radius: 12px; }");
     let th = thumb(it, 54, 54, 10);
     th.set_valign(gtk::Align::Center);
@@ -897,13 +898,13 @@ fn card_row(it: &NewsItem, read: bool, saved: bool, seq: &[NewsItem]) -> gtk::Wi
         th.set_opacity(0.65);
     }
     h.append(&th);
-    let v = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    let v = gtk::Box::new(gtk::Orientation::Vertical, space::XS);
     v.set_hexpand(true);
     v.set_valign(gtk::Align::Center);
-    let t = label(it.display_title(), 13.0, if read { 400 } else { 600 }, if read { &["dc-secondary"] } else { &[] });
+    let t = label(it.display_title(), if read { font::BODY } else { font::BODY_STRONG }, if read { &["dc-secondary"] } else { &[] });
     lines(&t, 2);
     v.append(&t);
-    let meta = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+    let meta = gtk::Box::new(gtk::Orientation::Horizontal, space::XS);
     meta.add_css_class("dc-secondary");
     if it.is_important() {
         let s = icon("starred-symbolic", 11);
@@ -920,7 +921,7 @@ fn card_row(it: &NewsItem, read: bool, saved: bool, seq: &[NewsItem]) -> gtk::Wi
     if it.related_count() > 0 {
         srcname += &format!(" 외 {}곳", it.related_count());
     }
-    let sl = label(&srcname, 10.5, 600, &[]);
+    let sl = label(&srcname, font::CHIP, &[]);
     lines(&sl, 1);
     meta.append(&sl);
     if let Some(p) = widgets::paywall_mark(it) {
@@ -930,7 +931,7 @@ fn card_row(it: &NewsItem, read: bool, saved: bool, seq: &[NewsItem]) -> gtk::Wi
     if let Some(x) = extra_topic(it) {
         meta.append(&x);
     }
-    let tl = label(&widgets::time_text(it), 10.5, 400, &["dc-tertiary"]);
+    let tl = label(&widgets::time_text(it), font::CAPTION, &["dc-tertiary"]);
     tl.set_wrap(false);
     meta.append(&tl);
     if saved {

@@ -1,5 +1,6 @@
 // 분야 칩 줄(G-09, 맥 UI/SectionViews.swift 의 SectionChipBar): '전체' + 고른 분야.
 // AI 를 고르면 그 아래에 AI 안의 하위 칩(모델·연구·정책·투자·보안)이 한 줄 더 나온다.
+use crate::ds::{font, space};
 use crate::widgets::{icon, label};
 use dropcap_core::category::NewsCategory;
 use dropcap_core::sections;
@@ -26,13 +27,13 @@ pub struct ChipBar {
 
 // 칩 하나: 고르면 분야 색으로 채우고 글자는 흰색, 아니면 옅은 분야 색 바탕에 분야 색 글자
 pub fn chip(text: &str, icon_name: &str, color_hex: &str, on: bool, count: Option<usize>, small: bool) -> gtk::Button {
-    let b = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    let b = gtk::Box::new(gtk::Orientation::Horizontal, space::XS);
     b.append(&icon(icon_name, if small { 10 } else { 11 }));
-    let l = label(text, if small { 11.0 } else { 11.5 }, if on { 600 } else { 500 }, &[]);
+    let l = label(text, (if small { 11.0 } else { 11.5 }, if on { 600 } else { 500 }), &[]);
     l.set_wrap(false);
     b.append(&l);
     if let Some(n) = count.filter(|n| *n > 0) {
-        let c = label(&n.to_string(), 10.5, 600, &[]);
+        let c = label(&n.to_string(), font::CHIP, &[]);
         c.set_wrap(false);
         c.set_opacity(0.7);
         b.append(&c);
@@ -61,12 +62,12 @@ fn accent() -> &'static str {
 
 impl ChipBar {
     pub fn new(small: bool) -> Rc<ChipBar> {
-        let root = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        let main = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+        let root = gtk::Box::new(gtk::Orientation::Vertical, space::S);
+        let main = gtk::Box::new(gtk::Orientation::Horizontal, space::XS);
         let scroll = gtk::ScrolledWindow::builder().vscrollbar_policy(gtk::PolicyType::Never).hscrollbar_policy(gtk::PolicyType::External).child(&main).build();
         scroll.set_propagate_natural_height(true);
         root.append(&scroll);
-        let sub_box = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        let sub_box = gtk::Box::new(gtk::Orientation::Horizontal, space::XS);
         let sub_scroll = gtk::ScrolledWindow::builder().vscrollbar_policy(gtk::PolicyType::Never).hscrollbar_policy(gtk::PolicyType::External).child(&sub_box).build();
         sub_scroll.set_propagate_natural_height(true);
         let sub_row = gtk::Revealer::builder().transition_type(gtk::RevealerTransitionType::SlideDown).transition_duration(crate::motion::STANDARD).child(&sub_scroll).build();

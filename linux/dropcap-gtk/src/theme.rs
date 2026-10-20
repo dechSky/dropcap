@@ -71,7 +71,7 @@ pub fn css() -> String {
 .dc-row:hover {{ background-color: alpha(@window_fg_color, 0.06); }}
 .dc-unread-dot {{ min-width: 7px; min-height: 7px; border-radius: 99px; background-color: @accent_bg_color; }}
 .dc-accent-button {{ background-color: @accent_bg_color; color: @accent_fg_color; border-radius: 8px; font-weight: 600; }}
-.dc-scrapped {{ border-left: 3px solid #F5C518; padding-left: 9px; background-color: alpha(#F5C518, 0.10); }}
+.dc-scrapped {{ border-left: 3px solid #F5C518; padding-left: 8px; background-color: alpha(#F5C518, 0.10); }}
 .dc-reader-body {{ line-height: 1.6; }}
 .dc-skeleton {{ border-radius: 8px; background-color: alpha(@window_fg_color, 0.08); }}
 .dc-toast {{ border-radius: 20px; }}

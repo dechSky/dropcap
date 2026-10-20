@@ -1,4 +1,5 @@
 // 저장 목록 위의 '주소로 추가…' 칸(맥 UI/AddURLBar.swift): 피드에 없는 기사 주소를 붙여 넣어 나중에 읽기로 저장
+use crate::ds::{font, space};
 use crate::widgets::label;
 use gtk::prelude::*;
 use std::cell::Cell;
@@ -6,8 +7,8 @@ use std::rc::Rc;
 
 // compact: 상단바 창(작게) · 매거진(넓게)
 pub fn build(compact: bool) -> gtk::Box {
-    let root = gtk::Box::new(gtk::Orientation::Vertical, 4);
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let root = gtk::Box::new(gtk::Orientation::Vertical, space::XS);
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
     let entry = gtk::Entry::builder()
         .placeholder_text("주소로 추가… (기사 주소를 붙여 넣고 Enter)")
         .primary_icon_name("insert-link-symbolic")
@@ -19,7 +20,7 @@ pub fn build(compact: bool) -> gtk::Box {
     row.append(&spinner);
     row.append(&save);
     root.append(&row);
-    let msg = label("", if compact { 11.0 } else { 12.0 }, 500, &[]);
+    let msg = label("", if compact { font::CAPTION } else { font::CALLOUT }, &[]);
     msg.set_wrap(false);
     msg.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
     msg.set_visible(false);

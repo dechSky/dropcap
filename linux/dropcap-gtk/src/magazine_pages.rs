@@ -1,4 +1,5 @@
 // 모아 보기 지면(맥 MagazineView 의 StoriesView·StoryView·SavedView·SearchView·ScrapbookView·WeeklyQuotes).
+use crate::ds::{font, space};
 use crate::app::{bg, copy_text, ui};
 use crate::magazine::tint;
 use crate::magazine_card::{has_photo, open_card, region_columns, stagger, StoryCard, CARD_MIN_WIDTH};
@@ -16,10 +17,10 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 fn page_box() -> (gtk::Box, gtk::ScrolledWindow) {
-    let v = gtk::Box::new(gtk::Orientation::Vertical, 14);
-    v.set_margin_start(36);
-    v.set_margin_end(36);
-    v.set_margin_bottom(40);
+    let v = gtk::Box::new(gtk::Orientation::Vertical, space::L);
+    v.set_margin_start(space::PAGE);
+    v.set_margin_end(space::PAGE);
+    v.set_margin_bottom(space::XXXL);
     let clamp = adw::Clamp::builder().maximum_size(820).tightening_threshold(820).child(&v).build();
     clamp.set_halign(gtk::Align::Start);
     let scroll = gtk::ScrolledWindow::builder().hscrollbar_policy(gtk::PolicyType::Never).child(&clamp).vexpand(true).hexpand(true).build();
@@ -27,28 +28,28 @@ fn page_box() -> (gtk::Box, gtk::ScrolledWindow) {
 }
 
 fn wide_box() -> (gtk::Box, gtk::ScrolledWindow) {
-    let v = gtk::Box::new(gtk::Orientation::Vertical, 14);
-    v.set_margin_start(32);
-    v.set_margin_end(32);
-    v.set_margin_bottom(40);
+    let v = gtk::Box::new(gtk::Orientation::Vertical, space::L);
+    v.set_margin_start(space::XXL);
+    v.set_margin_end(space::XXL);
+    v.set_margin_bottom(space::XXXL);
     let scroll = gtk::ScrolledWindow::builder().hscrollbar_policy(gtk::PolicyType::Never).child(&v).vexpand(true).hexpand(true).build();
     (v, scroll)
 }
 
 fn big_title(t: &str) -> gtk::Label {
-    let l = label(t, 34.0, 700, &["dc-display"]);
-    l.set_margin_top(28);
+    let l = label(t, font::TITLE, &["dc-display"]);
+    l.set_margin_top(space::XXL);
     l
 }
 
 // 큰 제목 옆에 작은 수(저장 N건 · 스크랩북 모두 N개 — 옆 목록 수와 같게)
 fn title_with_count(t: &str, count: &str) -> gtk::Box {
-    let h = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-    h.set_margin_top(28);
-    h.append(&label(t, 34.0, 700, &["dc-display"]));
-    let c = label(count, 15.0, 600, &["dc-secondary"]);
+    let h = gtk::Box::new(gtk::Orientation::Horizontal, space::M);
+    h.set_margin_top(space::XXL);
+    h.append(&label(t, font::TITLE, &["dc-display"]));
+    let c = label(count, font::HEADLINE, &["dc-secondary"]);
     c.set_valign(gtk::Align::End);
-    c.set_margin_bottom(7);
+    c.set_margin_bottom(space::S);
     h.append(&c);
     h
 }
@@ -58,8 +59,8 @@ fn card_grid(items: &[NewsItem], width_hint: i32, decorate: impl Fn(&NewsItem, g
     let flow = gtk::FlowBox::new();
     flow.set_selection_mode(gtk::SelectionMode::None);
     flow.set_homogeneous(true);
-    flow.set_column_spacing(18);
-    flow.set_row_spacing(22);
+    flow.set_column_spacing(space::L as u32);
+    flow.set_row_spacing(space::XL as u32);
     let fit = ((width_hint + 18) / (CARD_MIN_WIDTH + 18)).clamp(1, 4) as usize;
     let cols = balanced_columns(fit, items.len());
     flow.set_min_children_per_line(cols as u32);
@@ -75,8 +76,8 @@ fn card_grid(items: &[NewsItem], width_hint: i32, decorate: impl Fn(&NewsItem, g
 pub fn stories(on_story: Rc<dyn Fn(String)>) -> (gtk::Widget, gtk::ScrolledWindow) {
     let (v, scroll) = page_box();
     v.append(&big_title("스토리"));
-    v.append(&label("여러 곳이 함께 다룬 소식을 한 줄기로 묶었습니다. 팔로우하면 새 보도가 붙을 때 알려 드립니다.", 13.0, 400, &["dc-secondary"]));
-    let list = gtk::Box::new(gtk::Orientation::Vertical, 14);
+    v.append(&label("여러 곳이 함께 다룬 소식을 한 줄기로 묶었습니다. 팔로우하면 새 보도가 붙을 때 알려 드립니다.", font::BODY, &["dc-secondary"]));
+    let list = gtk::Box::new(gtk::Orientation::Vertical, space::L);
     v.append(&list);
     let core = ui().core.clone();
     bg(
@@ -88,9 +89,9 @@ pub fn stories(on_story: Rc<dyn Fn(String)>) -> (gtk::Widget, gtk::ScrolledWindo
         },
         move |(live, past)| {
             if live.is_empty() && past.is_empty() {
-                let l = label("아직 여러 곳이 함께 다룬 소식이 없습니다. 출처를 더 구독하면 스토리가 늘어납니다.", 13.0, 400, &["dc-secondary"]);
-                l.set_margin_top(40);
-                l.set_margin_bottom(40);
+                let l = label("아직 여러 곳이 함께 다룬 소식이 없습니다. 출처를 더 구독하면 스토리가 늘어납니다.", font::BODY, &["dc-secondary"]);
+                l.set_margin_top(space::XXXL);
+                l.set_margin_bottom(space::XXXL);
                 list.append(&l);
             }
             let mut n = 0;
@@ -98,10 +99,10 @@ pub fn stories(on_story: Rc<dyn Fn(String)>) -> (gtk::Widget, gtk::ScrolledWindo
                 if group.is_empty() {
                     continue;
                 }
-                let h = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-                h.set_margin_top(14);
-                h.append(&label(title, 15.0, 700, &[]));
-                h.append(&label(sub, 12.0, 400, &["dc-tertiary"]));
+                let h = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
+                h.set_margin_top(space::L);
+                h.append(&label(title, font::HEADLINE, &[]));
+                h.append(&label(sub, font::CALLOUT, &["dc-tertiary"]));
                 list.append(&h);
                 for (i, sc) in group.iter().enumerate() {
                     let card = story_list_card(&sc.cluster, &sc.items, sc.topic.as_ref(), group.as_ptr() == live.as_ptr() && i == 0, on_story.clone());
@@ -132,11 +133,11 @@ fn story_list_card(c: &Cluster, items: &[NewsItem], topic: Option<&(String, Opti
     b.add_css_class("flat");
     b.add_css_class("dc-soft");
     b.set_vexpand(false);
-    let h = gtk::Box::new(gtk::Orientation::Horizontal, 16);
-    h.set_margin_top(14);
-    h.set_margin_bottom(14);
-    h.set_margin_start(14);
-    h.set_margin_end(14);
+    let h = gtk::Box::new(gtk::Orientation::Horizontal, space::L);
+    h.set_margin_top(space::L);
+    h.set_margin_bottom(space::L);
+    h.set_margin_start(space::L);
+    h.set_margin_end(space::L);
     if let Some(photo) = items.iter().find(|i| has_photo(i)) {
         let (w, hh) = if big { (210, 140) } else { (120, 80) };
         let img = RemoteImage::new(photo.image.as_deref(), photo.category(), &widgets::source_color(&photo.source_id), w, hh);
@@ -145,19 +146,19 @@ fn story_list_card(c: &Cluster, items: &[NewsItem], topic: Option<&(String, Opti
         round(&img.root, 12);
         h.append(&img.root);
     }
-    let v = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    let v = gtk::Box::new(gtk::Orientation::Vertical, space::S);
     v.set_hexpand(true);
-    let meta = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let meta = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
     // 분야는 묶인 보도들의 다수결(대표 기사 하나의 AI 하위 분류를 그대로 쓰면 IT 소식이 'AI·모델·제품'이 됐다, M-26) — 목록을 만들 때 화면 줄기 밖에서
     if let Some(topic) = topic {
         let (name, icon, color) = dropcap_core::magazine::story_topic_label(topic, crate::theme::is_dark());
-        let t = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        let t = gtk::Box::new(gtk::Orientation::Horizontal, space::XS);
         t.append(&widgets::icon(icon, 11));
-        t.append(&label(&name, 11.5, 600, &[]));
+        t.append(&label(&name, font::CHIP, &[]));
         tint(&t, &color);
         meta.append(&t);
     }
-    meta.append(&label(&format!("{}곳 보도", c.size), 11.5, 600, &["dc-secondary"]));
+    meta.append(&label(&format!("{}곳 보도", c.size), font::CHIP, &["dc-secondary"]));
     let fresh = core.unseen_reports(c);
     if fresh > 0 {
         let f = gtk::Label::new(Some(&format!("새 보도 {fresh}")));
@@ -171,21 +172,21 @@ fn story_list_card(c: &Cluster, items: &[NewsItem], topic: Option<&(String, Opti
         meta.append(&bell);
     }
     v.append(&meta);
-    v.append(&label(&c.title, if big { 21.0 } else { 16.0 }, 600, &["dc-display"]));
+    v.append(&label(&c.title, if big { font::HEADING } else { font::SUBHEADING }, &["dc-display"]));
     let srcs = unique_sources(items);
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, space::XS);
     for it in srcs.iter().take(6) {
         let m = widgets::monogram(it, 20);
         m.set_tooltip_text(Some(&it.source_name));
         row.append(&m);
     }
-    let names = label(&format!("  {}", srcs.iter().take(6).map(|i| i.source_name.clone()).collect::<Vec<_>>().join(" · ")), 11.5, 400, &["dc-secondary"]);
+    let names = label(&format!("  {}", srcs.iter().take(6).map(|i| i.source_name.clone()).collect::<Vec<_>>().join(" · ")), font::CAPTION, &["dc-secondary"]);
     names.set_wrap(false);
     names.set_ellipsize(gtk::pango::EllipsizeMode::End);
     row.append(&names);
     v.append(&row);
     let now = Utc::now();
-    v.append(&label(&format!("첫 보도 {} · 최근 {}", relative_time(Some(c.first), now), relative_time(Some(c.last), now)), 11.5, 400, &["dc-tertiary"]));
+    v.append(&label(&format!("첫 보도 {} · 최근 {}", relative_time(Some(c.first), now), relative_time(Some(c.last), now)), font::CAPTION, &["dc-tertiary"]));
     h.append(&v);
     b.set_child(Some(&h));
     let id = c.id.clone();
@@ -266,8 +267,8 @@ pub fn story(id: &str, back: Rc<dyn Fn()>) -> (gtk::Widget, gtk::ScrolledWindow)
     let bk = gtk::Button::new();
     bk.add_css_class("flat");
     bk.set_halign(gtk::Align::Start);
-    bk.set_margin_top(24);
-    let bb = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    bk.set_margin_top(space::XL);
+    let bb = gtk::Box::new(gtk::Orientation::Horizontal, space::XS);
     bb.append(&widgets::icon("go-previous-symbolic", 14));
     bb.append(&gtk::Label::new(Some("스토리")));
     bk.set_child(Some(&bb));
@@ -292,22 +293,22 @@ pub fn story(id: &str, back: Rc<dyn Fn()>) -> (gtk::Widget, gtk::ScrolledWindow)
 
 fn fill_story(body: &gtk::Box, id: &str, cluster: Option<Cluster>, items: Vec<NewsItem>) {
     let core = ui().core.clone();
-    let title = label(cluster.as_ref().map(|c| c.title.as_str()).unwrap_or("스토리"), 30.0, 700, &["dc-display"]);
-    title.set_margin_top(10);
+    let title = label(cluster.as_ref().map(|c| c.title.as_str()).unwrap_or("스토리"), font::TITLE, &["dc-display"]);
+    title.set_margin_top(space::M);
     body.append(&title);
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-    row.set_margin_top(6);
-    row.set_margin_bottom(22);
-    let info = label(&format!("{}곳 보도 · {}", items.len(), span(&items)), 13.0, 400, &["dc-secondary"]);
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, space::M);
+    row.set_margin_top(space::S);
+    row.set_margin_bottom(space::XL);
+    let info = label(&format!("{}곳 보도 · {}", items.len(), span(&items)), font::BODY, &["dc-secondary"]);
     info.set_hexpand(true);
     row.append(&info);
     let follow = gtk::Button::new();
     let set_follow_label = {
         let follow = follow.clone();
         move |on: bool| {
-            let bx = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            let bx = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
             bx.append(&widgets::icon(if on { "preferences-system-notifications-symbolic" } else { "alarm-symbolic" }, 13));
-            bx.append(&label(if on { "팔로우 중" } else { "이 스토리 팔로우" }, 12.5, 600, &[]));
+            bx.append(&label(if on { "팔로우 중" } else { "이 스토리 팔로우" }, font::BODY_STRONG, &[]));
             follow.set_child(Some(&bx));
             if on {
                 tint(&follow, "#FF9500");
@@ -332,24 +333,24 @@ fn fill_story(body: &gtk::Box, id: &str, cluster: Option<Cluster>, items: Vec<Ne
     core.mark_story_seen(id, items.len() as i64);
     // 한눈에(여러 보도를 합친 요약 — Ollama 가 있을 때만)
     if let Some(c) = cluster.clone() {
-        let digest_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        let digest_box = gtk::Box::new(gtk::Orientation::Vertical, space::S);
         digest_box.add_css_class("dc-soft");
-        digest_box.set_margin_bottom(26);
+        digest_box.set_margin_bottom(space::XL);
         digest_box.set_visible(false);
-        let inner = gtk::Box::new(gtk::Orientation::Vertical, 8);
-        inner.set_margin_top(16);
-        inner.set_margin_bottom(16);
-        inner.set_margin_start(16);
-        inner.set_margin_end(16);
-        let h = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let inner = gtk::Box::new(gtk::Orientation::Vertical, space::S);
+        inner.set_margin_top(space::L);
+        inner.set_margin_bottom(space::L);
+        inner.set_margin_start(space::L);
+        inner.set_margin_end(space::L);
+        let h = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
         h.append(&widgets::icon("format-justify-left-symbolic", 13));
-        h.append(&label("한눈에", 12.5, 700, &["dc-secondary"]));
+        h.append(&label("한눈에", font::BODY_STRONG, &["dc-secondary"]));
         inner.append(&h);
-        let wait = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let wait = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
         let sp = gtk::Spinner::new();
         sp.start();
         wait.append(&sp);
-        wait.append(&label("여러 보도를 합쳐 요약하는 중…", 13.0, 400, &["dc-secondary"]));
+        wait.append(&label("여러 보도를 합쳐 요약하는 중…", font::BODY, &["dc-secondary"]));
         inner.append(&wait);
         digest_box.append(&inner);
         body.append(&digest_box);
@@ -370,12 +371,12 @@ fn fill_story(body: &gtk::Box, id: &str, cluster: Option<Cluster>, items: Vec<Ne
                 match d {
                     Some(lines_) => {
                         for l in lines_ {
-                            let r = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-                            r.append(&label("•", 15.0, 400, &["dc-secondary"]));
-                            r.append(&label(&l, 15.0, 400, &[]));
+                            let r = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
+                            r.append(&label("•", (15.0, 400), &["dc-secondary"]));
+                            r.append(&label(&l, (15.0, 400), &[]));
                             inner.append(&r);
                         }
-                        inner.append(&label("여러 보도를 이 컴퓨터의 Ollama 로 합쳐 요약했습니다.", 11.0, 400, &["dc-tertiary"]));
+                        inner.append(&label("여러 보도를 이 컴퓨터의 Ollama 로 합쳐 요약했습니다.", font::CAPTION, &["dc-tertiary"]));
                         widgets::fade_in(&digest_box, crate::motion::STANDARD);
                     }
                     None => digest_box.set_visible(false),
@@ -404,7 +405,7 @@ fn fill_story(body: &gtk::Box, id: &str, cluster: Option<Cluster>, items: Vec<Ne
             let _ = cr.fill();
         });
     }
-    let rows = gtk::Box::new(gtk::Orientation::Vertical, 18);
+    let rows = gtk::Box::new(gtk::Orientation::Vertical, space::L);
     ov.set_child(Some(&rows));
     ov.add_overlay(&line);
     ov.set_clip_overlay(&line, true);
@@ -412,8 +413,8 @@ fn fill_story(body: &gtk::Box, id: &str, cluster: Option<Cluster>, items: Vec<Ne
     let mut row_widgets: Vec<gtk::Widget> = vec![];
     for (i, it) in items.iter().enumerate() {
         if let Some(g) = gap(&items, i) {
-            let l = label(&g, 11.0, 600, &["dc-tertiary"]);
-            l.set_margin_start(36);
+            let l = label(&g, font::CHIP, &["dc-tertiary"]);
+            l.set_margin_start(space::PAGE);
             l.set_margin_top(-6);
             rows.append(&l);
         }
@@ -454,7 +455,7 @@ fn fill_story(body: &gtk::Box, id: &str, cluster: Option<Cluster>, items: Vec<Ne
 
 fn timeline_row(it: &NewsItem, first: bool) -> gtk::Box {
     let accent = widgets::source_color(&it.source_id);
-    let h = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+    let h = gtk::Box::new(gtk::Orientation::Horizontal, space::L);
     let dot = gtk::DrawingArea::builder().content_width(20).content_height(20).valign(gtk::Align::Start).build();
     {
         let a = accent.clone();
@@ -473,18 +474,18 @@ fn timeline_row(it: &NewsItem, first: bool) -> gtk::Box {
         });
     }
     h.append(&dot);
-    let v = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    let v = gtk::Box::new(gtk::Orientation::Vertical, space::S);
     v.set_hexpand(true);
-    let meta = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let meta = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
     meta.append(&widgets::monogram(it, 18));
-    meta.append(&label(&it.source_name, 12.5, 600, &[]));
-    meta.append(&label(&resources::tier_label(&it.tier), 11.0, 400, &["dc-secondary"]));
+    meta.append(&label(&it.source_name, font::BODY_STRONG, &[]));
+    meta.append(&label(&resources::tier_label(&it.tier), font::CAPTION, &["dc-secondary"]));
     if let Some(p) = widgets::paywall_mark(it) {
         meta.append(&p);
     }
-    meta.append(&label(&format!("· {}", dropcap_core::app_model::clock(it.date)), 11.5, 400, &["dc-secondary"]));
+    meta.append(&label(&format!("· {}", dropcap_core::app_model::clock(it.date)), font::CAPTION, &["dc-secondary"]));
     if first {
-        let f = label("첫 보도", 10.5, 700, &[]);
+        let f = label("첫 보도", font::CHIP, &[]);
         tint(&f, &accent);
         meta.append(&f);
     }
@@ -492,16 +493,16 @@ fn timeline_row(it: &NewsItem, first: bool) -> gtk::Box {
     let b = gtk::Button::new();
     b.add_css_class("flat");
     b.add_css_class("dc-soft");
-    let inner = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    inner.set_margin_top(14);
-    inner.set_margin_bottom(14);
-    inner.set_margin_start(14);
-    inner.set_margin_end(14);
-    let tv = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    let inner = gtk::Box::new(gtk::Orientation::Horizontal, space::M);
+    inner.set_margin_top(space::L);
+    inner.set_margin_bottom(space::L);
+    inner.set_margin_start(space::L);
+    inner.set_margin_end(space::L);
+    let tv = gtk::Box::new(gtk::Orientation::Vertical, space::S);
     tv.set_hexpand(true);
-    tv.append(&label(it.display_title(), 16.0, 600, &["dc-display"]));
+    tv.append(&label(it.display_title(), font::SUBHEADING, &["dc-display"]));
     if let Some(l) = lede(it) {
-        let ll = label(&l, 13.0, 400, &["dc-secondary"]);
+        let ll = label(&l, font::BODY, &["dc-secondary"]);
         lines(&ll, 2);
         tv.append(&ll);
     }
@@ -528,15 +529,15 @@ pub fn saved() -> (gtk::Widget, gtk::ScrolledWindow) {
     let list = core.state().saved;
     // 옆 목록 '저장 N' 과 같은 수
     v.append(&title_with_count("저장", &format!("{}건", list.len())));
-    v.append(&label("저장한 기사는 번역까지 이 컴퓨터에 보관돼 인터넷 없이도 읽을 수 있습니다.", 13.0, 400, &["dc-secondary"]));
+    v.append(&label("저장한 기사는 번역까지 이 컴퓨터에 보관돼 인터넷 없이도 읽을 수 있습니다.", font::BODY, &["dc-secondary"]));
     // 피드에 없는 기사도 주소로 저장(I-05, 맥 AddURLBar(compact: false))
     let bar = crate::add_url_bar::build(false);
     bar.set_halign(gtk::Align::Start);
     bar.set_size_request(560, -1);
     v.append(&bar);
     if list.is_empty() {
-        let l = label("아직 저장한 기사가 없습니다. 카드를 오른쪽 클릭해 '나중에 읽기'로 저장하세요.", 13.0, 400, &["dc-secondary"]);
-        l.set_margin_top(40);
+        let l = label("아직 저장한 기사가 없습니다. 카드를 오른쪽 클릭해 '나중에 읽기'로 저장하세요.", font::BODY, &["dc-secondary"]);
+        l.set_margin_top(space::XXXL);
         v.append(&l);
     }
     let width = 900;
@@ -546,14 +547,14 @@ pub fn saved() -> (gtk::Widget, gtk::ScrolledWindow) {
         }
         let ov = gtk::Overlay::new();
         ov.set_child(Some(&card));
-        let b = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        let b = gtk::Box::new(gtk::Orientation::Horizontal, space::XS);
         b.add_css_class("dc-kind");
         b.append(&widgets::icon("folder-download-symbolic", 11));
-        b.append(&label("보관됨", 10.5, 600, &[]));
+        b.append(&label("보관됨", font::CHIP, &[]));
         b.set_halign(gtk::Align::End);
         b.set_valign(gtk::Align::Start);
-        b.set_margin_top(10);
-        b.set_margin_end(10);
+        b.set_margin_top(space::M);
+        b.set_margin_end(space::M);
         b.set_can_target(false);
         ov.add_overlay(&b);
         ov.upcast()
@@ -573,7 +574,7 @@ pub const OLDER_PAGE: i64 = 200; // 보관 표에서 한 번에 꺼내는 오래
 pub fn search() -> (gtk::Widget, gtk::ScrolledWindow) {
     let (v, scroll) = wide_box();
     v.append(&big_title("검색"));
-    let bar = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let bar = gtk::Box::new(gtk::Orientation::Horizontal, space::M);
     let entry = gtk::SearchEntry::new();
     entry.set_placeholder_text(Some("모든 기록에서 제목·출처·요약 검색"));
     entry.set_search_delay(250);
@@ -585,17 +586,17 @@ pub fn search() -> (gtk::Widget, gtk::ScrolledWindow) {
     include.set_tooltip_text(Some("보관함에 옮겨 둔 지난 기사(제목·출처)에서도 찾습니다"));
     bar.append(&include);
     v.append(&bar);
-    let count = label("", 13.0, 400, &["dc-secondary"]);
+    let count = label("", font::BODY, &["dc-secondary"]);
     v.append(&count);
     // 빈 검색 화면: 지켜볼 낱말·최근 검색어를 눌러 바로 찾기, 무엇을 찾는지 안내(맥 SearchView.emptyState)
-    let empty = gtk::Box::new(gtk::Orientation::Vertical, 16);
-    empty.set_margin_top(6);
+    let empty = gtk::Box::new(gtk::Orientation::Vertical, space::L);
+    empty.set_margin_top(space::S);
     v.append(&empty);
     let results = gtk::Box::new(gtk::Orientation::Vertical, 0);
     v.append(&results);
     // 보관 표에서 찾은 오래된 기사(최신순 200건씩): 머리 · 줄 목록 · 더 보기
-    let older_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    older_box.set_margin_top(16);
+    let older_box = gtk::Box::new(gtk::Orientation::Vertical, space::S);
+    older_box.set_margin_top(space::L);
     v.append(&older_box);
     let serial = Rc::new(Cell::new(0u64));
     let last_hit: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new())); // 결과가 있었던 마지막 낱말(떠날 때 최근 검색에)
@@ -730,7 +731,7 @@ impl OlderList {
             serial: serial.clone(),
             n,
         });
-        holder.append(&label("오래된 기사", 20.0, 700, &["dc-title"]));
+        holder.append(&label("오래된 기사", font::HEADING, &["dc-title"]));
         holder.append(&list);
         holder.append(&more_button);
         me.add(older, fetched);
@@ -790,15 +791,15 @@ fn fill_search_empty(empty: &gtk::Box, entry: &gtk::SearchEntry) {
     let watch = ui().core.state().settings.watch_keywords;
     let recent = ui().prefs.borrow().mag_recent_searches.clone();
     let row = |title: &str, words: &[String], icon_name: &str| -> gtk::Box {
-        let col = gtk::Box::new(gtk::Orientation::Vertical, 8);
-        let h = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+        let col = gtk::Box::new(gtk::Orientation::Vertical, space::S);
+        let h = gtk::Box::new(gtk::Orientation::Horizontal, space::XS);
         h.append(&widgets::icon(icon_name, 12));
-        h.append(&label(title, 12.5, 600, &["dc-secondary"]));
+        h.append(&label(title, font::BODY_STRONG, &["dc-secondary"]));
         col.append(&h);
         let chips = gtk::FlowBox::new();
         chips.set_selection_mode(gtk::SelectionMode::None);
-        chips.set_column_spacing(6);
-        chips.set_row_spacing(6);
+        chips.set_column_spacing(space::S as u32);
+        chips.set_row_spacing(space::S as u32);
         for w in words {
             let b = crate::menu_chips::chip(w, icon_name, "#3584E4", false, None, false);
             let (e, w) = (entry.clone(), w.clone());
@@ -823,11 +824,11 @@ fn fill_search_empty(empty: &gtk::Box, entry: &gtk::SearchEntry) {
         });
         empty.append(&clear);
     }
-    let help = gtk::Box::new(gtk::Orientation::Vertical, 4);
-    help.append(&label("이 컴퓨터에 모인 최근 기사(지난 호 포함)의 제목·출처·요약에서 찾고, '오래된 기사 포함'을 켜 두면 보관함의 지난 기사 제목·출처에서도 찾습니다.", 13.0, 400, &["dc-secondary"]));
-    help.append(&label("회사·인물 이름이나 출처 이름(예: 연합뉴스)으로도 찾을 수 있습니다. Ctrl+F 로 언제든 이 화면을 엽니다.", 13.0, 400, &["dc-secondary"]));
+    let help = gtk::Box::new(gtk::Orientation::Vertical, space::XS);
+    help.append(&label("이 컴퓨터에 모인 최근 기사(지난 호 포함)의 제목·출처·요약에서 찾고, '오래된 기사 포함'을 켜 두면 보관함의 지난 기사 제목·출처에서도 찾습니다.", font::BODY, &["dc-secondary"]));
+    help.append(&label("회사·인물 이름이나 출처 이름(예: 연합뉴스)으로도 찾을 수 있습니다. Ctrl+F 로 언제든 이 화면을 엽니다.", font::BODY, &["dc-secondary"]));
     if watch.is_empty() {
-        help.append(&label("설정 › 거르기의 '지켜볼 낱말'을 넣으면 여기서 바로 누를 수 있습니다.", 13.0, 400, &["dc-secondary"]));
+        help.append(&label("설정 › 거르기의 '지켜볼 낱말'을 넣으면 여기서 바로 누를 수 있습니다.", font::BODY, &["dc-secondary"]));
     }
     empty.append(&help);
 }
@@ -856,10 +857,10 @@ fn initial_folder() -> String {
 }
 
 pub fn scrapbook(window: &adw::ApplicationWindow) -> (gtk::Widget, gtk::ScrolledWindow) {
-    let body = gtk::Box::new(gtk::Orientation::Vertical, 18);
-    body.set_margin_start(36);
-    body.set_margin_end(36);
-    body.set_margin_bottom(40);
+    let body = gtk::Box::new(gtk::Orientation::Vertical, space::L);
+    body.set_margin_start(space::PAGE);
+    body.set_margin_end(space::PAGE);
+    body.set_margin_bottom(space::XXXL);
     let clamp = adw::Clamp::builder().maximum_size(860).tightening_threshold(860).child(&body).build();
     clamp.set_halign(gtk::Align::Start);
     let scroll = gtk::ScrolledWindow::builder().hscrollbar_policy(gtk::PolicyType::Never).child(&clamp).vexpand(true).hexpand(true).build();
@@ -894,14 +895,14 @@ impl ScrapPage {
             let book = u.scrapbook.borrow();
             (book.scraps.iter().filter(|s| s.collection == folder).cloned().collect(), book.collections.clone(), book.scraps.clone())
         };
-        let head = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        head.set_margin_top(28);
-        let t = label("스크랩북", 34.0, 700, &["dc-display"]);
+        let head = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
+        head.set_margin_top(space::XXL);
+        let t = label("스크랩북", font::TITLE, &["dc-display"]);
         head.append(&t);
         // 옆 목록 '스크랩북 N' 과 같은 수(폴더별은 아래 칩)
-        let n = label(&format!("모두 {}개", all.len()), 15.0, 600, &["dc-secondary"]);
+        let n = label(&format!("모두 {}개", all.len()), font::HEADLINE, &["dc-secondary"]);
         n.set_valign(gtk::Align::End);
-        n.set_margin_bottom(7);
+        n.set_margin_bottom(space::S);
         n.set_hexpand(true);
         n.set_xalign(0.0);
         head.append(&n);
@@ -926,12 +927,12 @@ impl ScrapPage {
         }
         head.append(&save);
         self.body.append(&head);
-        self.body.append(&label("읽기 창에서 문단에 마우스를 올려 ✂︎ 를 누르거나, 도구막대의 스크랩으로 기사를 모아 두세요. 폴더째 Markdown 으로 내보낼 수 있습니다.", 13.0, 400, &["dc-secondary"]));
+        self.body.append(&label("읽기 창에서 문단에 마우스를 올려 ✂︎ 를 누르거나, 도구막대의 스크랩으로 기사를 모아 두세요. 폴더째 Markdown 으로 내보낼 수 있습니다.", font::BODY, &["dc-secondary"]));
         if let Some(w) = weekly_quotes(&all) {
             self.body.append(&w);
         }
         // 폴더 칩(개수)
-        let chips = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let chips = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
         for c in &collections {
             let n = all.iter().filter(|s| &s.collection == c).count();
             let on = *c == folder;
@@ -941,9 +942,9 @@ impl ScrapPage {
             if on {
                 b.add_css_class("dc-folder-on");
             }
-            let bx = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+            let bx = gtk::Box::new(gtk::Orientation::Horizontal, space::XS);
             bx.append(&widgets::icon(if on { "folder-open-symbolic" } else { "folder-symbolic" }, 13));
-            bx.append(&label(&format!("{c} {n}"), 12.5, if on { 600 } else { 400 }, &[]));
+            bx.append(&label(&format!("{c} {n}"), (12.5, if on { 600 } else { 400 }), &[]));
             b.set_child(Some(&bx));
             {
                 let weak = Rc::downgrade(self);
@@ -983,9 +984,9 @@ impl ScrapPage {
         }
         let add = gtk::Button::new();
         add.add_css_class("flat");
-        let ab = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        let ab = gtk::Box::new(gtk::Orientation::Horizontal, space::XS);
         ab.append(&widgets::icon("list-add-symbolic", 12));
-        ab.append(&label("새 폴더", 12.5, 400, &[]));
+        ab.append(&label("새 폴더", font::BODY, &[]));
         add.set_child(Some(&ab));
         {
             let weak = Rc::downgrade(self);
@@ -1016,14 +1017,14 @@ impl ScrapPage {
             groups.entry(k).or_default().push(s.clone());
         }
         if order.is_empty() {
-            let e = gtk::Box::new(gtk::Orientation::Vertical, 8);
-            e.set_margin_top(40);
-            e.set_margin_bottom(40);
+            let e = gtk::Box::new(gtk::Orientation::Vertical, space::S);
+            e.set_margin_top(space::XXXL);
+            e.set_margin_bottom(space::XXXL);
             let i = widgets::icon("edit-cut-symbolic", 30);
             i.set_halign(gtk::Align::Start);
             i.add_css_class("dc-tertiary");
             e.append(&i);
-            e.append(&label("이 폴더는 비어 있습니다", 18.0, 600, &["dc-display"]));
+            e.append(&label("이 폴더는 비어 있습니다", font::HEADING, &["dc-display"]));
             self.body.append(&e);
         }
         for (i, k) in order.iter().enumerate() {
@@ -1037,16 +1038,16 @@ impl ScrapPage {
 
     fn group_card(self: &Rc<Self>, scraps: &[Scrap], collections: &[String]) -> gtk::Box {
         let item = scraps[0].item.clone();
-        let v = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        let v = gtk::Box::new(gtk::Orientation::Vertical, space::M);
         v.add_css_class("dc-soft");
-        let inner = gtk::Box::new(gtk::Orientation::Vertical, 12);
-        inner.set_margin_top(18);
-        inner.set_margin_bottom(18);
-        inner.set_margin_start(18);
-        inner.set_margin_end(18);
+        let inner = gtk::Box::new(gtk::Orientation::Vertical, space::M);
+        inner.set_margin_top(space::L);
+        inner.set_margin_bottom(space::L);
+        inner.set_margin_start(space::L);
+        inner.set_margin_end(space::L);
         let b = gtk::Button::new();
         b.add_css_class("flat");
-        let h = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        let h = gtk::Box::new(gtk::Orientation::Horizontal, space::M);
         if has_photo(&item) {
             let img = RemoteImage::new(item.image.as_deref(), item.category(), &widgets::source_color(&item.source_id), 84, 56);
             img.root.set_size_request(84, 56);
@@ -1054,10 +1055,10 @@ impl ScrapPage {
             round(&img.root, 9);
             h.append(&img.root);
         }
-        let tv = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        let tv = gtk::Box::new(gtk::Orientation::Vertical, space::XS);
         tv.set_hexpand(true);
-        tv.append(&label(item.display_title(), 16.0, 600, &["dc-display"]));
-        tv.append(&label(&format!("{} · {}", item.source_name, widgets::time_text(&item)), 12.0, 400, &["dc-secondary"]));
+        tv.append(&label(item.display_title(), font::SUBHEADING, &["dc-display"]));
+        tv.append(&label(&format!("{} · {}", item.source_name, widgets::time_text(&item)), font::CALLOUT, &["dc-secondary"]));
         h.append(&tv);
         b.set_child(Some(&h));
         {
@@ -1073,33 +1074,33 @@ impl ScrapPage {
     }
 
     fn scrap_row(self: &Rc<Self>, s: &Scrap, collections: &[String]) -> gtk::Box {
-        let v = gtk::Box::new(gtk::Orientation::Vertical, 8);
-        v.set_margin_top(4);
-        v.set_margin_bottom(4);
+        let v = gtk::Box::new(gtk::Orientation::Vertical, space::S);
+        v.set_margin_top(space::XS);
+        v.set_margin_bottom(space::XS);
         match &s.quote {
             Some(q) => {
-                let qb = gtk::Box::new(gtk::Orientation::Vertical, 6);
+                let qb = gtk::Box::new(gtk::Orientation::Vertical, space::S);
                 qb.add_css_class("dc-quote");
-                let ql = label(q, 14.5, 400, &[]);
+                let ql = label(q, (14.5, 400), &[]);
                 ql.set_selectable(true);
                 qb.append(&ql);
                 if let Some(o) = s.quote_original.as_ref().filter(|o| *o != q) {
-                    let ol = label(o, 12.5, 400, &["dc-secondary"]);
+                    let ol = label(o, font::CALLOUT, &["dc-secondary"]);
                     ol.set_selectable(true);
                     qb.append(&ol);
                 }
                 v.append(&qb);
             }
             None => {
-                let h = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+                let h = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
                 h.append(&widgets::icon("text-x-generic-symbolic", 12));
-                h.append(&label("기사 전체를 스크랩", 12.0, 400, &[]));
+                h.append(&label("기사 전체를 스크랩", font::CALLOUT, &[]));
                 h.add_css_class("dc-secondary");
                 v.append(&h);
             }
         }
         // 메모(바로 저장: Enter·초점을 잃을 때)
-        let h = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let h = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
         h.append(&widgets::icon("document-edit-symbolic", 11));
         let memo = gtk::Entry::new();
         memo.set_has_frame(false);
@@ -1240,28 +1241,28 @@ fn weekly_quotes(all: &[Scrap]) -> Option<gtk::Box> {
     if !dropcap_core::magazine::is_sunday_evening(&Local::now()) || list.is_empty() {
         return None;
     }
-    let v = gtk::Box::new(gtk::Orientation::Vertical, 14);
+    let v = gtk::Box::new(gtk::Orientation::Vertical, space::L);
     v.add_css_class("dc-weekly");
-    let h = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    let t = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let h = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
+    let t = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
     t.append(&widgets::icon("format-text-italic-symbolic", 16));
-    t.append(&label("이번 주 모은 문장", 20.0, 700, &["dc-display"]));
+    t.append(&label("이번 주 모은 문장", font::HEADING, &["dc-display"]));
     t.set_hexpand(true);
     h.append(&t);
-    h.append(&label(&format!("{}개 · 지난 7일", list.len()), 12.0, 400, &["dc-secondary"]));
+    h.append(&label(&format!("{}개 · 지난 7일", list.len()), font::CALLOUT, &["dc-secondary"]));
     v.append(&h);
     for s in list {
-        let q = gtk::Box::new(gtk::Orientation::Vertical, 5);
+        let q = gtk::Box::new(gtk::Orientation::Vertical, space::XS);
         q.add_css_class("dc-quote");
-        let ql = label(&format!("“{}”", s.quote.clone().unwrap_or_default()), 14.5, 400, &[]);
+        let ql = label(&format!("“{}”", s.quote.clone().unwrap_or_default()), (14.5, 400), &[]);
         lines(&ql, 5);
         ql.set_selectable(true);
         q.append(&ql);
-        let m = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        let src = label(&s.item.source_name, 11.5, 600, &[]);
+        let m = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
+        let src = label(&s.item.source_name, font::CHIP, &[]);
         tint(&src, &widgets::source_color(&s.item.source_id));
         m.append(&src);
-        let tl = label(s.item.display_title(), 11.5, 400, &["dc-secondary"]);
+        let tl = label(s.item.display_title(), font::CAPTION, &["dc-secondary"]);
         lines(&tl, 1);
         m.append(&tl);
         q.append(&m);

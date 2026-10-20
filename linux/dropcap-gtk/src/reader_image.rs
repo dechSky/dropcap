@@ -1,6 +1,7 @@
 // 기사 속 사진 다루기(맥 Reader/ImageTools.swift): 사진 속 글자 번역 · 복사 · 저장.
 // 사진에 마우스를 올리면 오른쪽 위에 작은 단추가 뜨고, 오른쪽 클릭 메뉴에도 같은 기능이 있다.
 // 글자 읽기는 맥 Vision 대신 tesseract(있을 때, dropcap_core::image_text). 없으면 번역 창 아래 막대에 설치 안내.
+use crate::ds::space;
 use crate::app::{bg, copy_text};
 use crate::widgets::load_texture;
 use crate::{motion, theme};
@@ -20,8 +21,8 @@ fn style(w: &impl IsA<gtk::Widget>, css: &str) {
 // 기사 속 사진(안전 로더, 원래 비율, R-18) + 사진 도구(R-20). 불러오는 동안 옅은 상자, 못 받으면 숨김.
 pub fn article_image(url: &str) -> gtk::Widget {
     let stack = gtk::Stack::new();
-    stack.set_margin_top(6);
-    stack.set_margin_bottom(18);
+    stack.set_margin_top(space::S);
+    stack.set_margin_bottom(space::L);
     stack.set_transition_type(gtk::StackTransitionType::Crossfade);
     stack.set_transition_duration(if motion::enabled() { motion::SLOW } else { 0 });
     let ph = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -70,17 +71,17 @@ fn tool(icon: &str, tip: &str) -> gtk::Button {
     let b = gtk::Button::builder().icon_name(icon).tooltip_text(tip).build();
     b.add_css_class("osd");
     b.set_size_request(28, 26);
-    style(&b, "border-radius: 8px; min-height: 0; padding: 4px 6px;");
+    style(&b, "border-radius: 8px; min-height: 0; padding: 4px 8px;");
     b
 }
 
 // 마우스를 올리면 나오는 단추와 오른쪽 클릭 메뉴
 pub fn attach_tools(frame: &gtk::Overlay, tex: &gdk::Texture, url: &str, title: &str) {
-    let bar = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    let bar = gtk::Box::new(gtk::Orientation::Horizontal, space::XS);
     bar.set_halign(gtk::Align::End);
     bar.set_valign(gtk::Align::Start);
-    bar.set_margin_top(8);
-    bar.set_margin_end(8);
+    bar.set_margin_top(space::S);
+    bar.set_margin_end(space::S);
     let tr = tool("preferences-desktop-locale-symbolic", "사진 속 글자 번역");
     let cp = tool("edit-copy-symbolic", "사진 복사");
     let sv = tool("document-save-symbolic", "사진 저장…");
@@ -270,23 +271,23 @@ pub fn open_translate(tex: &gdk::Texture, url: &str, title: &str) {
     over.add_overlay(&area);
     over.set_overflow(gtk::Overflow::Hidden);
     style(&over, "border-radius: 10px;");
-    let list = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    let col = gtk::Box::new(gtk::Orientation::Vertical, 16);
+    let list = gtk::Box::new(gtk::Orientation::Vertical, space::S);
+    let col = gtk::Box::new(gtk::Orientation::Vertical, space::L);
     for m in [&col] {
-        m.set_margin_top(20);
-        m.set_margin_bottom(20);
-        m.set_margin_start(20);
-        m.set_margin_end(20);
+        m.set_margin_top(space::XL);
+        m.set_margin_bottom(space::XL);
+        m.set_margin_start(space::XL);
+        m.set_margin_end(space::XL);
     }
     col.append(&over);
     col.append(&list);
     let scroll = gtk::ScrolledWindow::builder().child(&col).vexpand(true).hscrollbar_policy(gtk::PolicyType::Never).build();
 
-    let bar = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-    bar.set_margin_top(10);
-    bar.set_margin_bottom(10);
-    bar.set_margin_start(16);
-    bar.set_margin_end(16);
+    let bar = gtk::Box::new(gtk::Orientation::Horizontal, space::M);
+    bar.set_margin_top(space::M);
+    bar.set_margin_bottom(space::M);
+    bar.set_margin_start(space::L);
+    bar.set_margin_end(space::L);
     let spin = gtk::Spinner::new();
     let status = gtk::Label::new(None);
     status.set_wrap(true);
@@ -294,7 +295,7 @@ pub fn open_translate(tex: &gdk::Texture, url: &str, title: &str) {
     status.set_hexpand(true);
     bar.append(&spin);
     bar.append(&status);
-    let done_tools = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let done_tools = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
     done_tools.set_visible(false);
     let seg = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     seg.add_css_class("linked");
@@ -312,7 +313,7 @@ pub fn open_translate(tex: &gdk::Texture, url: &str, title: &str) {
     let sv = gtk::Button::with_label("저장…");
     bar.append(&cp);
     bar.append(&sv);
-    style(&bar, "font-size: 12.5px;");
+    style(&bar, "font-size: 13px;");
 
     let v = gtk::Box::new(gtk::Orientation::Vertical, 0);
     v.append(&adw::HeaderBar::new());
@@ -443,7 +444,7 @@ impl Translate {
             style(&h, "font-size: 13px; font-weight: 600;");
             self.list.append(&h);
             for l in lines.iter() {
-                let b = gtk::Box::new(gtk::Orientation::Vertical, 2);
+                let b = gtk::Box::new(gtk::Orientation::Vertical, space::XXS);
                 let main = gtk::Label::new(Some(l.translated.as_deref().unwrap_or(&l.text)));
                 main.set_xalign(0.0);
                 main.set_wrap(true);

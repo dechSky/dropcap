@@ -86,7 +86,7 @@ struct MagazineView: View {
                 Button { SettingsWindow.open(openSettings) } label: {
                     Label("설정", systemImage: "gearshape").frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                 }
-                .buttonStyle(.plain).padding(.horizontal, 18).padding(.vertical, 8)
+                .buttonStyle(.plain).padding(.horizontal, Space.l).padding(.vertical, Space.s)
                 .help("설정 열기 (⌘,)")
             }
             .navigationSplitViewColumnWidth(min: 190, ideal: 210)

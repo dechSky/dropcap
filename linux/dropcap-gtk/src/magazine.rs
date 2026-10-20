@@ -1,5 +1,6 @@
 // 매거진 창(M-01~M-22·G-09·G-10·G-12)·스크랩북·스토리 — 맥 UI/MagazineView.swift 와 같은 지면·문구·수치.
 // 창: 옆 목록(이번 호·분야·모아 보기·지난 호) + 지면(책장 넘기듯 바뀜). 지면 그리기는 magazine_issue·magazine_card·magazine_pages.
+use crate::ds::space;
 use crate::app::ui;
 use crate::magazine_issue::{IssuePage, IssueSource};
 use crate::magazine_pages;
@@ -280,7 +281,7 @@ impl Magazine {
             gtk::ListBoxRow::builder().child(&l).selectable(false).activatable(false).build()
         };
         let add = |me: &Rc<Self>, icon: &str, text: &str, color: Option<&str>, page: Page| {
-            let b = gtk::Box::new(gtk::Orientation::Horizontal, 9);
+            let b = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
             let i = widgets::icon(icon, 16);
             if let Some(c) = color {
                 tint(&i, c);
@@ -290,8 +291,8 @@ impl Magazine {
             l.set_xalign(0.0);
             l.set_ellipsize(gtk::pango::EllipsizeMode::End);
             b.append(&l);
-            b.set_margin_top(3);
-            b.set_margin_bottom(3);
+            b.set_margin_top(space::XS);
+            b.set_margin_bottom(space::XS);
             let r = gtk::ListBoxRow::builder().child(&b).build();
             me.sidebar.append(&r);
             me.rows.borrow_mut().push((r, page));
@@ -348,7 +349,7 @@ impl Magazine {
                 let l = gtk::Label::new(Some(&format!("{}일 비어 있음", g.empty_days)));
                 l.set_xalign(0.0);
                 l.add_css_class("dim-label");
-                l.set_margin_start(25);
+                l.set_margin_start(space::XL);
                 let r = gtk::ListBoxRow::builder().child(&l).selectable(false).activatable(false).build();
                 r.set_tooltip_text(Some("이날들은 모인 소식이 없어 호를 엮지 않았습니다"));
                 self.sidebar.append(&r);
@@ -650,20 +651,20 @@ fn ensure_css() {
 .dc-cover { border-radius: 20px; box-shadow: 0 10px 18px alpha(black, 0.20); transition: box-shadow 300ms cubic-bezier(0.2, 0.9, 0.25, 1); }
 .dc-cover:hover { box-shadow: 0 14px 26px alpha(black, 0.28); }
 .dc-cover-plain { background-color: alpha(@window_fg_color, 0.045); }
-.dc-pill { border-radius: 99px; padding: 7px 14px; font-weight: 600; }
-.dc-live { background-color: #ff3b30; color: white; border-radius: 99px; padding: 1px 7px; font-size: 10.5px; font-weight: 700; }
-.dc-badge { background-color: alpha(@window_fg_color, 0.9); color: @view_bg_color; border-radius: 4px; padding: 2px 7px; font-weight: 800; font-size: 11px; letter-spacing: 1.5px; }
+.dc-pill { border-radius: 99px; padding: 8px 16px; font-weight: 600; }
+.dc-live { background-color: #ff3b30; color: white; border-radius: 99px; padding: 1px 8px; font-size: 11px; font-weight: 700; }
+.dc-badge { background-color: alpha(@window_fg_color, 0.9); color: @view_bg_color; border-radius: 4px; padding: 2px 8px; font-weight: 800; font-size: 11px; letter-spacing: 1.5px; }
 .dc-badge-photo { background-color: white; color: black; }
-.dc-banner { border-radius: 99px; padding: 8px 14px; background-color: alpha(@window_bg_color, 0.95); border: 1px solid alpha(@window_fg_color, 0.1); box-shadow: 0 4px 10px alpha(black, 0.15); font-weight: 600; }
+.dc-banner { border-radius: 99px; padding: 8px 16px; background-color: alpha(@window_bg_color, 0.95); border: 1px solid alpha(@window_fg_color, 0.1); box-shadow: 0 4px 10px alpha(black, 0.15); font-weight: 600; }
 .dc-soft { background-color: alpha(@window_fg_color, 0.04); border-radius: 14px; }
 .dc-soft:hover { background-color: alpha(@window_fg_color, 0.07); }
 .dc-quote { border-left: 3px solid alpha(#F5C518, 0.7); padding-left: 12px; }
-.dc-weekly { background-color: alpha(#F5C518, 0.07); border: 1px solid alpha(#F5C518, 0.25); border-radius: 16px; padding: 18px; }
-.dc-folder { border-radius: 99px; padding: 5px 11px; background-color: alpha(@window_fg_color, 0.05); }
+.dc-weekly { background-color: alpha(#F5C518, 0.07); border: 1px solid alpha(#F5C518, 0.25); border-radius: 16px; padding: 16px; }
+.dc-folder { border-radius: 99px; padding: 4px 12px; background-color: alpha(@window_fg_color, 0.05); }
 .dc-folder-on { background-color: alpha(@accent_bg_color, 0.16); color: @accent_color; font-weight: 600; }
-.dc-secchip { border-radius: 99px; padding: 4px 9px; font-weight: 500; }
-.dc-fresh { background-color: #ff3b30; color: white; border-radius: 99px; padding: 1px 6px; font-size: 10.5px; font-weight: 700; }
-.dc-kind { background-color: alpha(@window_bg_color, 0.85); border-radius: 5px; padding: 2px 6px; font-size: 10.5px; font-weight: 600; }
+.dc-secchip { border-radius: 99px; padding: 4px 8px; font-weight: 500; }
+.dc-fresh { background-color: #ff3b30; color: white; border-radius: 99px; padding: 1px 8px; font-size: 11px; font-weight: 700; }
+.dc-kind { background-color: alpha(@window_bg_color, 0.85); border-radius: 5px; padding: 2px 8px; font-size: 11px; font-weight: 600; }
 .dc-play { background-color: alpha(black, 0.45); color: white; border-radius: 99px; border: 1px solid alpha(white, 0.6); min-width: 46px; min-height: 46px; }
 "#,
     );

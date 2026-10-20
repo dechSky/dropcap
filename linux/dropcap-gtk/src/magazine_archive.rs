@@ -1,6 +1,7 @@
 // 보관함(지난 기사) 지면 — 맥 UI/ArchiveView.swift 와 같은 단추·문구·수치.
 // 일·주·월·연 단추와 ◀ ▶ 로 기간을 고르고, 그 기간의 기사를 최신순으로 본다(분야·출처 거르기, 100건씩 더 보기).
 // 월·연은 날짜별 건수 막대를 먼저 보이고(막대를 누르면 그날로), 그날 지난 호가 있으면 맨 위에 '이 날의 호 보기'.
+use crate::ds::{font, space};
 use crate::app::{bg, open_external, ui};
 use crate::magazine::tint;
 use crate::magazine_card::origin_of;
@@ -41,24 +42,24 @@ pub struct ArchivePage {
 }
 
 pub fn page(on_issue: Rc<dyn Fn(Issue)>) -> (gtk::Widget, gtk::ScrolledWindow, Rc<ArchivePage>) {
-    let v = gtk::Box::new(gtk::Orientation::Vertical, 16);
-    v.set_margin_start(32);
-    v.set_margin_end(32);
-    v.set_margin_bottom(40);
+    let v = gtk::Box::new(gtk::Orientation::Vertical, space::L);
+    v.set_margin_start(space::XXL);
+    v.set_margin_end(space::XXL);
+    v.set_margin_bottom(space::XXXL);
     let scroll = gtk::ScrolledWindow::builder().hscrollbar_policy(gtk::PolicyType::Never).child(&v).vexpand(true).hexpand(true).build();
 
     // 머리: 보관함 · 기간 이름 · 건수
-    let head = gtk::Box::new(gtk::Orientation::Vertical, 4);
-    head.set_margin_top(28);
-    head.append(&label("보관함", 11.0, 700, &["dc-secondary"]));
-    let title = label("", 34.0, 700, &["dc-display"]);
+    let head = gtk::Box::new(gtk::Orientation::Vertical, space::XS);
+    head.set_margin_top(space::XXL);
+    head.append(&label("보관함", font::CHIP, &["dc-secondary"]));
+    let title = label("", font::TITLE, &["dc-display"]);
     head.append(&title);
-    let count = label(" ", 13.0, 400, &["dc-secondary"]);
+    let count = label(" ", font::BODY, &["dc-secondary"]);
     head.append(&count);
     v.append(&head);
 
     // 단추 줄: 일·주·월·연 | ◀ ▶ 오늘 | 분야·출처 거르기
-    let controls = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let controls = gtk::Box::new(gtk::Orientation::Horizontal, space::M);
     let seg = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     seg.add_css_class("linked");
     seg.set_homogeneous(true);
@@ -76,7 +77,7 @@ pub fn page(on_issue: Rc<dyn Fn(Issue)>) -> (gtk::Widget, gtk::ScrolledWindow, R
         periods.push((p, b));
     }
     controls.append(&seg);
-    let nav = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    let nav = gtk::Box::new(gtk::Orientation::Horizontal, space::XS);
     let prev = gtk::Button::from_icon_name("go-previous-symbolic");
     prev.set_tooltip_text(Some("이전 기간"));
     prev.update_property(&[gtk::accessible::Property::Label("이전 기간")]);
@@ -99,7 +100,7 @@ pub fn page(on_issue: Rc<dyn Fn(Issue)>) -> (gtk::Widget, gtk::ScrolledWindow, R
     controls.append(&source_menu);
     v.append(&controls);
 
-    let body = gtk::Box::new(gtk::Orientation::Vertical, 16);
+    let body = gtk::Box::new(gtk::Orientation::Vertical, space::L);
     v.append(&body);
 
     let period = Period::from_raw(&ui().prefs.borrow().archive_period);
@@ -251,7 +252,7 @@ impl ArchivePage {
             let sp = gtk::Spinner::new();
             sp.start();
             sp.set_halign(gtk::Align::Start);
-            sp.set_margin_top(24);
+            sp.set_margin_top(space::XL);
             self.body.append(&sp);
         }
         let (from, to) = self.range();
@@ -284,12 +285,12 @@ impl ArchivePage {
                 let b = gtk::Button::new();
                 b.add_css_class("flat");
                 b.add_css_class("dc-soft");
-                let h = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-                h.set_margin_top(10);
-                h.set_margin_bottom(10);
-                h.set_margin_start(8);
+                let h = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
+                h.set_margin_top(space::M);
+                h.set_margin_bottom(space::M);
+                h.set_margin_start(space::S);
                 h.append(&widgets::icon("x-office-document-symbolic", 16));
-                h.append(&label(&format!("이 날의 호 보기 — {}", issue.title()), 14.0, 600, &["accent"]));
+                h.append(&label(&format!("이 날의 호 보기 — {}", issue.title()), font::HEADLINE, &["accent"]));
                 b.set_child(Some(&h));
                 let on = self.on_issue.clone();
                 b.connect_clicked(move |_| on(issue.clone()));
@@ -307,8 +308,8 @@ impl ArchivePage {
         }
         if page.items.is_empty() {
             let filtered = self.section.borrow().is_some() || self.source.borrow().is_some();
-            let l = label(if filtered { "거른 조건에 맞는 기사가 없습니다." } else { "이 기간에는 모인 기사가 없습니다." }, 13.0, 400, &["dc-secondary"]);
-            l.set_margin_top(24);
+            let l = label(if filtered { "거른 조건에 맞는 기사가 없습니다." } else { "이 기간에는 모인 기사가 없습니다." }, font::BODY, &["dc-secondary"]);
+            l.set_margin_top(space::XL);
             self.body.append(&l);
             return;
         }
@@ -372,14 +373,14 @@ fn day_bars(days: Vec<DateTime<Utc>>, page: &Page, compact: bool, pick: impl Fn(
     const H: f64 = 72.0;
     let counts: Vec<i64> = days.iter().map(|d| page.day_counts.get(&archive::day_key(*d)).copied().unwrap_or(0)).collect();
     let peak = counts.iter().copied().max().unwrap_or(1).max(1);
-    let wrap = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    let wrap = gtk::Box::new(gtk::Orientation::Vertical, space::XS);
     wrap.add_css_class("dc-soft");
     let area = gtk::DrawingArea::new();
     area.set_content_height(H as i32);
     area.set_hexpand(true);
-    area.set_margin_top(12);
-    area.set_margin_start(12);
-    area.set_margin_end(12);
+    area.set_margin_top(space::M);
+    area.set_margin_start(space::M);
+    area.set_margin_end(space::M);
     let n = days.len().max(1);
     {
         let counts = counts.clone();
@@ -430,15 +431,15 @@ fn day_bars(days: Vec<DateTime<Utc>>, page: &Page, compact: bool, pick: impl Fn(
     area.set_cursor_from_name(Some("pointer"));
     wrap.append(&area);
     let foot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    foot.set_margin_start(12);
-    foot.set_margin_end(12);
-    foot.set_margin_bottom(10);
+    foot.set_margin_start(space::M);
+    foot.set_margin_end(space::M);
+    foot.set_margin_bottom(space::M);
     let dot = |d: Option<&DateTime<Utc>>| d.map(|d| archive::day_key(*d).replace('-', ". ")).unwrap_or_default();
-    let first = label(&dot(days.first()), 11.0, 400, &["dc-tertiary"]);
-    let mid = label(&format!("하루 많게는 {peak}건"), 11.0, 400, &["dc-tertiary"]);
+    let first = label(&dot(days.first()), font::CAPTION, &["dc-tertiary"]);
+    let mid = label(&format!("하루 많게는 {peak}건"), font::CAPTION, &["dc-tertiary"]);
     mid.set_hexpand(true);
     mid.set_xalign(0.5);
-    let last = label(&dot(days.last()), 11.0, 400, &["dc-tertiary"]);
+    let last = label(&dot(days.last()), font::CAPTION, &["dc-tertiary"]);
     foot.append(&first);
     foot.append(&mid);
     foot.append(&last);
@@ -461,8 +462,8 @@ fn rounded(cr: &gtk::cairo::Context, x: f64, y: f64, w: f64, h: f64, r: f64) {
 pub fn archive_row(item: &ArchivedItem, show_day: bool) -> gtk::Widget {
     let l = item.date.with_timezone(&Local);
     let when = if show_day { l.format("%-m/%-d %H:%M").to_string() } else { l.format("%H:%M").to_string() };
-    let h = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    let t = label(&when, 11.5, 400, &["dc-tertiary", "numeric"]);
+    let h = gtk::Box::new(gtk::Orientation::Horizontal, space::M);
+    let t = label(&when, font::CAPTION, &["dc-tertiary", "numeric"]);
     t.set_wrap(false);
     t.set_width_chars(if show_day { 11 } else { 5 });
     t.set_valign(gtk::Align::Start);
@@ -476,14 +477,14 @@ pub fn archive_row(item: &ArchivedItem, show_day: bool) -> gtk::Widget {
     attrs.insert(gtk::pango::AttrSize::new_size_absolute(8 * gtk::pango::SCALE));
     dot.set_attributes(Some(&attrs));
     h.append(&dot);
-    let title = label(item.display_title(), 13.5, 400, &[]);
+    let title = label(item.display_title(), font::BODY, &[]);
     lines(&title, 2);
     title.set_hexpand(true);
     if item.title_ko.is_some() {
         title.set_tooltip_text(Some(&item.title));
     }
     h.append(&title);
-    let src = label(&item.source, 11.5, 400, &["dc-secondary"]);
+    let src = label(&item.source, font::CAPTION, &["dc-secondary"]);
     src.set_wrap(false);
     src.set_ellipsize(gtk::pango::EllipsizeMode::End);
     src.set_max_width_chars(18);

@@ -129,6 +129,17 @@ private func page(_ middle: String, after: String = "") -> String {
         #expect(at(b2, para(5)) != nil)
     }
 
+    @Test func twoCarouselsAfterRemoval() async {
+        // 보안 낮음 L5(리눅스 two_carousels_after_removal 와 같은 사례): 한 글에 캐러셀이 둘 — 첫 것을 넣으며 지운 요소(본문에 남은 칸 글)가
+        // 둘째의 뒤 글로 골라져도 둘째 칸이 빠지지 않는다(JS 는 compareDocumentPosition 이라 떨어진 노드를 앞뒤로 고르지 않음)
+        let y = "Officials repeated that the harbor schedule would not change this year."
+        let a = (0..<3).map { "<div class=\"swiper-slide\"><p>\(slideText($0))</p></div>" }.joined()
+        let z = (10..<13).map { "<div class=\"swiper-slide\" aria-hidden=\"true\"><p>\(slideText($0))</p></div>" }.joined()
+        let b = await blocks(page("<p>\(y)</p><div class=\"swiper\">\(a)</div><p>\(y)</p><div class=\"swiper\">\(z)</div><p>\(slideText(2))</p>"))
+        for i in [0, 1, 10, 11, 12] { #expect(count(b, slideText(i)) == 1, "칸 \(i)") }
+        if let one = at(b, slideText(1)), let ten = at(b, slideText(10)) { #expect(one < ten) } else { Issue.record("칸 1·10") }
+    }
+
     @Test func sameBlockInAllThreeScripts() throws {
         // 윈도우 extract.js · 리눅스 SCRIPT(WebKitGTK 느린 길)의 캐러셀 칸도 맥과 글자째 같다(들여쓰기만 다름)
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()

@@ -100,8 +100,8 @@
       const TXT = 'p, li, h1, h2, h3, h4, h5, h6, blockquote';
       const found = new Map();
       cur.querySelectorAll(TXT).forEach((e) => { const t = norm(e.textContent); if (!found.has(t)) found.set(t, []); found.get(t).push(e); });
-      // 같은 글이 차례(목차 li)에도 있으면 같은 태그를 앞세운다
-      const pick = (m) => { const l = (m && found.get(norm(m.textContent))) || []; const same = l.filter((e) => e.tagName === m.tagName); return same.length ? same : l; };
+      // 같은 글이 차례(목차 li)에도 있으면 같은 태그를 앞세운다 · 앞 캐러셀을 넣으며 지운 요소는 빼고(떨어진 노드와의 앞뒤는 정해져 있지 않다 — review-4 L5)
+      const pick = (m) => { const l = ((m && found.get(norm(m.textContent))) || []).filter((e) => e.isConnected); const same = l.filter((e) => e.tagName === m.tagName); return same.length ? same : l; };
       const marks = [...fresh.querySelectorAll(TXT)].filter((e) => { const n = cln(e); return (n >= 12 || (/^H/.test(e.tagName) && n >= 4)) && !roots.some((r) => r.contains(e)); });
       const before = (a, b) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
       const RECO_HEAD = /^(recommended|related|read more|more on this|more from|keep reading|you may also like|also read|관련\s?기사|추천\s?기사|함께\s?(볼|읽을)|많이\s?본)/i;

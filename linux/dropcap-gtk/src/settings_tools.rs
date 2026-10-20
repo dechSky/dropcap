@@ -1,4 +1,5 @@
 // 설정 '구독' 탭에 끼워 넣는 조각(맥 UI/SourceTools.swift): 출처 건강 표시, OPML 가져오기·내보내기.
+use crate::ds::{font, space};
 use crate::app::{bg, ui};
 use crate::widgets::label;
 use adw::prelude::*;
@@ -19,7 +20,7 @@ fn css(w: &impl IsA<gtk::Widget>, rule: &str) {
 
 // 출처 줄 옆의 작은 표시: 조용함(n일째 새 글 없음) · 멈춤 · 글 없음 · 오류. 문제 없으면 숨김.
 pub fn health_badge() -> gtk::Label {
-    let l = label("", 10.5, 600, &[]);
+    let l = label("", font::CHIP, &[]);
     l.set_wrap(false);
     l.set_valign(gtk::Align::Center);
     l.set_visible(false);
@@ -39,7 +40,7 @@ pub fn update_health(badge: &gtk::Label, source_id: &str, enabled: bool) {
         Some(t) => {
             badge.set_text(t);
             badge.set_tooltip_text(Some(&help));
-            css(badge, &format!("label {{ color: {color}; border: 0.5px solid {color}; border-radius: 99px; padding: 0 5px; }}"));
+            css(badge, &format!("label {{ color: {color}; border: 0.5px solid {color}; border-radius: 99px; padding: 0 4px; }}"));
             badge.set_visible(true);
         }
         None => badge.set_visible(false),
@@ -62,26 +63,26 @@ pub fn opml_group() -> adw::PreferencesGroup {
     let imp = gtk::Button::builder().label("OPML 가져오기…").valign(gtk::Align::Center).build();
     let exp = gtk::Button::builder().label("OPML 내보내기…").valign(gtk::Align::Center).build();
     let bar = gtk::ProgressBar::builder().valign(gtk::Align::Center).width_request(120).visible(false).build();
-    let count = label("", 11.5, 400, &["dc-secondary", "numeric"]);
+    let count = label("", font::CAPTION, &["dc-secondary", "numeric"]);
     count.set_wrap(false);
     count.set_visible(false);
-    let b = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let b = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
     b.append(&imp);
     b.append(&exp);
     row.add_prefix(&b);
     row.add_suffix(&count);
     row.add_suffix(&bar);
     g.add(&row);
-    let summary = label("", 12.0, 400, &["dc-secondary"]);
-    summary.set_margin_top(6);
+    let summary = label("", font::CALLOUT, &["dc-secondary"]);
+    summary.set_margin_top(space::S);
     summary.set_visible(false);
     g.add(&summary);
     let failed = gtk::Expander::builder().visible(false).build();
-    let failed_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    let failed_box = gtk::Box::new(gtk::Orientation::Vertical, space::XS);
     failed.set_child(Some(&failed_box));
     g.add(&failed);
-    let note = label("다른 RSS 앱에서 내보낸 OPML 파일의 피드를 하나씩 확인해 구독합니다. 내보내기는 켜 둔 출처 전부를 분야별로 담습니다.", 12.0, 400, &["dc-secondary"]);
-    note.set_margin_top(6);
+    let note = label("다른 RSS 앱에서 내보낸 OPML 파일의 피드를 하나씩 확인해 구독합니다. 내보내기는 켜 둔 출처 전부를 분야별로 담습니다.", font::CALLOUT, &["dc-secondary"]);
+    note.set_margin_top(space::S);
     g.add(&note);
 
     let st = Rc::new(RefCell::new(Import { running: false, total: 0, done: 0, added: 0, skipped: 0, failed: vec![] }));
@@ -110,8 +111,8 @@ pub fn opml_group() -> adw::PreferencesGroup {
             crate::widgets::clear_box(&failed_box);
             for (t, u, r) in &s.failed {
                 let v = gtk::Box::new(gtk::Orientation::Vertical, 1);
-                v.append(&label(if t.is_empty() { u } else { t }, 11.5, 400, &[]));
-                v.append(&label(r, 10.5, 400, &["dc-secondary"]));
+                v.append(&label(if t.is_empty() { u } else { t }, font::CALLOUT, &[]));
+                v.append(&label(r, font::CAPTION, &["dc-secondary"]));
                 failed_box.append(&v);
             }
             failed.set_label(Some(&format!("추가하지 못한 피드 {}곳", s.failed.len())));

@@ -206,6 +206,14 @@ final class E2EClickSweep {
         return nil
     }
 
+    // '새로 고침'처럼 확인을 시작하는 단추는 결과(물방울·새 글)가 확인이 끝나야 나온다 — 견본 피드도 10초 넘게 걸려
+    // 0.6초 뒤 비교하면 '아무 일 없음'으로 적혔다(범위 순회에서 이 단추가 형 대표가 될 때만 드러남)
+    func settleCheck() async {
+        guard r.model.checking else { return }
+        _ = await r.until(30) { !r.model.checking }
+        await r.sleep(0.3)
+    }
+
     func fingerprint(_ w: NSWindow) -> Print {
         let enc = JSONEncoder(); enc.outputFormatting = .sortedKeys; enc.dateEncodingStrategy = .secondsSince1970
         var st = r.model.state; st.lastCheck = nil; st.seen = [:]
@@ -488,6 +496,7 @@ final class E2EClickSweep {
                 if !valid { await r.sleep(2); valid = await click(w, NSPoint(x: t.frame.midX, y: t.frame.midY)) }
             }
             await r.sleep(0.6)
+            await settleCheck()
             let wa = w.isVisible ? w : (window() ?? w)
             var after = fingerprint(wa)
             after.image = await settledImage(wa)
@@ -509,9 +518,23 @@ final class E2EClickSweep {
                     menuTracked = nil
                     directClick(w2, NSPoint(x: t2.frame.midX, y: t2.frame.midY))
                     await r.sleep(0.6)
+                    await settleCheck()
                     let w3 = w2.isVisible ? w2 : (window() ?? w2)
                     var pa = fingerprint(w3); pa.image = await settledImage(w3)
-                    let e2 = effects(pb, pa, animating: b2 == nil || pa.image == nil)
+                    var e2 = effects(pb, pa, animating: b2 == nil || pa.image == nil)
+                    // 지면을 새로 그린 직후엔 첫 직접 클릭이 가끔 빈다(스크랩북 폴더 칩: 범위 순회는 통과·전체 순회에서만 한 번씩) —
+                    // 한 번 더 눌러 보고 그래도 아무 일 없을 때만 덮개로 본다(진짜 덮개는 두 번째도 닿지 않음)
+                    if e2.isEmpty && !wasSelected, let w4 = window() {
+                        await r.sleep(0.8)
+                        let b4 = await settledImage(w4)
+                        var pb4 = fingerprint(w4); pb4.image = b4
+                        directClick(w4, NSPoint(x: t2.frame.midX, y: t2.frame.midY))
+                        await r.sleep(0.6)
+                        await settleCheck()
+                        let w5 = w4.isVisible ? w4 : (window() ?? w4)
+                        var pa4 = fingerprint(w5); pa4.image = await settledImage(w5)
+                        e2 = effects(pb4, pa4, animating: b4 == nil || pa4.image == nil).map { $0 + "(두 번째 직접 클릭)" }
+                    }
                     if e2.isEmpty && !wasSelected { hit = (false, "직접 클릭이 닿지 않음(덮개가 가로챔?) — 누름은 됨"); clickNote = " · 직접 클릭: 아무 일 없음" }
                     else { clickNote = " · 직접 클릭: " + (e2.isEmpty ? "그대로(이미 고른 것)" : e2.joined(separator: "·")) }
                 }

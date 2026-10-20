@@ -1168,3 +1168,38 @@ fn importance_order() {
     cov.insert(b.key(), 3);
     assert_eq!(app_model::by_importance(vec![a, b], &cov, now)[0].id, "b");
 }
+
+// 이스케이프 안 된 & 가 있는 피드(Rest of World 사진 주소 '?width=380&dpr=2&crop=16:9')도 엔티티가 아닌 & 만 고쳐 한 번 더 읽는다(맥 FeedAmpRepairTests)
+const BROKEN_AMP: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/"><channel><title>Rest of World - </title>
+<item><title>A &amp; B</title><link>https://example.com/a?x=1&amp;y=2</link><guid>a</guid>
+<media:content medium="image" url="https://example.com/a.jpg?width=380&dpr=2&crop=16:9" width="760" />
+<description><![CDATA[R&D &amp; more]]></description></item>
+<item><title>Tom & Jerry &#38; &#x26; co</title><link>https://example.com/b</link><guid>b</guid><!-- a & b --></item>
+</channel></rss>"#;
+
+#[test]
+fn broken_ampersand_feed_parses_all_items() {
+    let e = feed_parser::parse_feed(BROKEN_AMP.as_bytes()).unwrap();
+    assert_eq!(e.len(), 2);
+    assert_eq!(e[0].title, "A & B");
+    assert_eq!(e[0].link, "https://example.com/a?x=1&y=2");
+    assert_eq!(e[0].image.as_deref(), Some("https://example.com/a.jpg?width=380&dpr=2&crop=16:9"));
+    assert_eq!(e[1].title, "Tom & Jerry & & co");
+}
+
+#[test]
+fn repair_leaves_entities_cdata_and_comments_alone() {
+    let s = feed_parser::repair_ampersands(BROKEN_AMP).unwrap();
+    assert!(s.contains("?width=380&amp;dpr=2&amp;crop=16:9"));
+    assert!(s.contains("<![CDATA[R&D &amp; more]]>"));
+    assert!(s.contains("<!-- a & b -->"));
+    assert!(s.contains("Tom &amp; Jerry &#38; &#x26; co"));
+    assert!(s.contains("x=1&amp;y=2") && !s.contains("&amp;amp;"));
+}
+
+#[test]
+fn well_formed_feed_needs_no_repair() {
+    let ok = "<rss><channel><item><title>A &amp; B &lt;3 &#169;</title><description><![CDATA[x & y]]></description></item></channel></rss>";
+    assert!(feed_parser::repair_ampersands(ok).is_none());
+}

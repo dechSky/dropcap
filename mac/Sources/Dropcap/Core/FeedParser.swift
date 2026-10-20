@@ -132,12 +132,70 @@ enum FeedParser {
     }
 
     static func tree(_ data: Data) throws -> XNode {
+        let (root, ok) = treeOnce(data)
+        // 해석이 깨지면 엔티티가 아닌 & 만 &amp; 로 고쳐 한 번 더(Rest of World: 사진 주소의 '?width=380&dpr=2'). 다시도 깨지면 처음 읽은 데까지
+        if !ok, let fixed = repairAmpersands(data) {
+            let (again, ok2) = treeOnce(fixed)
+            if ok2 { return again }
+        }
+        guard ok || !root.children.isEmpty else { throw FeedError.badFormat }
+        return root
+    }
+
+    private static func treeOnce(_ data: Data) -> (XNode, Bool) {
         let b = TreeBuilder()
         let p = XMLParser(data: data)
         p.delegate = b
         p.shouldProcessNamespaces = false
-        guard p.parse() || !b.root.children.isEmpty else { throw FeedError.badFormat }
-        return b.root
+        let ok = p.parse()
+        return (b.root, ok)
+    }
+
+    // 엔티티(이름; · #숫자; · #x16진수;)가 아닌 & 를 &amp; 로. CDATA·주석 안은 그대로.
+    // 고칠 것이 없거나 UTF-16 문서거나 고친 결과가 받는 상한(32MB)을 넘으면 nil
+    static let repairMaxBytes = 32 << 20
+    static func repairAmpersands(_ data: Data) -> Data? {
+        let s = [UInt8](data), n = s.count
+        if n >= 2, s[0] == 0 || s[1] == 0 || (s[0] == 0xFE && s[1] == 0xFF) || (s[0] == 0xFF && s[1] == 0xFE) { return nil }
+        func at(_ i: Int, _ lit: [UInt8]) -> Bool { i + lit.count <= n && s[i..<i + lit.count].elementsEqual(lit) }
+        func isAlpha(_ c: UInt8) -> Bool { (c | 0x20) >= 0x61 && (c | 0x20) <= 0x7A }
+        func isDigit(_ c: UInt8) -> Bool { c >= 0x30 && c <= 0x39 }
+        func isRef(_ i: Int) -> Bool {
+            var j = i + 1
+            if j < n, s[j] == 0x23 { // #
+                j += 1
+                let hex = j < n && (s[j] | 0x20) == 0x78
+                if hex { j += 1 }
+                let st = j
+                while j < n, isDigit(s[j]) || (hex && (s[j] | 0x20) >= 0x61 && (s[j] | 0x20) <= 0x66) { j += 1 }
+                if j == st { return false }
+            } else {
+                guard j < n, isAlpha(s[j]) || s[j] == 0x5F || s[j] == 0x3A else { return false }
+                while j < n, isAlpha(s[j]) || isDigit(s[j]) || s[j] == 0x5F || s[j] == 0x3A || s[j] == 0x2E || s[j] == 0x2D { j += 1 }
+            }
+            return j < n && s[j] == 0x3B && j - i <= 32
+        }
+        let skips: [([UInt8], [UInt8])] = [(Array("<![CDATA[".utf8), Array("]]>".utf8)), (Array("<!--".utf8), Array("-->".utf8))]
+        let amp = Array("&amp;".utf8)
+        var out = [UInt8](), i = 0, changed = false
+        out.reserveCapacity(n + 1024)
+        scan: while i < n {
+            if s[i] == 0x3C {
+                for (open, close) in skips where at(i, open) {
+                    var j = i + open.count
+                    while j < n, !at(j, close) { j += 1 }
+                    let stop = min(n, j + close.count)
+                    out += s[i..<stop]; i = stop
+                    continue scan
+                }
+            }
+            if s[i] == 0x26, !isRef(i) {
+                out += amp; changed = true
+                if out.count > repairMaxBytes { return nil }
+            } else { out.append(s[i]) }
+            i += 1
+        }
+        return changed && out.count <= repairMaxBytes ? Data(out) : nil
     }
 
     // guid·link 가 모두 빈 글의 id: 제목+날짜로 만든 고정 값(A-31: 빈 id 로 key 가 `출처|` 로 겹쳐 하나만 남던 문제). 실행마다 같다

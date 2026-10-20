@@ -81,7 +81,7 @@ pub fn page() -> adw::PreferencesPage {
     let add = gtk::Button::builder().label("구독").valign(gtk::Align::Center).css_classes(["suggested-action"]).build();
     entry.add_suffix(&add);
     g.add(&entry);
-    let err = label("", 12.0, 400, &["error"]);
+    let err = label("", (12.0, 400), &["error"]);
     err.set_visible(false);
     err.set_margin_top(6);
     g.add(&err);
@@ -156,7 +156,7 @@ pub fn page() -> adw::PreferencesPage {
     r.add_suffix(&status_box);
     g.add(&r);
     let summary = adw::ActionRow::builder().activatable(true).use_markup(false).tooltip_text("켠 것만 보기 / 다시 누르면 전체").build();
-    let count = tag("", 12.0, 400, &["dc-secondary", "numeric"]);
+    let count = tag("", (12.0, 400), &["dc-secondary", "numeric"]);
     summary.add_suffix(&count);
     g.add(&summary);
     let empty = caption("찾는 출처가 없습니다. 이름·주소를 다시 확인하거나 위 '채널 추가'에 주소를 넣어 보세요.");
@@ -340,7 +340,7 @@ fn rebuild(v: &Rc<View>, shape: &Shape, mine: &[Source], groups: &[sd::Group], c
                     continue;
                 }
                 let (h, line) = row_frame(&spacer(col::DISCLOSURE + col::INDENT));
-                line.append(&tag(group, 12.0, 400, &["dc-secondary"]));
+                line.append(&tag(group, (12.0, 400), &["dc-secondary"]));
                 rows.push((v.catalog_group.clone(), h.upcast()));
                 for s in list {
                     rows.push((v.catalog_group.clone(), catalog_row(s, v).upcast()));
@@ -429,7 +429,7 @@ fn head_row(v: &Rc<View>, id: &str, title: &str, count: &str, mark: gtk::Widget,
     mark.set_valign(gtk::Align::Center);
     line.append(&mark);
     line.append(&name_label(title, title, col::NAME, true));
-    let n = tag(count, 12.0, 400, &["dc-secondary", "numeric"]);
+    let n = tag(count, (12.0, 400), &["dc-secondary", "numeric"]);
     n.set_hexpand(true);
     line.append(&n);
     if let Some(t) = trailing {
@@ -512,7 +512,7 @@ fn source_row(src: &Source, removable: bool, media: Option<&str>, child: bool, v
     line.append(&body);
     top.append(&name_label(&name, &src.name, col::NAME - indent, false));
     if let Some(h) = src.home.clone().or_else(|| removable.then(|| src.url.clone())) {
-        let sub = tag(&h, 12.0, 400, &["dc-secondary"]);
+        let sub = tag(&h, (12.0, 400), &["dc-secondary"]);
         sub.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
         body.append(&sub);
     }
@@ -521,7 +521,7 @@ fn source_row(src: &Source, removable: bool, media: Option<&str>, child: bool, v
         c.set_valign(gtk::Align::Center);
         top.append(&c);
     }
-    top.append(&tag(sd::region_label(src), 11.5, 400, &["dc-secondary"]));
+    top.append(&tag(sd::region_label(src), (11.5, 400), &["dc-secondary"]));
     if let Some(note) = sd::paywall_note(src) {
         let k = if src.paywall.as_deref() == Some("metered") { PaywallKind::Metered } else { PaywallKind::Hard };
         let lock = icon(k.icon(), 13);
@@ -537,7 +537,7 @@ fn source_row(src: &Source, removable: bool, media: Option<&str>, child: bool, v
         top.append(&b);
     }
     if src.ai_only {
-        top.append(&tag("AI 글만", 11.5, 400, &["dc-secondary"]));
+        top.append(&tag("AI 글만", (11.5, 400), &["dc-secondary"]));
     }
     let warn = icon("dialog-warning-symbolic", 14);
     warn.add_css_class("warning");
@@ -620,13 +620,13 @@ fn catalog_row(src: &Source, v: &Rc<View>) -> adw::ActionRow {
         top.append(&b);
     }
     body.append(&top);
-    body.append(&tag(if src.notify_default == Some(false) { "글이 많아 알림 없이 매거진에만 실림" } else { "새 글이 오면 알림" }, 12.0, 400, &["dc-secondary"]));
+    body.append(&tag(if src.notify_default == Some(false) { "글이 많아 알림 없이 매거진에만 실림" } else { "새 글이 오면 알림" }, (12.0, 400), &["dc-secondary"]));
     line.append(&body);
     let done = gtk::Box::new(gtk::Orientation::Horizontal, 4);
     let ok = icon("object-select-symbolic", 13);
     ok.add_css_class("success");
     done.append(&ok);
-    let l = tag("구독 중", 12.0, 500, &["success"]);
+    let l = tag("구독 중", (12.0, 500), &["success"]);
     done.append(&l);
     done.set_valign(gtk::Align::Center);
     let btn = gtk::Button::builder().label("구독").valign(gtk::Align::Center).build();

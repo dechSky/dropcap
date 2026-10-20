@@ -110,6 +110,80 @@ public static class FeedParser
 
     public static XNode Tree(byte[] data)
     {
+        var (root, ok) = TreeOnce(data);
+        // 해석이 깨지면 엔티티가 아닌 & 만 &amp; 로 고쳐 한 번 더(Rest of World: 사진 주소의 '?width=380&dpr=2'). 다시도 깨지면 처음 읽은 데까지
+        if (!ok && RepairAmpersands(data) is { } repaired)
+        {
+            var (again, ok2) = TreeOnce(repaired);
+            if (ok2) return again;
+        }
+        // 중간에 깨진 문서라도 읽은 데까지는 쓴다(맥: parse() 실패해도 나무가 있으면 사용)
+        if (!ok && root.Children.Count == 0) throw FeedException.BadFormat();
+        return root;
+    }
+
+    // 고친 결과가 받는 상한(SafeHttp.MaxBody 와 같은 32MB)을 넘으면 고치지 않는다
+    public const int RepairMaxBytes = 32 << 20;
+
+    // 엔티티(이름; · #숫자; · #x16진수;)가 아닌 & 를 &amp; 로. CDATA·주석 안은 그대로.
+    // 고칠 것이 없거나 UTF-16 문서거나 상한을 넘으면 null
+    public static byte[]? RepairAmpersands(byte[] s)
+    {
+        var n = s.Length;
+        if (n >= 2 && (s[0] == 0 || s[1] == 0 || (s[0] == 0xFE && s[1] == 0xFF) || (s[0] == 0xFF && s[1] == 0xFE))) return null;
+        bool At(int i, byte[] lit) => i + lit.Length <= n && s.AsSpan(i, lit.Length).SequenceEqual(lit);
+        static bool Alpha(byte c) => (c | 0x20) is >= (byte)'a' and <= (byte)'z';
+        static bool Digit(byte c) => c is >= (byte)'0' and <= (byte)'9';
+        bool IsRef(int i)
+        {
+            var j = i + 1;
+            if (j < n && s[j] == (byte)'#')
+            {
+                j++;
+                var hex = j < n && (s[j] | 0x20) == 'x';
+                if (hex) j++;
+                var st = j;
+                while (j < n && (Digit(s[j]) || (hex && (s[j] | 0x20) is >= 'a' and <= 'f'))) j++;
+                if (j == st) return false;
+            }
+            else
+            {
+                if (!(j < n && (Alpha(s[j]) || s[j] is (byte)'_' or (byte)':'))) return false;
+                while (j < n && (Alpha(s[j]) || Digit(s[j]) || s[j] is (byte)'_' or (byte)':' or (byte)'.' or (byte)'-')) j++;
+            }
+            return j < n && s[j] == (byte)';' && j - i <= 32;
+        }
+        (byte[] Open, byte[] Close)[] skips = [("<![CDATA["u8.ToArray(), "]]>"u8.ToArray()), ("<!--"u8.ToArray(), "-->"u8.ToArray())];
+        var amp = "&amp;"u8;
+        using var buf = new MemoryStream(n + 1024);
+        var changed = false;
+        var k = 0;
+        while (k < n)
+        {
+            if (s[k] == (byte)'<' && Array.Find(skips, p => At(k, p.Open)) is { Open: not null } skip)
+            {
+                var j = k + skip.Open.Length;
+                while (j < n && !At(j, skip.Close)) j++;
+                var stop = Math.Min(n, j + skip.Close.Length);
+                buf.Write(s, k, stop - k);
+                k = stop;
+                continue;
+            }
+            if (s[k] == (byte)'&' && !IsRef(k))
+            {
+                buf.Write(amp);
+                changed = true;
+                if (buf.Length > RepairMaxBytes) return null;
+            }
+            else buf.WriteByte(s[k]);
+            k++;
+        }
+        return changed && buf.Length <= RepairMaxBytes ? buf.ToArray() : null;
+    }
+
+    // 한 번 읽기: (나무, 끝까지 읽었는지)
+    private static (XNode Root, bool Ok) TreeOnce(byte[] data)
+    {
         var root = new XNode("#root", new());
         var stack = new Stack<XNode>();
         stack.Push(root);
@@ -157,10 +231,9 @@ public static class FeedParser
         }
         catch (XmlException)
         {
-            // 중간에 깨진 문서라도 읽은 데까지는 쓴다(맥: parse() 실패해도 나무가 있으면 사용)
-            if (root.Children.Count == 0) throw FeedException.BadFormat();
+            return (root, false);
         }
-        return root;
+        return (root, true);
     }
 
     public static List<Entry> ParseFeed(byte[] data)

@@ -1,5 +1,6 @@
 // 설정 '분야' 탭(G-13, 맥 SettingsView.sectionsTab): 고른 분야마다 알림 모드·묶음 시각·하루 상한·켜진 출처 수,
 // 전체 상한·문턱, 숨긴 출처 되돌리기, 관심 분야 다시 고르기.
+use crate::ds::{font, space};
 use crate::app::ui;
 use crate::widgets::{icon, label};
 use adw::prelude::*;
@@ -17,8 +18,8 @@ fn css(w: &impl IsA<gtk::Widget>, rule: &str) {
 }
 
 fn caption(text: &str) -> gtk::Label {
-    let l = label(text, 12.0, 400, &["dc-secondary"]);
-    l.set_margin_top(6);
+    let l = label(text, font::CALLOUT, &["dc-secondary"]);
+    l.set_margin_top(space::S);
     l
 }
 

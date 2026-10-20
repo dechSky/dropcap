@@ -1,4 +1,5 @@
 // 매거진 카드와 작은 부품(맥 MagazineView.StoryCard · SectionViews 의 SectionChipBar·ReduceMenu·RegionSplit).
+use crate::ds::{font, space};
 use crate::app::{open_external, open_from_magazine, ui};
 use crate::magazine::tint;
 use crate::reader::Origin;
@@ -143,11 +144,11 @@ pub fn region_lines(items: &[NewsItem]) -> Option<gtk::Box> {
     if intl.is_empty() || kr.is_empty() {
         return None;
     }
-    let b = gtk::Box::new(gtk::Orientation::Vertical, 3);
+    let b = gtk::Box::new(gtk::Orientation::Vertical, space::XS);
     for (t, list) in [("해외에서는", &intl), ("국내에서는", &kr)] {
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 5);
-        row.append(&label(t, 10.5, 700, &["dc-secondary"]));
-        let names = label(&unique_names(list, 3).join(" · "), 10.5, 400, &["dc-tertiary"]);
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, space::XS);
+        row.append(&label(t, font::CHIP, &["dc-secondary"]));
+        let names = label(&unique_names(list, 3).join(" · "), font::CAPTION, &["dc-tertiary"]);
         names.set_wrap(false);
         names.set_ellipsize(gtk::pango::EllipsizeMode::End);
         row.append(&names);
@@ -162,31 +163,31 @@ pub fn region_columns(items: &[NewsItem]) -> Option<gtk::Box> {
     if intl.is_empty() || kr.is_empty() {
         return None;
     }
-    let b = gtk::Box::new(gtk::Orientation::Horizontal, 14);
+    let b = gtk::Box::new(gtk::Orientation::Horizontal, space::L);
     b.set_homogeneous(true);
-    b.set_margin_bottom(26);
+    b.set_margin_bottom(space::XL);
     for (t, icon, list) in [("해외에서는", "web-browser-symbolic", &intl), ("국내에서는", "go-home-symbolic", &kr)] {
-        let col = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        let col = gtk::Box::new(gtk::Orientation::Vertical, space::S);
         col.add_css_class("dc-soft");
-        let inner = gtk::Box::new(gtk::Orientation::Vertical, 8);
-        inner.set_margin_top(14);
-        inner.set_margin_bottom(14);
-        inner.set_margin_start(14);
-        inner.set_margin_end(14);
-        let head = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let inner = gtk::Box::new(gtk::Orientation::Vertical, space::S);
+        inner.set_margin_top(space::L);
+        inner.set_margin_bottom(space::L);
+        inner.set_margin_start(space::L);
+        inner.set_margin_end(space::L);
+        let head = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
         head.append(&widgets::icon(icon, 14));
-        head.append(&label(&format!("{t} {}곳", list.len()), 12.5, 700, &["dc-secondary"]));
+        head.append(&label(&format!("{t} {}곳", list.len()), font::BODY_STRONG, &["dc-secondary"]));
         inner.append(&head);
         for it in list.iter() {
             let bt = gtk::Button::new();
             bt.add_css_class("flat");
-            let v = gtk::Box::new(gtk::Orientation::Vertical, 2);
-            let s = label(&it.source_name, 11.0, 600, &[]);
+            let v = gtk::Box::new(gtk::Orientation::Vertical, space::XXS);
+            let s = label(&it.source_name, font::CHIP, &[]);
             tint(&s, &widgets::source_color(&it.source_id));
             v.append(&s);
-            v.append(lines(&label(it.display_title(), 13.0, 400, &[]), 3));
+            v.append(lines(&label(it.display_title(), font::BODY, &[]), 3));
             if it.title_ko.is_some() && it.title_ko.as_deref() != Some(it.title.as_str()) {
-                v.append(lines(&label(&it.title, 11.0, 400, &["dc-tertiary"]), 1));
+                v.append(lines(&label(&it.title, font::CAPTION, &["dc-tertiary"]), 1));
             }
             bt.set_child(Some(&v));
             let item = it.clone();
@@ -208,13 +209,13 @@ pub fn chip_button(text: &str, icon: &str, color: &str, on: bool, count: Option<
     let b = gtk::Button::new();
     b.add_css_class("flat");
     b.add_css_class("dc-secchip");
-    let h = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    let h = gtk::Box::new(gtk::Orientation::Horizontal, space::XS);
     h.append(&widgets::icon(icon, if small { 10 } else { 12 }));
-    let t = label(text, if small { 11.0 } else { 12.5 }, if on { 600 } else { 500 }, &[]);
+    let t = label(text, (if small { 11.0 } else { 12.5 }, if on { 600 } else { 500 }), &[]);
     t.set_wrap(false);
     h.append(&t);
     if let Some(n) = count.filter(|n| *n > 0) {
-        let c = label(&n.to_string(), 10.5, 600, &["dc-secondary"]);
+        let c = label(&n.to_string(), font::CHIP, &["dc-secondary"]);
         c.set_wrap(false);
         h.append(&c);
     }
@@ -242,9 +243,9 @@ impl ChipBar {
         sub: Option<NewsCategory>,
         on_change: Rc<dyn Fn(Option<String>, Option<NewsCategory>)>,
     ) -> ChipBar {
-        let root = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        let root = gtk::Box::new(gtk::Orientation::Vertical, space::S);
         let scroll = gtk::ScrolledWindow::builder().vscrollbar_policy(gtk::PolicyType::Never).hscrollbar_policy(gtk::PolicyType::Automatic).build();
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, space::XS);
         let accent = if crate::theme::is_dark() { "#0A84FF" } else { "#007AFF" };
         let all = chip_button("전체", "view-grid-symbolic", accent, focus.is_none(), None, false);
         {
@@ -264,7 +265,7 @@ impl ChipBar {
         scroll.set_child(Some(&row));
         root.append(&scroll);
         if focus.as_deref() == Some(sections::AI) {
-            let subrow = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+            let subrow = gtk::Box::new(gtk::Orientation::Horizontal, space::XS);
             for c in NewsCategory::all().into_iter().filter(|c| !c.is_other()) {
                 let on = sub == Some(c);
                 let b = chip_button(c.label(), c.icon(), c.color(crate::theme::is_dark()), on, None, true);
@@ -315,11 +316,11 @@ impl StoryCard {
                 ov.add_overlay(&p);
             }
             if item.item_kind() != ItemKind::Article {
-                let k = label(item.item_kind().label(), 10.5, 600, &["dc-kind"]);
+                let k = label(item.item_kind().label(), font::CHIP, &["dc-kind"]);
                 k.set_halign(gtk::Align::Start);
                 k.set_valign(gtk::Align::Start);
-                k.set_margin_top(8);
-                k.set_margin_start(8);
+                k.set_margin_top(space::S);
+                k.set_margin_start(space::S);
                 ov.add_overlay(&k);
             }
             // 마우스를 따라 사진이 살짝 움직이는 시차 효과
@@ -342,33 +343,33 @@ impl StoryCard {
             button.add_controller(motion);
             v.append(&ov);
         }
-        let body = gtk::Box::new(gtk::Orientation::Vertical, 7);
-        body.set_margin_top(14);
-        body.set_margin_bottom(14);
-        body.set_margin_start(14);
-        body.set_margin_end(14);
-        let meta = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let body = gtk::Box::new(gtk::Orientation::Vertical, space::S);
+        body.set_margin_top(space::L);
+        body.set_margin_bottom(space::L);
+        body.set_margin_start(space::L);
+        body.set_margin_end(space::L);
+        let meta = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
         if item.is_important() {
             let s = widgets::icon("starred-symbolic", 10);
             tint(&s, "#FF9500");
             meta.append(&s);
         }
-        meta.append(&label(&item.source_name, 11.5, 600, &[]));
+        meta.append(&label(&item.source_name, font::CHIP, &[]));
         if let Some(p) = widgets::paywall_mark(item) {
             meta.append(&p);
         }
         if item.related_count() > 0 {
-            meta.append(&label(&format!("외 {}곳", item.related_count()), 11.0, 400, &["dc-secondary"]));
+            meta.append(&label(&format!("외 {}곳", item.related_count()), font::CAPTION, &["dc-secondary"]));
         }
         if !has_photo(item) && item.item_kind() != ItemKind::Article {
-            meta.append(&label(item.item_kind().label(), 10.5, 600, &["dc-kind"]));
+            meta.append(&label(item.item_kind().label(), font::CHIP, &["dc-kind"]));
         }
         let sp = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         sp.set_hexpand(true);
         meta.append(&sp);
-        meta.append(&label(&widgets::time_text(item), 11.0, 400, &["dc-tertiary"]));
+        meta.append(&label(&widgets::time_text(item), font::CAPTION, &["dc-tertiary"]));
         body.append(&meta);
-        let title = label(item.display_title(), 15.0, 600, &["dc-title"]);
+        let title = label(item.display_title(), font::HEADLINE, &["dc-title"]);
         lines(&title, 3);
         body.append(&title);
         if !story_items.is_empty() {
@@ -377,9 +378,9 @@ impl StoryCard {
             }
         }
         if core.is_read(item) {
-            let r = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+            let r = gtk::Box::new(gtk::Orientation::Horizontal, space::XS);
             r.append(&widgets::icon("object-select-symbolic", 10));
-            r.append(&label("읽음", 10.5, 400, &[]));
+            r.append(&label("읽음", font::CAPTION, &[]));
             r.add_css_class("dc-tertiary");
             body.append(&r);
         }

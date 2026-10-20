@@ -1,4 +1,5 @@
 // 여러 창이 함께 쓰는 작은 부품: 출처 글자 원형, 안전한 사진 칸, 칩, 글자.
+use crate::ds::{font, space};
 use crate::app::{bg, ui};
 use crate::theme;
 use dropcap_core::byte_cache::{self, ByteLru};
@@ -39,7 +40,9 @@ pub fn pangocairo_show(cr: &gtk::cairo::Context, layout: &pango::Layout) {
     pangocairo::functions::show_layout(cr, layout);
 }
 
-pub fn label(text: &str, size: f64, weight: u16, classes: &[&str]) -> gtk::Label {
+// f: (크기, 굵기) — 보통 ds::font 토큰
+pub fn label(text: &str, f: (f64, u16), classes: &[&str]) -> gtk::Label {
+    let (size, weight) = f;
     let l = gtk::Label::new(Some(text));
     l.set_xalign(0.0);
     l.set_wrap(true);
@@ -240,10 +243,10 @@ pub fn paywall_mark(item: &NewsItem) -> Option<gtk::Widget> {
         i.update_property(&[gtk::accessible::Property::Label(k.label())]);
         return Some(i.upcast());
     };
-    let b = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+    let b = gtk::Box::new(gtk::Orientation::Horizontal, space::XXS);
     b.set_valign(gtk::Align::Center);
     b.append(&i);
-    let l = label(t, 9.5, 600, &[]);
+    let l = label(t, font::MICRO, &[]);
     l.set_wrap(false);
     b.append(&l);
     crate::magazine::tint(&b, "#FF9500");

@@ -1,5 +1,6 @@
 // 읽기 창 화면(맥 Reader/ReaderView.swift): 표지 사진·머리·3줄 요약·본문 블록·문단 스크랩·실패 화면·자리표시.
 // 진행 상황은 핵심 ArticleService 가 tokio 스레드에서 알려 주고, 채널로 메인 루프에 넘겨 그린다.
+use crate::ds::{font, space};
 use crate::app::{bg, copy_text, open_external, ui};
 use crate::reader::Origin;
 use crate::reader_find;
@@ -119,7 +120,8 @@ pub fn date_text(d: chrono::DateTime<chrono::Utc>) -> String {
 }
 
 // 글자 하나에 크기·굵기·줄 간격·기울임·고정폭
-fn text(t: &str, size: f64, weight: u16, line: f64, italic: bool, mono: bool) -> gtk::Label {
+fn text(t: &str, f: (f64, u16), line: f64, italic: bool, mono: bool) -> gtk::Label {
+    let (size, weight) = f;
     let l = gtk::Label::new(Some(t));
     l.set_xalign(0.0);
     l.set_wrap(true);
@@ -219,9 +221,9 @@ impl ReaderWindow {
         header.pack_end(&speak_btn);
 
         let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        column.set_margin_top(20);
+        column.set_margin_top(space::XL);
         column.set_margin_bottom(80);
-        column.set_margin_end(36);
+        column.set_margin_end(space::PAGE);
         column.set_margin_start(0);
         let clamp = adw::Clamp::builder().maximum_size(660 + 38 + 36).tightening_threshold(500).child(&column).build();
         let scroller = gtk::ScrolledWindow::builder().hscrollbar_policy(gtk::PolicyType::Never).child(&clamp).vexpand(true).build();
@@ -236,7 +238,7 @@ impl ReaderWindow {
         find_count.set_width_chars(6);
         let find_prev = gtk::Button::builder().icon_name("go-up-symbolic").tooltip_text("이전 (Shift+Ctrl+G)").css_classes(["flat"]).build();
         let find_next = gtk::Button::builder().icon_name("go-down-symbolic").tooltip_text("다음 (Ctrl+G)").css_classes(["flat"]).build();
-        let find_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let find_row = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
         find_row.append(&find_entry);
         find_row.append(&find_count);
         find_row.append(&find_prev);
@@ -727,11 +729,11 @@ impl ReaderWindow {
         // 맛보기면 본문 바로 위에, 무료 보도가 없어도 늘(무료 보도 상자와 따로)
         if paywalled && matches!(phase, Phase::Translating | Phase::Done) {
             let b = self.teaser_banner();
-            b.set_margin_top(18);
+            b.set_margin_top(space::L);
             self.column.append(&b);
         }
         if let Some(b) = self.free_box() {
-            b.set_margin_top(18);
+            b.set_margin_top(space::L);
             self.column.append(&b);
         }
         let phase = self.model.borrow().phase;
@@ -739,45 +741,45 @@ impl ReaderWindow {
             Phase::Loading => {
                 // 본문을 받는 동안에도 빈 화면 대신 피드가 준 요약을 먼저 보여 준다
                 if let Some(lede) = feed_summary(&self.item()) {
-                    let l = text(&lede, 16.0, 400, 1.45, false, false);
+                    let l = text(&lede, (16.0, 400), 1.45, false, false);
                     l.add_css_class("dc-secondary");
-                    l.set_margin_top(24);
+                    l.set_margin_top(space::XL);
                     l.set_margin_start(38);
                     self.column.append(&l);
                 }
                 let s = skeleton("기사를 불러오는 중");
-                s.set_margin_top(28);
+                s.set_margin_top(space::XXL);
                 s.set_margin_start(38);
                 self.column.append(&s);
             }
             Phase::Translating | Phase::Done => {
                 if let Some(k) = self.key_points_box() {
-                    k.set_margin_top(22);
+                    k.set_margin_top(space::XL);
                     self.column.append(&k);
                 }
                 if phase == Phase::Translating {
-                    let b = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+                    let b = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
                     b.append(&widgets::icon("preferences-desktop-locale-symbolic", 14));
-                    b.append(&text("한국어로 바꾸는 중 — 위에서부터 차례로 바뀝니다", 12.0, 400, 0.0, false, false));
+                    b.append(&text("한국어로 바꾸는 중 — 위에서부터 차례로 바뀝니다", font::CALLOUT, 0.0, false, false));
                     b.add_css_class("dc-secondary");
-                    b.set_margin_top(18);
+                    b.set_margin_top(space::L);
                     b.set_margin_start(38);
                     pulse(&b);
                     self.column.append(&b);
                 }
                 let body = self.article_body();
-                body.set_margin_top(24);
+                body.set_margin_top(space::XL);
                 self.column.append(&body);
                 widgets::fade_in(&body, motion::STANDARD);
                 if paywalled || partial {
                     let n = self.cut_end_note(paywalled);
-                    n.set_margin_top(6);
+                    n.set_margin_top(space::S);
                     self.column.append(&n);
                 }
             }
             Phase::Failed => {
                 let f = self.failed();
-                f.set_margin_top(24);
+                f.set_margin_top(space::XL);
                 self.column.append(&f);
             }
         }
@@ -798,7 +800,7 @@ impl ReaderWindow {
     fn cover(&self, url: &str) -> gtk::Widget {
         let frame = gtk::Overlay::new();
         frame.set_margin_start(38);
-        frame.set_margin_bottom(22);
+        frame.set_margin_bottom(space::XL);
         frame.set_overflow(gtk::Overflow::Hidden);
         frame.set_height_request(340);
         style(&frame, "border-radius: 16px;");
@@ -841,48 +843,48 @@ impl ReaderWindow {
 
     fn header(&self) -> gtk::Widget {
         let m = self.model.borrow();
-        let v = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        let v = gtk::Box::new(gtk::Orientation::Vertical, space::M);
         v.set_margin_start(38);
-        let top = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let top = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
         top.append(&monogram(&self.item(), 22));
-        top.append(&text(&self.item().source_name, 13.0, 600, 0.0, false, false));
+        top.append(&text(&self.item().source_name, font::BODY_STRONG, 0.0, false, false));
         let tier = widgets::chip(&resources::tier_label(&self.item().tier), &self.accent());
         style(&tier, "border-radius: 5px; font-size: 11px;");
         top.append(&tier);
         if let Some(d) = self.item().date {
-            let l = text(&date_text(d), 12.0, 400, 0.0, false, false);
+            let l = text(&date_text(d), font::CALLOUT, 0.0, false, false);
             l.add_css_class("dc-secondary");
             top.append(&l);
         }
         if let Some(mins) = self.reading_minutes(&m) {
-            let b = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+            let b = gtk::Box::new(gtk::Orientation::Horizontal, space::XS);
             b.append(&widgets::icon("alarm-symbolic", 12));
-            b.append(&text(&format!("약 {mins}분"), 12.0, 400, 0.0, false, false));
+            b.append(&text(&format!("약 {mins}분"), font::CALLOUT, 0.0, false, false));
             b.add_css_class("dc-secondary");
             b.set_tooltip_text(Some("읽는 시간(한국어 분당 약 500자 기준)"));
             top.append(&b);
         }
         v.append(&top);
-        let title = text(if m.show_original { &m.original_title } else { &m.title }, 30.0, 700, 1.1, false, false);
+        let title = text(if m.show_original { &m.original_title } else { &m.title }, font::TITLE, 1.1, false, false);
         style(&title, "letter-spacing: -0.4px;");
         *self.title_label.borrow_mut() = Some(title.clone());
         v.append(&title);
         if !m.show_original && m.original_title != m.title {
-            let o = text(&m.original_title, 14.0, 400, 0.0, false, false);
+            let o = text(&m.original_title, (14.0, 400), 0.0, false, false);
             o.add_css_class("dc-secondary");
             v.append(&o);
         }
         // 바이라인: 본문에서 뺀 기자 줄(제목 아래)
         if let Some(by) = body_cleanup::analyze(&m.blocks).1 {
-            let b = text(&by, 12.5, 500, 0.0, false, false);
+            let b = text(&by, font::CALLOUT, 0.0, false, false);
             b.add_css_class("dc-secondary");
             v.append(&b);
         }
         // 쓰인 번역 방식(T-07)
         if m.translated && !m.engine.is_empty() {
-            let b = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+            let b = gtk::Box::new(gtk::Orientation::Horizontal, space::XS);
             b.append(&widgets::icon("preferences-desktop-locale-symbolic", 11));
-            b.append(&text(&m.engine, 11.0, 400, 0.0, false, false));
+            b.append(&text(&m.engine, font::CAPTION, 0.0, false, false));
             b.add_css_class("dc-tertiary");
             v.append(&b);
         }
@@ -906,36 +908,36 @@ impl ReaderWindow {
         }
         let fs = self.font_size();
         let (r, g, b) = rgb(&self.accent());
-        let v = gtk::Box::new(gtk::Orientation::Vertical, 9);
+        let v = gtk::Box::new(gtk::Orientation::Vertical, space::S);
         v.set_margin_start(38);
         style(
             &v,
             &format!("padding: 16px; border-radius: 14px; background-color: rgba({r},{g},{b},0.07); border: 0.5px solid rgba({r},{g},{b},0.15);"),
         );
-        let head = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let head = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
         let star = widgets::icon("starred-symbolic", 12);
         style(&star, &format!("color: rgb({r},{g},{b});"));
         head.append(&star);
-        let hl = text("3줄 요약", 12.0, 600, 0.0, false, false);
+        let hl = text("3줄 요약", font::BODY_STRONG, 0.0, false, false);
         style(&hl, &format!("color: rgb({r},{g},{b});"));
         head.append(&hl);
         v.append(&head);
         match &m.key_points {
             Some(pts) => {
                 for p in pts {
-                    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-                    let dot = text("•", fs - 1.0, 400, 0.0, false, false);
+                    let row = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
+                    let dot = text("•", (fs - 1.0, 400), 0.0, false, false);
                     dot.set_valign(gtk::Align::Start);
                     style(&dot, &format!("color: rgb({r},{g},{b});"));
                     row.append(&dot);
-                    let l = text(p, fs - 1.0, 400, 1.3, false, false);
+                    let l = text(p, (fs - 1.0, 400), 1.3, false, false);
                     l.set_hexpand(true);
                     row.append(&l);
                     v.append(&row);
                 }
             }
             None => {
-                let l = text("요약하는 중…", 13.0, 400, 0.0, false, false);
+                let l = text("요약하는 중…", font::BODY, 0.0, false, false);
                 l.add_css_class("dc-secondary");
                 pulse(&l);
                 v.append(&l);
@@ -975,7 +977,7 @@ impl ReaderWindow {
     // 펼친 문단의 원문: 번역문 바로 아래에 작게, 왼쪽에 기사 빛깔 줄
     fn original_under(&self, o: &str) -> gtk::Widget {
         let fs = self.font_size();
-        let l = text(o, fs - 2.0, 400, 1.35, false, false);
+        let l = text(o, (fs - 2.0, 400), 1.35, false, false);
         l.add_css_class("dc-secondary");
         l.set_hexpand(true);
         let (r, g, b) = rgb(&self.accent());
@@ -1000,18 +1002,18 @@ impl ReaderWindow {
 
     // 맛보기(유료벽 앞부분)만 받은 기사 — 본문 바로 위 띠(맥 TeaserBanner 문구 그대로)
     fn teaser_banner(&self) -> gtk::Widget {
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, space::M);
         row.set_margin_start(38);
         row.add_css_class("dc-teaser");
         let lock = widgets::icon("changes-prevent-symbolic", 14);
         style(&lock, "color: #e67e00;");
         row.append(&lock);
-        let v = gtk::Box::new(gtk::Orientation::Vertical, 3);
+        let v = gtk::Box::new(gtk::Orientation::Vertical, space::XS);
         v.set_hexpand(true);
-        let t = text(paywall::TEASER_TITLE, 13.5, 600, 0.0, false, false);
+        let t = text(paywall::TEASER_TITLE, font::BODY_STRONG, 0.0, false, false);
         t.set_selectable(false);
         v.append(&t);
-        let d = text(paywall::TEASER_DETAIL, 12.5, 400, 0.0, false, false);
+        let d = text(paywall::TEASER_DETAIL, font::CALLOUT, 0.0, false, false);
         d.set_selectable(false);
         d.add_css_class("dc-secondary");
         v.append(&d);
@@ -1023,20 +1025,20 @@ impl ReaderWindow {
             open_external(&link);
         });
         row.append(&open);
-        style(&row, "padding: 11px 14px; border-radius: 12px; background-color: rgba(255,149,0,0.09); border: 1px solid rgba(255,149,0,0.28);");
+        style(&row, "padding: 12px 16px; border-radius: 12px; background-color: rgba(255,149,0,0.09); border: 1px solid rgba(255,149,0,0.28);");
         row.upcast()
     }
 
     // 본문 끝 한 줄: 맛보기가 끝난 자리, 또는 일부만 가져왔을 수 있음(맥 CutEndNote 문구 그대로)
     fn cut_end_note(self: &Rc<Self>, teaser: bool) -> gtk::Widget {
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
         row.set_margin_start(38);
-        let lead = text(if teaser { paywall::TEASER_END } else { paywall::PARTIAL_END }, 12.5, 400, 0.0, false, false);
+        let lead = text(if teaser { paywall::TEASER_END } else { paywall::PARTIAL_END }, font::CALLOUT, 0.0, false, false);
         lead.set_selectable(false);
         lead.add_css_class("dc-secondary");
         row.append(&lead);
         let dot = || {
-            let d = text("·", 12.5, 400, 0.0, false, false);
+            let d = text("·", font::CALLOUT, 0.0, false, false);
             d.set_selectable(false);
             d.add_css_class("dc-secondary");
             d
@@ -1045,7 +1047,7 @@ impl ReaderWindow {
             let b = gtk::Button::with_label(label);
             b.add_css_class("flat");
             b.add_css_class("dc-link");
-            style(&b, "padding: 0 2px; min-height: 0; font-size: 12.5px; color: @accent_color;");
+            style(&b, "padding: 0 2px; min-height: 0; font-size: 12px; color: @accent_color;");
             b
         };
         row.append(&dot());
@@ -1072,19 +1074,19 @@ impl ReaderWindow {
         let (r, g, bl) = rgb(&self.accent());
         match b.kind {
             BlockKind::H => {
-                let l = text(t, fs + 4.0, 700, 0.0, false, false);
+                let l = text(t, (fs + 4.0, 700), 0.0, false, false);
                 style(&l, "letter-spacing: -0.2px;");
-                l.set_margin_top(26);
-                l.set_margin_bottom(8);
+                l.set_margin_top(space::XL);
+                l.set_margin_bottom(space::S);
                 (l.clone().upcast(), Some(l))
             }
             BlockKind::P => {
-                let l = text(t, fs, 400, 1.47, false, false);
+                let l = text(t, (fs, 400), 1.47, false, false);
                 l.set_margin_bottom(fs as i32 + 1);
                 (l.clone().upcast(), Some(l))
             }
             BlockKind::Li => {
-                let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+                let row = gtk::Box::new(gtk::Orientation::Horizontal, space::M);
                 let dot = gtk::DrawingArea::builder().content_width(5).content_height(5).valign(gtk::Align::Start).build();
                 dot.set_margin_top((fs * 0.62) as i32);
                 let accent = self.accent();
@@ -1095,39 +1097,39 @@ impl ReaderWindow {
                     let _ = cr.fill();
                 });
                 row.append(&dot);
-                let l = text(t, fs, 400, 1.41, false, false);
+                let l = text(t, (fs, 400), 1.41, false, false);
                 l.set_hexpand(true);
                 row.append(&l);
-                row.set_margin_top(if prev_li { 0 } else { 2 });
-                row.set_margin_bottom(8);
-                row.set_margin_start(4);
+                row.set_margin_top(if prev_li { 0 } else { space::XXS });
+                row.set_margin_bottom(space::S);
+                row.set_margin_start(space::XS);
                 (row.upcast(), Some(l))
             }
             BlockKind::Quote => {
-                let l = text(t, fs, 400, 1.41, true, false);
+                let l = text(t, (fs, 400), 1.41, true, false);
                 l.add_css_class("dc-secondary");
                 let wrap = gtk::Box::new(gtk::Orientation::Horizontal, 0);
                 style(&wrap, &format!("border-left: 3px solid rgba({r},{g},{bl},0.6); padding-left: 16px;"));
                 wrap.append(&l);
                 l.set_hexpand(true);
-                wrap.set_margin_top(6);
-                wrap.set_margin_bottom(20);
+                wrap.set_margin_top(space::S);
+                wrap.set_margin_bottom(space::XL);
                 (wrap.upcast(), Some(l))
             }
             BlockKind::Pre => {
-                let l = text(t, 13.0, 400, 0.0, false, true);
+                let l = text(t, font::BODY, 0.0, false, true);
                 l.set_wrap(false);
-                style(&l, "padding: 14px;");
+                style(&l, "padding: 16px;");
                 let sw = gtk::ScrolledWindow::builder().vscrollbar_policy(gtk::PolicyType::Never).child(&l).propagate_natural_height(true).build();
                 style(&sw, "border-radius: 10px; background-color: alpha(@window_fg_color, 0.06);");
-                sw.set_margin_bottom(18);
+                sw.set_margin_bottom(space::L);
                 (sw.upcast(), None)
             }
             BlockKind::Img => (reader_image::article_image(b.src.as_deref().unwrap_or("")), None),
             BlockKind::Cap => {
-                let l = text(t, 13.0, 400, 0.0, false, false);
+                let l = text(t, font::BODY, 0.0, false, false);
                 l.add_css_class("dc-secondary");
-                l.set_margin_bottom(18);
+                l.set_margin_bottom(space::L);
                 (l.clone().upcast(), Some(l))
             }
         }
@@ -1135,11 +1137,11 @@ impl ReaderWindow {
 
     fn failed(&self) -> gtk::Widget {
         let m = self.model.borrow();
-        let v = gtk::Box::new(gtk::Orientation::Vertical, 14);
+        let v = gtk::Box::new(gtk::Orientation::Vertical, space::L);
         v.set_margin_start(38);
         let lede = if m.summary.is_empty() { feed_summary(&self.item()) } else { Some(m.summary.clone()) };
         if let Some(t) = lede {
-            v.append(&text(&t, 17.0, 400, 1.5, false, false));
+            v.append(&text(&t, (17.0, 400), 1.5, false, false));
         }
         let blocked = article::is_blocked_host(&self.item().link);
         let note = text(
@@ -1148,15 +1150,14 @@ impl ReaderWindow {
             } else {
                 "이 기사는 본문을 추리지 못했습니다(유료 기사·차단 등). 위는 피드가 준 요약입니다."
             },
-            13.0,
-            400,
+            font::BODY,
             0.0,
             false,
             false,
         );
         note.add_css_class("dc-secondary");
         v.append(&note);
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
         let o = gtk::Button::with_label("원문 열기");
         o.add_css_class("suggested-action");
         o.add_css_class("pill");
@@ -1184,26 +1185,26 @@ impl ReaderWindow {
     fn free_box(&self) -> Option<gtk::Widget> {
         let m = self.model.borrow();
         let reason = paywall::free_reason(!m.alternatives.is_empty(), m.phase == Phase::Failed, m.paywalled, m.paywall)?;
-        let v = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        let v = gtk::Box::new(gtk::Orientation::Vertical, space::M);
         v.set_margin_start(38);
         v.add_css_class("dc-free-box");
-        let head = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let head = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
         head.append(&widgets::icon("changes-prevent-symbolic", 11));
-        head.append(&text(reason, 12.5, 600, 0.0, false, false));
+        head.append(&text(reason, font::BODY_STRONG, 0.0, false, false));
         head.add_css_class("dc-secondary");
         v.append(&head);
         let names: Vec<&str> = m.alternatives.iter().map(|a| a.source_name.as_str()).collect();
-        v.append(&text(&format!("같은 소식을 무료로 읽기: {}", names.join("·")), 13.5, 600, 0.0, false, false));
-        let list = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        v.append(&text(&format!("같은 소식을 무료로 읽기: {}", names.join("·")), font::BODY_STRONG, 0.0, false, false));
+        let list = gtk::Box::new(gtk::Orientation::Vertical, space::S);
         for alt in &m.alternatives {
-            let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-            let src = text(&alt.source_name, 12.0, 700, 0.0, false, false);
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
+            let src = text(&alt.source_name, font::CHIP, 0.0, false, false);
             src.set_selectable(false);
             src.set_wrap(false);
             let (r, g, b) = rgb(&widgets::source_color(&alt.source_id));
             style(&src, &format!("color: rgb({r},{g},{b});"));
             row.append(&src);
-            let t = text(alt.display_title(), 13.0, 400, 0.0, false, false);
+            let t = text(alt.display_title(), font::BODY, 0.0, false, false);
             t.set_selectable(false);
             t.set_wrap(false);
             t.set_ellipsize(pango::EllipsizeMode::End);
@@ -1258,7 +1259,7 @@ impl ReaderWindow {
             b.add_css_class("pill");
             style(&b, "font-size: 9.5px; font-weight: 600; padding: 0 4px; min-height: 20px; min-width: 26px;");
             b.set_halign(gtk::Align::Start);
-            b.set_margin_top(2);
+            b.set_margin_top(space::XXS);
             b.set_tooltip_text(Some(if open { "이 문단 원문 접기" } else { "이 문단 원문 펼치기" }));
             b.set_opacity(if open { 1.0 } else { 0.0 });
             if open {
@@ -1374,15 +1375,15 @@ impl ReaderWindow {
         pop.set_parent(anchor);
         pop.set_position(gtk::PositionType::Left);
         anchor.add_css_class("dc-open");
-        let v = gtk::Box::new(gtk::Orientation::Vertical, 10);
-        v.set_margin_top(14);
-        v.set_margin_bottom(14);
-        v.set_margin_start(14);
-        v.set_margin_end(14);
+        let v = gtk::Box::new(gtk::Orientation::Vertical, space::M);
+        v.set_margin_top(space::L);
+        v.set_margin_bottom(space::L);
+        v.set_margin_start(space::L);
+        v.set_margin_end(space::L);
         v.set_size_request(280, -1);
-        let done_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let done_row = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
         done_row.append(&widgets::icon("object-select-symbolic", 14));
-        let msg = text(&format!("‘{}’에 스크랩했어요", s.collection), 13.0, 600, 0.0, false, false);
+        let msg = text(&format!("‘{}’에 스크랩했어요", s.collection), font::BODY_STRONG, 0.0, false, false);
         done_row.append(&msg);
         done_row.add_css_class("success");
         v.append(&done_row);
@@ -1390,14 +1391,14 @@ impl ReaderWindow {
         let list = gtk::StringList::new(&cols.iter().map(|s| s.as_str()).collect::<Vec<_>>());
         let dd = gtk::DropDown::new(Some(list), None::<gtk::Expression>);
         dd.set_selected(cols.iter().position(|c| *c == s.collection).unwrap_or(0) as u32);
-        let frow = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        frow.append(&text("폴더", 13.0, 400, 0.0, false, false));
+        let frow = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
+        frow.append(&text("폴더", font::BODY, 0.0, false, false));
         dd.set_hexpand(true);
         frow.append(&dd);
         v.append(&frow);
         let memo = gtk::Entry::builder().placeholder_text("메모 (선택)").text(s.memo.as_str()).build();
         v.append(&memo);
-        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let actions = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
         let undo = gtk::Button::with_label("되돌리기");
         undo.add_css_class("destructive-action");
         let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -1784,11 +1785,11 @@ impl ReaderWindow {
 // 불러오는 동안 글 모양 자리표시 + 은은하게 흐르는 빛(R-13). 움직임 줄이기면 멈춘 채로.
 fn skeleton(label: &str) -> gtk::Widget {
     let v = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    let head = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let head = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
     head.append(&widgets::icon("content-loading-symbolic", 12));
-    head.append(&text(label, 12.0, 400, 0.0, false, false));
+    head.append(&text(label, font::CALLOUT, 0.0, false, false));
     head.add_css_class("dc-secondary");
-    head.set_margin_bottom(20);
+    head.set_margin_bottom(space::XL);
     pulse(&head);
     v.append(&head);
     let area = gtk::DrawingArea::builder().hexpand(true).content_height(3 * (4 * 22 + 14)).build();

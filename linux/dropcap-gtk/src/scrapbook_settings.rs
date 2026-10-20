@@ -1,6 +1,7 @@
 // 설정 › 스크랩북(맥 UI/ScrapbookSettingsView.swift): 노트 폴더 자동 저장 · 아무 주소나 나중에 읽기로 보내는 방법(북마클릿·명령줄·주소)
 // + 스크랩 노트 폴더 자동 저장 돌리기(맥 Core/ScrapExport.swift 의 화면 쪽).
 // 스크랩은 여러 화면(읽기 창·매거진)에서 바뀌므로 2초마다 스크랩 지문을 보고 바뀌었을 때만 쓴다(쓰기 전에 내용 비교도 한 번 더).
+use crate::ds::{font, space};
 use crate::app::ui;
 use crate::widgets::label;
 use adw::prelude::*;
@@ -153,8 +154,8 @@ fn tilde(p: &Path) -> String {
 }
 
 fn caption(text: &str) -> gtk::Label {
-    let l = label(text, 12.0, 400, &["dc-secondary"]);
-    l.set_margin_top(6);
+    let l = label(text, font::CALLOUT, &["dc-secondary"]);
+    l.set_margin_top(space::S);
     l
 }
 
@@ -169,8 +170,8 @@ pub fn page() -> adw::PreferencesPage {
     let forget = gtk::Button::builder().icon_name("window-close-symbolic").css_classes(["flat"]).valign(gtk::Align::Center).tooltip_text("폴더 잊기(자동 저장 꺼짐)").build();
     folder.add_suffix(&pick);
     folder.add_suffix(&forget);
-    let error = label("", 12.0, 500, &["warning"]);
-    error.set_margin_top(6);
+    let error = label("", font::CALLOUT, &["warning"]);
+    error.set_margin_top(space::S);
     let now = gtk::Button::builder().label("지금 저장").valign(gtk::Align::Center).build();
     let help = adw::ActionRow::builder()
         .subtitle("스크랩 폴더마다 ‘폴더 이름.md’ 파일 하나 — Obsidian 보관소 안의 폴더를 고르면 노트로 바로 보입니다. 파일은 덮어쓰니 고쳐 쓸 노트는 다른 이름으로 두세요.")

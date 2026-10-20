@@ -1,6 +1,7 @@
 // 첫 실행: 관심 분야 고르기(G-03, 맥 UI/SectionViews.swift 의 OnboardingView).
 // 분야 카드(기호·색·이름·대표 출처 2~3곳), 주요 뉴스 스위치(기본 켬), '더 보기'(기후·환경).
 // 고르면 그 분야 기본 출처만 켜지고 최근 3일 소식으로 매거진을 채운다(core.choose_sections). 설정 › 분야에서 다시 연다.
+use crate::ds::{font, space};
 use crate::app::ui;
 use crate::widgets::{icon, label};
 use adw::prelude::*;
@@ -47,51 +48,50 @@ pub fn open() {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
 
     // 머리: DROPCAP 로고 + 물음 + 설명
-    let head = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    head.set_margin_start(30);
-    head.set_margin_end(30);
-    head.set_margin_top(26);
-    head.set_margin_bottom(18);
+    let head = gtk::Box::new(gtk::Orientation::Vertical, space::S);
+    head.set_margin_start(space::XXL);
+    head.set_margin_end(space::XXL);
+    head.set_margin_top(space::XL);
+    head.set_margin_bottom(space::L);
     let logo = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    let d = label("D", 30.0, 900, &[]);
+    let d = label("D", (30.0, 900), &[]);
     d.set_wrap(false);
     css(&d, "label { font-family: serif; }");
-    let rest = label("ROPCAP", 17.0, 800, &[]);
+    let rest = label("ROPCAP", (17.0, 800), &[]);
     rest.set_wrap(false);
     rest.set_valign(gtk::Align::End);
-    rest.set_margin_bottom(4);
+    rest.set_margin_bottom(space::XS);
     css(&rest, "label { font-family: serif; letter-spacing: 2.4px; }");
     logo.append(&d);
     logo.append(&rest);
     head.append(&logo);
-    head.append(&label("어떤 소식을 받아 볼까요?", 28.0, 700, &["dc-display"]));
+    head.append(&label("어떤 소식을 받아 볼까요?", font::TITLE, &["dc-display"]));
     head.append(&label(
         "고른 분야의 언론사 피드가 켜지고, 매거진 지면도 그 분야로 엮입니다. 알림은 처음엔 고른 분야 중 두 개만 바로 오고, 나머지는 정한 시각에 한 방울로 모아 옵니다.",
-        13.0,
-        400,
+        font::BODY,
         &["dc-secondary"],
     ));
     root.append(&head);
 
-    let body = gtk::Box::new(gtk::Orientation::Vertical, 14);
-    body.set_margin_start(30);
-    body.set_margin_end(30);
-    body.set_margin_bottom(16);
+    let body = gtk::Box::new(gtk::Orientation::Vertical, space::L);
+    body.set_margin_start(space::XXL);
+    body.set_margin_end(space::XXL);
+    body.set_margin_bottom(space::L);
     let scroll = gtk::ScrolledWindow::builder().hscrollbar_policy(gtk::PolicyType::Never).vexpand(true).child(&body).build();
     root.append(&scroll);
 
     // 주요 뉴스 스위치
     if let Some(top) = sections::by_id(sections::TOP) {
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, space::M);
         let (r, g, b) = rgb(&top.color);
-        css(&row, &format!("box {{ background: rgba({r},{g},{b},0.08); border-radius: 14px; padding: 14px; }}"));
+        css(&row, &format!("box {{ background: rgba({r},{g},{b},0.08); border-radius: 14px; padding: 16px; }}"));
         let ic = icon(top.icon(), 16);
         css(&ic, &format!("image {{ color: rgb({r},{g},{b}); }}"));
         row.append(&ic);
-        let tv = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        let tv = gtk::Box::new(gtk::Orientation::Vertical, space::XXS);
         tv.set_hexpand(true);
-        tv.append(&label(&top.name, 14.0, 600, &[]));
-        tv.append(&label("어느 분야든 여러 곳이 함께 크게 다룬 소식만 골라 알려 드려요", 12.0, 400, &["dc-secondary"]));
+        tv.append(&label(&top.name, font::HEADLINE, &[]));
+        tv.append(&label("어느 분야든 여러 곳이 함께 크게 다룬 소식만 골라 알려 드려요", font::CALLOUT, &["dc-secondary"]));
         row.append(&tv);
         let sw = gtk::Switch::builder().valign(gtk::Align::Center).active(st.borrow().picked.contains(sections::TOP)).build();
         {
@@ -110,12 +110,12 @@ pub fn open() {
     }
 
     // 분야 카드 격자
-    let grid = gtk::FlowBox::builder().selection_mode(gtk::SelectionMode::None).min_children_per_line(3).max_children_per_line(3).column_spacing(14).row_spacing(14).homogeneous(true).build();
+    let grid = gtk::FlowBox::builder().selection_mode(gtk::SelectionMode::None).min_children_per_line(3).max_children_per_line(3).column_spacing(space::L as u32).row_spacing(space::L as u32).homogeneous(true).build();
     body.append(&grid);
     let more_btn = gtk::Button::builder().css_classes(["flat"]).halign(gtk::Align::Start).build();
-    let mb = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let mb = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
     mb.append(&icon("pan-down-symbolic", 12));
-    let ml = label("더 보기", 12.5, 600, &[]);
+    let ml = label("더 보기", font::BODY_STRONG, &[]);
     ml.set_wrap(false);
     mb.append(&ml);
     more_btn.set_child(Some(&mb));
@@ -123,12 +123,12 @@ pub fn open() {
 
     // 바닥: 몇 개 골랐는지 + 시작하기/저장
     root.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-    let foot = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    foot.set_margin_start(30);
-    foot.set_margin_end(30);
-    foot.set_margin_top(14);
-    foot.set_margin_bottom(14);
-    let count_label = label("", 12.0, 400, &["dc-secondary"]);
+    let foot = gtk::Box::new(gtk::Orientation::Horizontal, space::S);
+    foot.set_margin_start(space::XXL);
+    foot.set_margin_end(space::XXL);
+    foot.set_margin_top(space::L);
+    foot.set_margin_bottom(space::L);
+    let count_label = label("", font::CALLOUT, &["dc-secondary"]);
     count_label.set_hexpand(true);
     foot.append(&count_label);
     let go = gtk::Button::builder().label(if now.is_none() { "시작하기" } else { "저장" }).css_classes(["suggested-action", "pill"]).build();

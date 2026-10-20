@@ -107,7 +107,91 @@ pub const MAX_DEPTH: usize = 64;
 
 pub fn tree(data: &[u8]) -> Result<XNode, FeedError> {
     let text = decode_xml(data);
-    let mut reader = quick_xml::Reader::from_str(&text);
+    let (root, failed) = tree_once(&text);
+    // 해석이 깨지면 엔티티가 아닌 & 만 &amp; 로 고쳐 한 번 더(Rest of World: 사진 주소의 '?width=380&dpr=2'). 다시도 깨지면 처음 읽은 데까지
+    if failed {
+        if let Some(fixed) = repair_ampersands(&text) {
+            let (again, failed2) = tree_once(&fixed);
+            if !failed2 {
+                return Ok(again);
+            }
+        }
+        if root.children.is_empty() {
+            return Err(FeedError::BadFormat);
+        }
+    }
+    Ok(root)
+}
+
+// 고친 결과가 받는 상한(net::MAX_BODY 와 같은 32MB)을 넘으면 고치지 않는다
+pub const REPAIR_MAX_BYTES: usize = 32 << 20;
+
+// 엔티티(이름; · #숫자; · #x16진수;)가 아닌 & 를 &amp; 로. CDATA·주석 안은 그대로. 고칠 것이 없거나 상한을 넘으면 None
+pub fn repair_ampersands(text: &str) -> Option<String> {
+    let s = text.as_bytes();
+    let n = s.len();
+    let is_ref = |i: usize| -> bool {
+        let mut j = i + 1;
+        if j < n && s[j] == b'#' {
+            j += 1;
+            let hex = j < n && (s[j] | 0x20) == b'x';
+            if hex {
+                j += 1;
+            }
+            let st = j;
+            while j < n && (s[j].is_ascii_digit() || (hex && s[j].is_ascii_hexdigit())) {
+                j += 1;
+            }
+            if j == st {
+                return false;
+            }
+        } else {
+            if !(j < n && (s[j].is_ascii_alphabetic() || s[j] == b'_' || s[j] == b':')) {
+                return false;
+            }
+            while j < n && (s[j].is_ascii_alphanumeric() || matches!(s[j], b'_' | b':' | b'.' | b'-')) {
+                j += 1;
+            }
+        }
+        j < n && s[j] == b';' && j - i <= 32
+    };
+    let skips: [(&[u8], &[u8]); 2] = [(b"<![CDATA[", b"]]>"), (b"<!--", b"-->")];
+    let mut out: Vec<u8> = Vec::with_capacity(n + 1024);
+    let mut changed = false;
+    let mut i = 0;
+    'scan: while i < n {
+        if s[i] == b'<' {
+            for (open, close) in skips {
+                if s[i..].starts_with(open) {
+                    let mut j = i + open.len();
+                    while j < n && !s[j..].starts_with(close) {
+                        j += 1;
+                    }
+                    let stop = n.min(j + close.len());
+                    out.extend_from_slice(&s[i..stop]);
+                    i = stop;
+                    continue 'scan;
+                }
+            }
+        }
+        if s[i] == b'&' && !is_ref(i) {
+            out.extend_from_slice(b"&amp;");
+            changed = true;
+            if out.len() > REPAIR_MAX_BYTES {
+                return None;
+            }
+        } else {
+            out.push(s[i]);
+        }
+        i += 1;
+    }
+    // ASCII '&' 만 바꿨으므로 UTF-8 은 그대로 맞다
+    (changed && out.len() <= REPAIR_MAX_BYTES).then(|| String::from_utf8(out).ok()).flatten()
+}
+
+// 한 번 읽기: (나무, 중간에 깨졌는지)
+fn tree_once(text: &str) -> (XNode, bool) {
+    let mut reader = quick_xml::Reader::from_str(text);
     {
         let c = reader.config_mut();
         c.trim_text(false);
@@ -183,11 +267,7 @@ pub fn tree(data: &[u8]) -> Result<XNode, FeedError> {
         let n = stack.pop().unwrap();
         stack.last_mut().unwrap().children.push(n);
     }
-    let root = stack.pop().unwrap();
-    if failed && root.children.is_empty() {
-        return Err(FeedError::BadFormat);
-    }
-    Ok(root)
+    (stack.pop().unwrap(), failed)
 }
 
 static IMG_TAG: Lazy<Regex> = Lazy::new(|| Regex::new(r#"<img[^>]+src=["']([^"']+)["']"#).unwrap());

@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import Network
+import SQLite3
 import Testing
 @testable import Dropcap
 
@@ -258,6 +259,32 @@ final class SilentTranslate: URLProtocol {
         #expect(!FileManager.default.fileExists(atPath: file.path))
         try Data("not json".utf8).write(to: file)
         #expect(await Editor(db: db, retryFile: file).retry.isEmpty)
+    }
+
+    // 기사 하나에만 정해진 실패(그 줄의 저장된 JSON 이 깨져 덮어쓰기가 실패)가 있으면 그 기사가 늘 맨 앞에서 실패해
+    // 뒤 기사를 모두 미뤘다(review-4 L4). 바로 뒤 기사가 들어가면 그 기사만의 실패로 보고 이어 가고, strikeLimit 번이면 버린다
+    @Test func oneBadItemDoesNotBlockTheRest() async throws {
+        let dir = StabilityTests.tempDir("dbpoison")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let db = Database(file: dir.appendingPathComponent("m.sqlite"), busyTimeoutMs: 100)
+        let editor = Editor(db: db)
+        _ = await editor.ingest([Self.item(21)], followed: [])
+        var raw: OpaquePointer?
+        #expect(sqlite3_open(db.file.path, &raw) == SQLITE_OK)
+        #expect(sqlite3_exec(raw, "UPDATE items SET json='{broken' WHERE key='\(Self.item(21).key)'", nil, nil, nil) == SQLITE_OK)
+        sqlite3_close(raw)
+        #expect(!db.upsert(Self.item(21), cluster: nil)) // 이 기사만 늘 실패
+        _ = await editor.ingest([Self.item(21), Self.item(22), Self.item(23)], followed: [])
+        #expect(db.exists(Self.item(22).key) && db.exists(Self.item(23).key)) // 뒤 기사는 들어감
+        #expect(await editor.retry.map(\.id) == ["w21"])
+        for n in 2...Editor.strikeLimit { // strikeLimit 번째 실패에 버린다
+            _ = await editor.ingest([Self.item(30 + n)], followed: [])
+            #expect(db.exists(Self.item(30 + n).key))
+            #expect(await editor.retry.map(\.id) == (n < Editor.strikeLimit ? ["w21"] : []))
+        }
+        // 맨 끝에서 실패하면(뒤 기사가 없어 DB 가 멀쩡한지 모름) 버리지 않고 다음 번으로
+        _ = await editor.ingest([Self.item(21)], followed: [])
+        #expect(await editor.retry.map(\.id) == ["w21"])
     }
 
     // 잠금을 기다리는 동안 메인 스레드(화면)가 멈추지 않게 — 메인에서 부른 쓰기는 0.1초만 기다리고 포기한다

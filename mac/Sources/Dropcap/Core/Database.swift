@@ -58,7 +58,12 @@ final class Database: @unchecked Sendable {
             guard let ctx else { return 0 }
             let me = Unmanaged<Database>.fromOpaque(ctx).takeUnretainedValue()
             let limit = Thread.isMainThread ? min(me.busyMs, 100) : me.busyMs
-            guard Int32(count) * 10 < limit else { return 0 }
+            guard Int32(count) * 10 < limit else {
+                #if DEBUG
+                me.busyGiveUpsForTests += 1
+                #endif
+                return 0
+            }
             usleep(10_000)
             return 1
         }, Unmanaged.passUnretained(self).toOpaque())
@@ -138,6 +143,8 @@ final class Database: @unchecked Sendable {
     #if DEBUG
     // 시험용: 줄을 일부러 망가뜨리기(배포 빌드에는 없음)
     func execForTests(_ sql: String) { queue.sync { _ = exec(sql) } }
+    // 시험용: 잠금을 끝까지 기다리고 포기한 횟수
+    var busyGiveUpsForTests = 0
     #endif
 
     // MARK: 문장 실행 도우미
@@ -146,10 +153,16 @@ final class Database: @unchecked Sendable {
     // 성공하면 true(잠김·디스크 가득 등으로 실패하면 false — 부르는 쪽이 다시 시도할 수 있게)
     @discardableResult
     private func run(_ sql: String, _ args: [Value], row: ((OpaquePointer) -> Void)? = nil) -> Bool {
+        runCode(sql, args, row: row) == SQLITE_OK
+    }
+
+    // run 과 같되 SQLite 결과 코드(성공이면 SQLITE_OK)를 돌려준다
+    private func runCode(_ sql: String, _ args: [Value], row: ((OpaquePointer) -> Void)? = nil) -> Int32 {
         statements += 1
         var st: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &st, nil) == SQLITE_OK else {
-            NSLog("[DB] 준비 실패 %@", String(cString: sqlite3_errmsg(db))); return false
+        let pr = sqlite3_prepare_v2(db, sql, -1, &st, nil)
+        guard pr == SQLITE_OK else {
+            NSLog("[DB] 준비 실패 %@", String(cString: sqlite3_errmsg(db))); return pr
         }
         defer { sqlite3_finalize(st) }
         let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
@@ -164,8 +177,8 @@ final class Database: @unchecked Sendable {
         while true {
             let r = sqlite3_step(st)
             if r == SQLITE_ROW { row?(st!); continue }
-            if r != SQLITE_DONE { NSLog("[DB] 실행 실패(%d) %@", r, String(cString: sqlite3_errmsg(db))); return false } // 잠김·디스크 가득 등(A-33)
-            return true
+            if r != SQLITE_DONE { NSLog("[DB] 실행 실패(%d) %@", r, String(cString: sqlite3_errmsg(db))); return r } // 잠김·디스크 가득 등
+            return SQLITE_OK
         }
     }
 
@@ -180,14 +193,22 @@ final class Database: @unchecked Sendable {
         var cluster: String?
     }
 
+    // 쓰기 결과: 실패가 DB 전체 문제(가득·디스크 오류·읽기 전용 등 — 다른 기사도 못 넣음)인지, 이 기사만의 문제인지.
+    // 잠김(BUSY·LOCKED)은 DB 전체 문제 가운데 기다림(busy timeout)이 든 것이라 따로 — 받아 넣기가 잇따라 기다리지 않게
+    enum WriteResult { case ok, locked, wholeDB, item }
+
     @discardableResult
     func upsert(_ item: NewsItem, cluster: String?, firstSeen: Date = Date()) -> Bool {
-        guard let json = try? Self.itemEncoder.encode(item) else { return false }
+        upsertResult(item, cluster: cluster, firstSeen: firstSeen) == .ok
+    }
+
+    func upsertResult(_ item: NewsItem, cluster: String?, firstSeen: Date = Date()) -> WriteResult {
+        guard let json = try? Self.itemEncoder.encode(item) else { return .item }
         // 피드 본문이 빠진 사본(앱 상태·스크랩에서 온 것)으로 다시 넣어도 DB 에 둔 피드 본문은 지우지 않는다(ON CONFLICT 의 CASE)
         // 논문 피드(arXiv)는 날짜가 발표일 자정이라, 지면에는 받은 때를 기준으로 싣는다
         let when = item.itemKind == .paper ? firstSeen : item.date
-        return queue.sync {
-            run("""
+        let code = queue.sync {
+            runCode("""
             INSERT INTO items(key,json,date,first_seen,category,source,tier,cluster,image) VALUES(?,?,?,?,?,?,?,?,?)
             ON CONFLICT(key) DO UPDATE SET
               json=CASE WHEN json_extract(excluded.json,'$.feedBody') IS NULL AND json_extract(items.json,'$.feedBody') IS NOT NULL
@@ -198,7 +219,14 @@ final class Database: @unchecked Sendable {
                   .real(firstSeen.timeIntervalSince1970), .text(item.category.rawValue), .text(item.sourceId), .text(item.tier),
                   .text(cluster), .text(item.image)])
         }
+        if code == SQLITE_OK { return .ok }
+        if [SQLITE_BUSY, SQLITE_LOCKED].contains(code & 0xFF) { return .locked }
+        return Self.wholeDBCodes.contains(code & 0xFF) ? .wholeDB : .item
     }
+
+    // DB 전체 문제인 결과 코드(확장 코드는 아래 8비트가 기본 코드). 그 밖(제약·깨진 JSON 등)은 그 기사만의 문제로
+    static let wholeDBCodes: Set<Int32> = [SQLITE_BUSY, SQLITE_LOCKED, SQLITE_NOMEM, SQLITE_READONLY, SQLITE_IOERR, SQLITE_CORRUPT,
+                                           SQLITE_FULL, SQLITE_CANTOPEN, SQLITE_PROTOCOL, SQLITE_NOTADB, SQLITE_MISUSE]
 
     func setImage(_ key: String, _ url: String) {
         queue.sync {

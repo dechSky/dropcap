@@ -136,7 +136,7 @@ impl NewsCategory {
     }
 
     // 먼저 걸리는 분야로 정한다(정의 파일의 위에서부터).
-    // 영어는 낱말 경계로(4자 이하는 온전한 낱말만, 긴 어간은 낱말 앞부분) — 'impact'의 act, 'capital'의 api 에 걸리지 않게(맥 A-08).
+    // 영어는 낱말 경계로(4자 이하는 온전한 낱말만, 긴 어간은 낱말 앞부분) — 'impact'의 act, 'capital'의 api 에 걸리지 않게(맥과 같음).
     // 한국어는 조사가 붙으므로 부분 일치.
     pub fn classify(text: &str) -> NewsCategory {
         let t = text.to_lowercase();

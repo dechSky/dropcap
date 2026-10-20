@@ -31,7 +31,7 @@ enum HotKey {
         var ref: EventHotKeyRef?
         let err = RegisterEventHotKey(key.rawValue, UInt32(cmdKey | optionKey), EventHotKeyID(signature: OSType(0x41494E41), id: key.rawValue),
                                       GetApplicationEventTarget(), 0, &ref)
-        if err != noErr { // 다른 앱이 같은 단축키를 쓰는 중(A-29)
+        if err != noErr { // 다른 앱이 같은 단축키를 쓰는 중
             unavailable.insert(key.rawValue)
             NSLog("[단축키] ⌥⌘%@ 를 등록하지 못함(%d) — 다른 앱이 쓰는 중일 수 있음", key == .n ? "N" : "M", err)
         }

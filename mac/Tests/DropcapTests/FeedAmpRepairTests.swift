@@ -33,6 +33,20 @@ import Testing
         #expect(s.contains("x=1&amp;y=2") && !s.contains("&amp;amp;"))
     }
 
+    // 고쳐서도 다른 곳(닫히지 않은 주석)에서 깨지면, 처음 읽은 것(첫 & 앞까지)보다 더 많이 읽은 고친 쪽을 쓴다
+    static let brokenTwice = """
+    <rss version="2.0"><channel><title>T</title>
+    <item><title>Tom & Jerry</title><link>https://example.com/1</link><guid>1</guid></item>
+    <item><title>Two</title><link>https://example.com/2</link><guid>2</guid></item>
+    <item><title>Three</title><link>https://example.com/3</link><guid>3</guid></item>
+    <!-- never closed
+    """
+
+    @Test func brokenTwiceKeepsTheLongerRead() throws {
+        let items = try FeedParser.parseFeed(Data(Self.brokenTwice.utf8))
+        #expect(items.map(\.title) == ["Tom & Jerry", "Two", "Three"])
+    }
+
     @Test func wellFormedFeedNeedsNoRepair() {
         let ok = "<rss><channel><item><title>A &amp; B &lt;3 &#169;</title><description><![CDATA[x & y]]></description></item></channel></rss>"
         #expect(FeedParser.repairAmpersands(Data(ok.utf8)) == nil)

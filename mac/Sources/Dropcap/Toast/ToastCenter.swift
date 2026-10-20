@@ -119,7 +119,7 @@ final class ToastCenter: ObservableObject {
             p.contentView = host
             panel = p
         }
-        guard let panel, Self.cursorScreen() != nil else { return } // 화면이 하나도 없으면(덮개 닫힘 등) 띄우지 않음(A-27)
+        guard let panel, Self.cursorScreen() != nil else { return } // 화면이 하나도 없으면(덮개 닫힘 등) 띄우지 않음
         if Self.needsPlace(visible: panel.isVisible, placedAt: placedAt, wanted: AppModel.shared.state.settings.position) {
             place(panel) // 새로 뜨는 알림은 마우스가 있는 화면에, 지금 설정한 위치에
             panel.alphaValue = 1

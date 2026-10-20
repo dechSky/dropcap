@@ -176,7 +176,7 @@ enum Store {
     static let migrationFiles = ["native-state.json", "native-state.bak.json", "magazine.sqlite", "magazine.sqlite-wal", "magazine.sqlite-shm", "articles", "images"]
 
     // 이름이 바뀌기 전(AI News Alert) 기록이 있으면 옮겨 온다. 옛 폴더는 지우지 않고 이름만 표시해 남겨 둠.
-    // A-32: 옮기는 동안 `.migrating` 표시를 두고 다 옮긴 뒤에 지운다. 중간에 실패하면 다음 실행에서 빠진 것만 다시 옮긴다
+    // 폴더 옮기기: 옮기는 동안 `.migrating` 표시를 두고 다 옮긴 뒤에 지운다. 중간에 실패하면 다음 실행에서 빠진 것만 다시 옮긴다
     // (이미 옮긴 것·그 사이 새로 생긴 것은 덮어쓰지 않음). 예전 판으로 이미 다 옮긴 폴더는 표시가 없으므로 건드리지 않는다.
     @discardableResult
     static func migrateOldFolder(from old: URL, to d: URL, fm: FileManager = .default) -> Bool {
@@ -261,7 +261,7 @@ enum Store {
         return out
     }
 
-    // 저장 묶기(R-3): 0.5초 안의 저장 요청은 마지막 것 하나만, 뒤 스레드에서 쓴다. 끝낼 때·잠들기 전에는 flush() 로 바로.
+    // 저장 묶기(C-13): 0.5초 안의 저장 요청은 마지막 것 하나만, 뒤 스레드에서 쓴다. 끝낼 때·잠들기 전에는 flush() 로 바로.
     static let saver = StateSaver(file: file, backup: backupFile)
     static func save(_ state: AppState) { saver.save(state) }
     static func flush() { saver.flush() }
@@ -299,7 +299,7 @@ final class StateSaver: @unchecked Sendable {
         self.file = file; self.backup = backup; self.delay = delay
     }
 
-    // 본 파일이 깨져 .bak 에서 읽은 실행: 깨진 파일로 .bak 을 덮어쓰지 않게(A-03)
+    // 본 파일이 깨져 .bak 에서 읽은 실행: 깨진 파일로 .bak 을 덮어쓰지 않게
     func skipBackup() { queue.sync { backedUp = true } }
 
     func save(_ state: AppState) {

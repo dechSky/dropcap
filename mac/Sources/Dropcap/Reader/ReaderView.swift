@@ -345,7 +345,7 @@ struct ReaderView: View {
                     ExternalLink.open(model.item.link)
                 } label: { Label("브라우저에서 열기", systemImage: "safari") }
                 .help("원문을 브라우저에서 열기")
-                if let u = URL(string: model.item.link), URLSafety.isPublicHTTP(u) { ShareLink(item: u) } // 주소가 이상하면 공유 단추를 숨김(A-37)
+                if let u = URL(string: model.item.link), URLSafety.isPublicHTTP(u) { ShareLink(item: u) } // 주소가 이상하면 공유 단추를 숨김
             }
         }
         .task { await model.load() }

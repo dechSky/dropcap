@@ -324,7 +324,7 @@ struct URLSafetyDNSTests {
 
 
 @Suite struct CategoryBoundaryTests {
-    @Test func noPartialWordMatches() { // A-08
+    @Test func noPartialWordMatches() { // 낱말 일부에 걸리지 않음
         #expect(NewsCategory.classify("The impact of rapid growth in capital markets") == .other)
         #expect(NewsCategory.classify("A flaw that may happen in urban areas") == .other)
         #expect(NewsCategory.classify("EU passes the AI Act") == .policy)

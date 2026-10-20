@@ -1,4 +1,4 @@
-// 맥 Extras2Tests.swift 를 옮긴 것: 받는 크기 상한(S-12) · 지켜볼 낱말(N-27) · 내 기록 내보내기·가져오기(P-08) · 번역 긴 문단·엔진(T-08) · A-31
+// 맥 Extras2Tests.swift 를 옮긴 것: 받는 크기 상한(S-12) · 지켜볼 낱말(N-27) · 내 기록 내보내기·가져오기(P-08) · 번역 긴 문단·엔진(T-08) · guid·link 가 빈 글의 id
 use chrono::{TimeZone, Utc};
 use dropcap_core::backup::{self, Failure, Summary};
 use dropcap_core::feed_parser;
@@ -341,7 +341,7 @@ async fn engine_comes_from_cache_not_global() {
     assert_eq!(none, translator::Engine::None);
 }
 
-// MARK: 5. A-31: guid·link 가 모두 빈 글
+// MARK: 5. guid·link 가 모두 빈 글
 #[test]
 fn entries_without_guid_or_link_get_distinct_stable_ids() {
     let xml = r#"<rss><channel>

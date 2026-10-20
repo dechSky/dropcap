@@ -255,7 +255,7 @@ pub async fn resolve(input: &str) -> Result<Found, Failure> {
                     }
                 }
             }
-            // 뿌리 주소: IPv6·포트도 그대로(맥 A-01)
+            // 뿌리 주소: IPv6·포트도 그대로(맥과 같음)
             let mut r = base.clone();
             r.set_path("");
             r.set_query(None);

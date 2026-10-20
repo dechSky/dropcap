@@ -171,7 +171,7 @@ final class ArticleService {
         guard var art = got else {
             if !interactive { // 미리 받기 실패는 조용히 넘기고, 열 때 다시 시도
                 memory.removeValue(forKey: item.link)
-                order.removeAll { $0 == item.link } // 다시 준비할 때 LRU 목록에 두 번 들어가지 않게(A-23)
+                order.removeAll { $0 == item.link } // 다시 준비할 때 LRU 목록에 두 번 들어가지 않게
                 return PreparedArticle(stage: .failed, title: item.displayTitle, originalTitle: item.title)
             }
             PaywallBook.shared.record(item, failed: true, blocked: false)
@@ -279,7 +279,7 @@ extension ArticleService {
             async let finished = send()
             var emitted = false
             for await (got, engine) in stream {
-                if engine != .none { a.engine = engine.rawValue } // 이 기사에 실제로 쓴 엔진(A-24)
+                if engine != .none { a.engine = engine.rawValue } // 이 기사에 실제로 쓴 엔진(T-08)
                 for (g, out) in got.sorted(by: { $0.key < $1.key }) { place(g, out) }
                 a.progress = received.count
                 a.translated = a.blocks.contains { $0.original != nil }

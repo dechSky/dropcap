@@ -64,7 +64,7 @@ final class ArticleExtractor: NSObject, WKNavigationDelegate {
     private var web: WKWebView?
     private var continuation: CheckedContinuation<Void, Never>?
     private(set) var trace = ExtractTrace()
-    private var loadDone = false // 이번 기다림이 끝났다(다 뜸·실패·시간 초과) — 늦게 등록된 기다림은 바로 깨운다(A-22)
+    private var loadDone = false // 이번 기다림이 끝났다(다 뜸·실패·시간 초과) — 늦게 등록된 기다림은 바로 깨운다
     private static let readability = (try? String(contentsOf: Resources.url("Readability.js"), encoding: .utf8)) ?? ""
 
     static let script = """

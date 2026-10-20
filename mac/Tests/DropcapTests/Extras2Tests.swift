@@ -49,7 +49,7 @@ final class LocalHTTP: @unchecked Sendable {
     deinit { listener.cancel() }
 }
 
-// MARK: 1. 받는 크기 상한(R-2 · A-10)
+// MARK: 1. 받는 크기 상한(S-12)
 @Suite(.serialized) struct FetchLimitTests {
     static let server = try! LocalHTTP { path in
         switch path {
@@ -154,7 +154,7 @@ final class LocalHTTP: @unchecked Sendable {
     }
 }
 
-// MARK: 3. 내 기록 내보내기·가져오기(P-08 · D-14)
+// MARK: 3. 내 기록 내보내기·가져오기(P-08)
 @Suite struct BackupTests {
     private func news(_ id: String) -> NewsItem {
         NewsItem(id: id, title: "T\(id)", titleKo: nil, link: "https://a.example/\(id)", date: Date(timeIntervalSince1970: 1_800_000_000),
@@ -246,7 +246,7 @@ final class LocalHTTP: @unchecked Sendable {
 
 // MARK: 4. 점검 남은 작은 문제
 @Suite struct AuditLeftoverTests {
-    @Test func longParagraphSplitsAtSentences() { // A-25
+    @Test func longParagraphSplitsAtSentences() { // 긴 문단은 문장 단위로
         let sentence = "This is a sentence about the economy and markets today. "
         let text = String(repeating: sentence, count: 120) // 약 6800자
         let chunks = Translator.sentenceChunks(text, max: Translator.requestLimit)
@@ -260,7 +260,7 @@ final class LocalHTTP: @unchecked Sendable {
         #expect(Translator.sentenceChunks("짧은 글", max: 4500) == ["짧은 글"])
     }
 
-    @Test func engineComesFromCacheNotGlobal() async { // A-24
+    @Test func engineComesFromCacheNotGlobal() async { // 엔진은 기사마다(T-08)
         let t = Translator()
         await t.remember("Cached apple sentence", "캐시된 문장", engine: .apple)
         let r = await t.translateManyReporting(["Cached apple sentence"])
@@ -269,7 +269,7 @@ final class LocalHTTP: @unchecked Sendable {
         #expect(none.engine == .none)
     }
 
-    @Test func entriesWithoutGuidOrLinkGetDistinctStableIDs() throws { // A-31
+    @Test func entriesWithoutGuidOrLinkGetDistinctStableIDs() throws { // guid·link 가 빈 글의 id
         let xml = """
         <rss><channel>
         <item><title>First</title><pubDate>Mon, 12 Oct 2026 09:00:00 GMT</pubDate></item>
@@ -284,7 +284,7 @@ final class LocalHTTP: @unchecked Sendable {
         #expect(FeedParser.fallbackID("A", "1") != FeedParser.fallbackID("A", "2"))
     }
 
-    @Test func folderMigrationResumesAfterPartialFailure() throws { // A-32
+    @Test func folderMigrationResumesAfterPartialFailure() throws { // 폴더 옮기기 이어 하기
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent("dropcap-mig-\(UUID().uuidString)")
         defer { try? fm.removeItem(at: root) }
@@ -308,7 +308,7 @@ final class LocalHTTP: @unchecked Sendable {
         #expect(!Store.migrateOldFolder(from: root.appendingPathComponent("none"), to: root.appendingPathComponent("x")))
     }
 
-    @Test func guardWithoutMetricsGivesUpAndLateWaitDoesNotHang() async { // A-22
+    @Test func guardWithoutMetricsGivesUpAndLateWaitDoesNotHang() async { // 늦은 기다림도 멈추지 않음
         let g = RequestGuard()
         let t0 = Date()
         #expect(await g.isSafe() == false)  // 측정값이 끝내 안 오면 막음

@@ -49,4 +49,20 @@ public class FeedAmpRepairTests
         Assert.Null(FeedParser.RepairAmpersands(Encoding.UTF8.GetBytes(ok)));
         Assert.Null(FeedParser.RepairAmpersands([0xFF, 0xFE, 0x26, 0x00])); // UTF-16 은 건드리지 않음
     }
+
+    // 고쳐서도 다른 곳(닫히지 않은 주석)에서 깨지면, 처음 읽은 것(첫 & 앞까지)보다 더 많이 읽은 고친 쪽을 쓴다(맥 brokenTwiceKeepsTheLongerRead)
+    private const string BrokenTwice = """
+        <rss version="2.0"><channel><title>T</title>
+        <item><title>Tom & Jerry</title><link>https://example.com/1</link><guid>1</guid></item>
+        <item><title>Two</title><link>https://example.com/2</link><guid>2</guid></item>
+        <item><title>Three</title><link>https://example.com/3</link><guid>3</guid></item>
+        <!-- never closed
+        """;
+
+    [Fact]
+    public void BrokenTwiceKeepsTheLongerRead()
+    {
+        var items = FeedParser.ParseFeed(Encoding.UTF8.GetBytes(BrokenTwice));
+        Assert.Equal(new[] { "Tom & Jerry", "Two", "Three" }, items.Select(i => i.Title).ToArray());
+    }
 }

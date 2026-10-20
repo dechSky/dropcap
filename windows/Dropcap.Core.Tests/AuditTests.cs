@@ -221,7 +221,7 @@ public class SiteNameTests
 public class CategoryBoundaryTests
 {
     [Fact]
-    public void NoPartialWordMatches() // A-08
+    public void NoPartialWordMatches() // 낱말 일부에 걸리지 않음
     {
         Assert.True(Categories.Classify("The impact of rapid growth in capital markets").IsOther());
         Assert.True(Categories.Classify("A flaw that may happen in urban areas").IsOther());

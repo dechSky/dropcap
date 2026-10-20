@@ -149,7 +149,7 @@ pub fn bg<T: Send + 'static>(fut: impl Future<Output = T> + Send + 'static, cb: 
 }
 
 // 기다리기만(결과 없이)
-#[allow(dead_code)] // 매거진 화면(새 FEATURES 까지 보류)에서 씀
+#[allow(dead_code)] // 매거진 화면에서 씀(지금은 쓰지 않는 것도 남겨 둠)
 pub fn bg_run(fut: impl Future<Output = ()> + Send + 'static) {
     ui().rt.spawn(fut);
 }

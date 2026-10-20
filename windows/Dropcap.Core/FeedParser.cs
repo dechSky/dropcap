@@ -17,6 +17,15 @@ public sealed class XNode(string name, Dictionary<string, string> attrs)
     public IEnumerable<XNode> All(string n) => Children.Where(c => c.Name == n);
     public string Value(string n) => Child(n)?.Text.ToString().Trim() ?? "";
     public string? Attr(string n) => Attrs.TryGetValue(n, out var v) ? v : null;
+
+    // 아래 요소 수(자신 빼고) — 깨진 피드를 두 번 읽었을 때 더 많이 읽은 쪽 고르기(재귀 대신 스택)
+    public int Count()
+    {
+        var n = 0;
+        var stack = new Stack<XNode>(Children);
+        while (stack.TryPop(out var c)) { n++; foreach (var x in c.Children) stack.Push(x); }
+        return n;
+    }
 }
 
 public class FeedException(string message) : Exception(message)
@@ -111,11 +120,13 @@ public static class FeedParser
     public static XNode Tree(byte[] data)
     {
         var (root, ok) = TreeOnce(data);
-        // 해석이 깨지면 엔티티가 아닌 & 만 &amp; 로 고쳐 한 번 더(Rest of World: 사진 주소의 '?width=380&dpr=2'). 다시도 깨지면 처음 읽은 데까지
+        // 해석이 깨지면 엔티티가 아닌 & 만 &amp; 로 고쳐 한 번 더(Rest of World: 사진 주소의 '?width=380&dpr=2').
+        // 다시도 깨지면 둘 중 더 많이 읽은 쪽(고친 & 뒤 다른 곳에서 깨져도 그 앞까지는 고친 쪽이 더 읽음)
         if (!ok && RepairAmpersands(data) is { } repaired)
         {
             var (again, ok2) = TreeOnce(repaired);
             if (ok2) return again;
+            if (again.Count() > root.Count()) root = again;
         }
         // 중간에 깨진 문서라도 읽은 데까지는 쓴다(맥: parse() 실패해도 나무가 있으면 사용)
         if (!ok && root.Children.Count == 0) throw FeedException.BadFormat();

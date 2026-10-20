@@ -234,7 +234,7 @@ impl Database {
             params![item.key(), json, when.map(ts), ts(first_seen), item.category().raw(), item.source_id, item.tier, cluster, item.image],
         );
         if let Err(e) = &r {
-            log::warn!("[DB] 기사 넣기 실패: {e}"); // 잠김·디스크 가득 등(A-33)
+            log::warn!("[DB] 기사 넣기 실패: {e}"); // 잠김·디스크 가득 등
         }
         r.is_ok()
     }

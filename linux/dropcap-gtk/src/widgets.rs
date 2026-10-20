@@ -88,7 +88,7 @@ pub fn chip(text: &str, color_hex: &str) -> gtk::Label {
     l
 }
 
-#[allow(dead_code)] // 매거진 화면(새 FEATURES 까지 보류)에서 씀
+#[allow(dead_code)] // 매거진 화면에서 씀(지금은 쓰지 않는 것도 남겨 둠)
 pub fn category_chip(cat: NewsCategory) -> gtk::Label {
     chip(cat.label(), cat.color(theme::is_dark()))
 }
@@ -140,14 +140,14 @@ pub fn load_texture(url: &str, cb: impl FnOnce(Option<gdk::Texture>) + 'static) 
 // 사진 칸: 불러오는 동안·사진이 없을 때는 분야 색의 은은한 그라데이션과 기호(맥 RemoteImage).
 // 주소가 바뀌면 이전 사진을 비우고 다시(M-21).
 #[derive(Clone)]
-#[allow(dead_code)] // 매거진 화면(새 FEATURES 까지 보류)에서 씀
+#[allow(dead_code)] // 매거진 화면에서 씀(지금은 쓰지 않는 것도 남겨 둠)
 pub struct RemoteImage {
     pub root: gtk::Overlay,
     picture: gtk::Picture,
     current: Rc<RefCell<Option<String>>>,
 }
 
-#[allow(dead_code)] // 매거진 화면(새 FEATURES 까지 보류)에서 씀
+#[allow(dead_code)] // 매거진 화면에서 씀(지금은 쓰지 않는 것도 남겨 둠)
 impl RemoteImage {
     pub fn new(url: Option<&str>, category: NewsCategory, accent_hex: &str, w: i32, h: i32) -> RemoteImage {
         let bg_area = gtk::DrawingArea::builder().content_width(w).content_height(h).hexpand(true).vexpand(true).build();

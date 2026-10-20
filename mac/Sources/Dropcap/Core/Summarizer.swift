@@ -10,7 +10,7 @@ enum Summarizer {
         switch SystemLanguageModel.default.availability {
         case .available: return true
         case .unavailable(let why):
-            if !loggedUnavailable { // 기사마다·화면을 그릴 때마다 같은 로그가 쌓이지 않게 한 번만(A-34)
+            if !loggedUnavailable { // 기사마다·화면을 그릴 때마다 같은 로그가 쌓이지 않게 한 번만
                 loggedUnavailable = true
                 NSLog("[요약] Apple Intelligence 를 쓸 수 없음: %@", String(describing: why))
             }
@@ -18,7 +18,7 @@ enum Summarizer {
         }
     }
 
-    // 분야별 저녁 정리(N-26 · D-13): 묶음으로 모인 기사들로 "오늘 이 분야에서 무슨 일이 · 왜" 세 줄. 줄마다 근거 기사 번호를 단다.
+    // 분야별 저녁 정리(N-26): 묶음으로 모인 기사들로 "오늘 이 분야에서 무슨 일이 · 왜" 세 줄. 줄마다 근거 기사 번호를 단다.
     static func briefing(section: String, items: [NewsItem]) async -> [SectionBrief.Line]? {
         guard #available(macOS 26.0, *), available, items.count >= 2 else { return nil }
         let session = LanguageModelSession(instructions: """

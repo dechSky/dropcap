@@ -47,7 +47,7 @@ enum NewsCategory: String, Codable, CaseIterable, Identifiable {
         (.model, ["model", "gpt", "claude", "gemini", "llama", "release", "launch", "introducing", "announc", "api", "agent", "app", "feature", "update", "open-source", "open source", "weights", "모델", "출시", "공개", "발표", "업데이트", "에이전트", "오픈소스", "기능"]),
     ]
 
-    // 영어는 낱말 경계로(짧은 말은 온전한 낱말만, 긴 어간은 낱말 앞부분) — 'impact'의 act, 'capital'의 api 에 걸리지 않게(A-08).
+    // 영어는 낱말 경계로(짧은 말은 온전한 낱말만, 긴 어간은 낱말 앞부분) — 'impact'의 act, 'capital'의 api 에 걸리지 않게.
     // 한국어는 조사가 붙으므로 부분 일치
     private static let compiled: [(NewsCategory, NSRegularExpression?, [String])] = rules.map { cat, words in
         let english = words.map { $0.trimmingCharacters(in: .whitespaces) }.filter { $0.unicodeScalars.allSatisfy { $0.isASCII } }

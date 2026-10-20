@@ -161,7 +161,7 @@ public sealed class Translator
 
     public async Task<List<string>> TranslateManyAsync(IReadOnlyList<string> texts) => (await TranslateManyReportingAsync(texts)).Texts;
 
-    // 번역과 함께 '이번 번역에 쓴 엔진'(T-08 · A-24: 앱 전체에 하나인 LastEngine 은 다른 번역이 동시에 돌면 틀리게 보였다).
+    // 번역과 함께 '이번 번역에 쓴 엔진'(T-08: 앱 전체에 하나인 LastEngine 은 다른 번역이 동시에 돌면 틀리게 보였다).
     // 윈도우는 엔진이 구글 하나라 새로 번역했거나 캐시(=구글 번역 결과)에서 꺼낸 것이 있으면 구글, 번역할 것이 없었으면 '번역 안 함'.
     public async Task<(List<string> Texts, string Engine)> TranslateManyReportingAsync(IReadOnlyList<string> texts)
     {
@@ -230,7 +230,7 @@ public sealed class Translator
     public const int ParallelBatches = 4;
     public const int RetryLimit = 40;
 
-    // 한 번에 보낼 수 있는 길이(구글 공개 엔드포인트). 이보다 긴 문단은 문장 단위로 나눠 보내고 이어 붙인다(T-08 · A-25: 예전엔 뒤가 잘렸다)
+    // 한 번에 보낼 수 있는 길이(구글 공개 엔드포인트). 이보다 긴 문단은 문장 단위로 나눠 보내고 이어 붙인다(T-08: 예전엔 뒤가 잘렸다)
     public const int RequestLimit = 4500;
 
     private async Task<string?> Google(string text, string target)

@@ -837,7 +837,7 @@ fn autostart_file() {
 #[test]
 fn catalog_like_mac() {
     let c = &*dropcap_core::channels::CATALOG;
-    assert_eq!(c.len(), 37); // 맥 ChannelCatalog.all 과 같은 수(FEATURES 의 36 은 맥 목록을 센 실제 값 37 과 다름)
+    assert_eq!(c.len(), 37); // 맥 ChannelCatalog.all 과 같은 수(FEATURES K-01 의 37)
     let groups: std::collections::HashSet<_> = c.iter().filter_map(|s| s.group.clone()).collect();
     assert_eq!(groups.len(), 8);
     let simon = c.iter().find(|s| s.id == "cat-simonw").unwrap();
@@ -1202,4 +1202,18 @@ fn repair_leaves_entities_cdata_and_comments_alone() {
 fn well_formed_feed_needs_no_repair() {
     let ok = "<rss><channel><item><title>A &amp; B &lt;3 &#169;</title><description><![CDATA[x & y]]></description></item></channel></rss>";
     assert!(feed_parser::repair_ampersands(ok).is_none());
+}
+
+// 고쳐서도 다른 곳(닫히지 않은 주석)에서 깨지면, 처음 읽은 것(첫 & 앞까지)보다 더 많이 읽은 고친 쪽을 쓴다(맥 brokenTwiceKeepsTheLongerRead)
+const BROKEN_TWICE: &str = r#"<rss version="2.0"><channel><title>T</title>
+<item><title>Tom & Jerry</title><link>https://example.com/1</link><guid>1</guid></item>
+<item><title>Two</title><link>https://example.com/2</link><guid>2</guid></item>
+<item><title>Three</title><link>https://example.com/3</link><guid>3</guid></item>
+<!-- never closed
+"#;
+
+#[test]
+fn broken_twice_keeps_the_longer_read() {
+    let e = feed_parser::parse_feed(BROKEN_TWICE.as_bytes()).unwrap();
+    assert_eq!(e.iter().map(|x| x.title.as_str()).collect::<Vec<_>>(), ["Tom & Jerry", "Two", "Three"]);
 }

@@ -119,7 +119,7 @@ pub fn apply() {
 }
 
 // 맥 RemoteImage 와 같은 바탕: 분야 색의 은은한 그라데이션
-#[allow(dead_code)] // 매거진 화면(새 FEATURES 까지 보류)에서 씀
+#[allow(dead_code)] // 매거진 화면에서 씀(지금은 쓰지 않는 것도 남겨 둠)
 pub fn rgba(hex: &str, a: f64) -> gdk::RGBA {
     let (r, g, b) = dropcap_core::models::hex_rgb(hex);
     gdk::RGBA::new(r as f32, g as f32, b as f32, a as f32)

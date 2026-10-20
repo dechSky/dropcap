@@ -161,7 +161,7 @@ public static class ChannelResolver
                 if (Uri.TryCreate(url, href, out var u) && await TryCheckAsync(u.AbsoluteUri, ItemKind.Article, home: url.AbsoluteUri, ct: ct) is { } f1)
                     return f1;
         }
-        var root = url.GetLeftPart(UriPartial.Authority); // IPv6 주소([..])·포트도 그대로(맥 A-01)
+        var root = url.GetLeftPart(UriPartial.Authority); // IPv6 주소([..])·포트도 그대로(맥과 같음)
         foreach (var p in new[] { "/feed", "/rss", "/feed.xml", "/atom.xml", "/index.xml", "/rss.xml", "/blog/feed", "/blog/rss.xml" })
             if (await TryCheckAsync(root + p, ItemKind.Article, home: root, ct: ct) is { } f2) return f2;
         throw Failure.NotFound();

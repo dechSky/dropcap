@@ -437,7 +437,7 @@ final class AppModel: ObservableObject {
     // 공식 발표 > 언론 > 국내 순으로 대표를 고른다.
     func groupForProbe(_ items: [NewsItem]) async -> [NewsItem] { await groupSameStory(items) } // 성능 측정용
 
-    // 같은 소식 묶기(R-4: StoryGrouper 한 곳). 문장 임베딩 비교는 화면 줄기 밖에서 하고, 최근 목록에 붙일 출처만 돌아와 반영
+    // 같은 소식 묶기(판단은 StoryGrouper 한 곳). 문장 임베딩 비교는 화면 줄기 밖에서 하고, 최근 목록에 붙일 출처만 돌아와 반영
     private func groupSameStory(_ items: [NewsItem]) async -> [NewsItem] {
         guard !items.isEmpty else { return [] }
         let recent = state.recent
@@ -659,7 +659,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    // 아침 브리핑을 보낼 수 있는 때: 정한 시각부터 정오 전까지(정오 이후 시각을 골랐으면 그 한 시간). 밤에 처음 켜도 '아침 브리핑'이 뜨지 않게(A-20)
+    // 아침 브리핑을 보낼 수 있는 때: 정한 시각부터 정오 전까지(정오 이후 시각을 골랐으면 그 한 시간). 밤에 처음 켜도 '아침 브리핑'이 뜨지 않게
     nonisolated static func digestWindow(hour h: Int, digestHour: Int) -> Bool { h >= digestHour && h < max(12, digestHour + 1) }
 
     // 지난 24시간 소식

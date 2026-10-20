@@ -89,7 +89,7 @@ public static class Summarizer
         catch { return null; }
     }
 
-    // 분야별 저녁 정리(N-26 · D-13): 묶음으로 모인 기사들로 "오늘 이 분야에서 무슨 일이 · 왜" 세 줄. 줄마다 근거 기사 번호를 단다.
+    // 분야별 저녁 정리(N-26): 묶음으로 모인 기사들로 "오늘 이 분야에서 무슨 일이 · 왜" 세 줄. 줄마다 근거 기사 번호를 단다.
     // 맥은 Apple Intelligence, 윈도우는 이 PC 의 Ollama(T-06 과 같은 곳). 없으면 null — 매거진에 상자를 싣지 않는다.
     public const string BriefingInstructions = """
         당신은 뉴스 편집자입니다. 번호가 붙은 기사 제목과 요약만 읽고, 오늘 이 분야에서 무슨 일이 있었고 왜 중요한지 한국어 세 줄로 정리합니다.

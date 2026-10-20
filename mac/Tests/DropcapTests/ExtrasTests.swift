@@ -161,7 +161,7 @@ private func tempDB() throws -> (Database, URL) {
     }
 }
 
-// MARK: 3. 오늘 호 완독(M-23 · D-11)
+// MARK: 3. 오늘 호 완독(M-23)
 @Suite struct TodayIssueTests {
     private func page(_ section: String?, _ ids: [String], kind: String? = nil) -> (section: Dropcap.Issue.Section, items: [NewsItem]) {
         (Dropcap.Issue.Section(category: .other, keys: ids, kind: kind, section: section), ids.map { news($0, source: "s") })
@@ -195,7 +195,7 @@ private func tempDB() throws -> (Database, URL) {
     }
 }
 
-// MARK: 4. 분야별 저녁 정리(N-26 · D-13)
+// MARK: 4. 분야별 저녁 정리(N-26)
 @Suite struct EveningBriefTests {
     @Test func parsesLinesWithEvidence() {
         let text = """

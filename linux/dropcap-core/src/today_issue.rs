@@ -1,4 +1,4 @@
-// 오늘 호 완독(M-23 · D-11) — 맥 Core/TodayIssue.swift.
+// 오늘 호 완독(M-23) — 맥 Core/TodayIssue.swift.
 // 오늘 호의 대표 기사(표지 + 주요 뉴스·고른 분야마다 첫 줄)를 다 읽으면 '오늘 호를 다 읽었어요'로 끝을 알리고 더 밀어 넣지 않는다.
 use crate::magazine::Section;
 use crate::models::NewsItem;

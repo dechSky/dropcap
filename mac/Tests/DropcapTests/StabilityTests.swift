@@ -262,7 +262,7 @@ final class SilentTranslate: URLProtocol {
     }
 
     // 기사 하나에만 정해진 실패(그 줄의 저장된 JSON 이 깨져 덮어쓰기가 실패)가 있으면 그 기사가 늘 맨 앞에서 실패해
-    // 뒤 기사를 모두 미뤘다(review-4 L4). 바로 뒤 기사가 들어가면 그 기사만의 실패로 보고 이어 가고, strikeLimit 번이면 버린다
+    // 뒤 기사를 모두 미뤘다. 바로 뒤 기사가 들어가면 그 기사만의 실패로 보고 이어 가고, strikeLimit 번이면 버린다
     @Test func oneBadItemDoesNotBlockTheRest() async throws {
         let dir = StabilityTests.tempDir("dbpoison")
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -273,7 +273,7 @@ final class SilentTranslate: URLProtocol {
         #expect(sqlite3_open(db.file.path, &raw) == SQLITE_OK)
         #expect(sqlite3_exec(raw, "UPDATE items SET json='{broken' WHERE key='\(Self.item(21).key)'", nil, nil, nil) == SQLITE_OK)
         sqlite3_close(raw)
-        #expect(!db.upsert(Self.item(21), cluster: nil)) // 이 기사만 늘 실패
+        #expect(db.upsertResult(Self.item(21), cluster: nil) == .item) // 이 기사만 늘 실패(깨진 JSON — DB 전체 문제가 아님)
         _ = await editor.ingest([Self.item(21), Self.item(22), Self.item(23)], followed: [])
         #expect(db.exists(Self.item(22).key) && db.exists(Self.item(23).key)) // 뒤 기사는 들어감
         #expect(await editor.retry.map(\.id) == ["w21"])
@@ -285,6 +285,96 @@ final class SilentTranslate: URLProtocol {
         // 맨 끝에서 실패하면(뒤 기사가 없어 DB 가 멀쩡한지 모름) 버리지 않고 다음 번으로
         _ = await editor.ingest([Self.item(21)], followed: [])
         #expect(await editor.retry.map(\.id) == ["w21"])
+    }
+
+    // 디스크가 거의 차 큰 기사만 실패(SQLITE_FULL)하고 바로 뒤 작은 기사는 들어가도, 큰 기사를 '그 기사만의 실패'로 세어 버리지 않는다.
+    // DB 전체 문제인 결과 코드는 셈하지 않고 뒤와 함께 미룬다. 디스크 가득은 연결의 쪽 수 상한(max_page_count)으로 흉내
+    @Test func diskFullIsNotCountedAgainstAnItem() async throws {
+        let dir = StabilityTests.tempDir("dbfull")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let db = Database(file: dir.appendingPathComponent("m.sqlite"), busyTimeoutMs: 100)
+        let editor = Editor(db: db)
+        var spare = Self.item(40)
+        spare.summary = String(repeating: "spare page ", count: 3_000)
+        _ = await editor.ingest([spare], followed: [])
+        spare.summary = ""
+        #expect(db.upsert(spare, cluster: nil)) // 넘침 쪽을 비워 빈 쪽을 몇 개 남긴다 — 작은 기사는 들어가게
+        var big = Self.item(41)
+        big.summary = String(repeating: "harbour budget ", count: 20_000) // 넘침 쪽이 여럿 필요
+        db.execForTests("PRAGMA max_page_count=1") // 지금 크기보다 작게는 못 줄여 지금 크기가 상한이 된다
+        #expect(db.upsertResult(big, cluster: nil) == .wholeDB)
+        for n in 0...Editor.strikeLimit { // 처음만 큰 기사를 넣고, 다음부터는 다시 넣기 목록에 든 큰 기사 뒤에 작은 새 기사 하나씩
+            let small = Self.item(n == 0 ? 42 : 50 + n)
+            _ = await editor.ingest(n == 0 ? [big, small] : [small], followed: [])
+            #expect(await editor.retry.map(\.id).first == "w41", "큰 기사는 버리지 않고 미룸")
+            #expect(db.exists(small.key), "큰 기사가 앞에서 막혀도 작은 새 기사는 들어감")
+        }
+        db.execForTests("PRAGMA max_page_count=1073741823")
+        _ = await editor.ingest([], followed: [])
+        #expect(([big.key] + ([42] + (1...Editor.strikeLimit).map { 50 + $0 }).map { Self.item($0).key }).allSatisfy(db.exists))
+        #expect(await editor.retry.isEmpty)
+    }
+
+    // 디스크가 거의 찬 채로 큰 기사 여럿이 다시 넣기 목록 앞에 있어도(잇따라 실패) 뒤 작은 새 기사는 들어간다
+    @Test func severalBigItemsDoNotBlockSmall() async throws {
+        let dir = StabilityTests.tempDir("dbfull3")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let db = Database(file: dir.appendingPathComponent("m.sqlite"), busyTimeoutMs: 100)
+        let editor = Editor(db: db)
+        var spare = Self.item(70)
+        spare.summary = String(repeating: "spare page ", count: 3_000)
+        _ = await editor.ingest([spare], followed: [])
+        spare.summary = ""
+        #expect(db.upsert(spare, cluster: nil))
+        let bigs = [71, 72, 73].map { i -> NewsItem in
+            var b = Self.item(i); b.summary = String(repeating: "harbour budget \(i) ", count: 20_000); return b
+        }
+        db.execForTests("PRAGMA max_page_count=1")
+        #expect(bigs.allSatisfy { db.upsertResult($0, cluster: nil) == .wholeDB })
+        for n in 0..<3 {
+            let small = Self.item(80 + n)
+            _ = await editor.ingest(n == 0 ? bigs + [small] : [small], followed: [])
+            #expect(db.exists(small.key), "큰 기사 셋이 앞에서 실패해도 작은 새 기사는 들어감")
+            #expect(await editor.retry.map(\.id) == ["w71", "w72", "w73"], "큰 기사는 버리지 않고 미룸")
+        }
+        db.execForTests("PRAGMA max_page_count=1073741823")
+        _ = await editor.ingest([], followed: [])
+        #expect(bigs.map(\.key).allSatisfy(db.exists))
+        #expect(await editor.retry.isEmpty)
+    }
+
+    // 잠겨 있으면 두 번 기다린 뒤 나머지는 기다리지 않고 미룬다(기사마다 기다리면 받아 넣기가 기사 수 × 기다림만큼 멈춤)
+    @Test func lockedWaitsTwiceThenDefers() async throws {
+        let dir = StabilityTests.tempDir("dblock2")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let db = Database(file: dir.appendingPathComponent("m.sqlite"), busyTimeoutMs: 100)
+        let editor = Editor(db: db)
+        #expect(db.upsert(Self.item(90), cluster: nil)) // 표를 미리 만들어 둠
+        let lock = DBLocker(path: db.file.path)
+        #expect(lock.lock(seconds: 6)) // 다른 시험이 함께 돌아 느려도 받아 넣기 동안 풀리지 않게 넉넉히
+        let t0 = ProcessInfo.processInfo.systemUptime
+        let gaveUp = db.busyGiveUpsForTests
+        _ = await editor.ingest((91...102).map(Self.item), followed: [])
+        #expect(db.busyGiveUpsForTests - gaveUp == 2, "기다림 두 번(시간 대신 횟수로 — 다른 시험과 나란히 돌아도 같게)")
+        #expect(await editor.retry.count == 12)
+        try await Task.sleep(for: .seconds(max(0, 6 - (ProcessInfo.processInfo.systemUptime - t0)) + 0.3))
+    }
+
+    // 다시 넣기 목록에 있는 기사가 새 기사로 또 오면(쓰기가 계속 실패) 목록에는 한 번만 남는다
+    @Test func retryKeepsOneCopyPerKey() async throws {
+        let dir = StabilityTests.tempDir("dbdup")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let db = Database(file: dir.appendingPathComponent("m.sqlite"), busyTimeoutMs: 100)
+        let editor = Editor(db: db)
+        let lock = DBLocker(path: db.file.path)
+        #expect(lock.lock(seconds: 6))
+        _ = await editor.ingest([Self.item(60), Self.item(61)], followed: [])
+        _ = await editor.ingest([Self.item(61), Self.item(62)], followed: [])
+        #expect(await editor.retry.map(\.id).sorted() == ["w60", "w61", "w62"])
+        try await Task.sleep(for: .seconds(6.2))
+        _ = await editor.ingest([], followed: [])
+        #expect([60, 61, 62].map { Self.item($0).key }.allSatisfy(db.exists))
+        #expect(await editor.retry.isEmpty)
     }
 
     // 잠금을 기다리는 동안 메인 스레드(화면)가 멈추지 않게 — 메인에서 부른 쓰기는 0.1초만 기다리고 포기한다

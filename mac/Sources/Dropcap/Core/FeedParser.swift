@@ -11,6 +11,12 @@ final class XNode {
     func child(_ n: String) -> XNode? { children.first { $0.name == n } }
     func all(_ n: String) -> [XNode] { children.filter { $0.name == n } }
     func value(_ n: String) -> String { child(n)?.text.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
+    // 아래 요소 수(자신 빼고) — 깨진 피드를 두 번 읽었을 때 더 많이 읽은 쪽 고르기(재귀 대신 스택)
+    var count: Int {
+        var n = 0, stack = children
+        while let c = stack.popLast() { n += 1; stack += c.children }
+        return n
+    }
 }
 
 private final class TreeBuilder: NSObject, XMLParserDelegate {
@@ -132,11 +138,14 @@ enum FeedParser {
     }
 
     static func tree(_ data: Data) throws -> XNode {
-        let (root, ok) = treeOnce(data)
-        // 해석이 깨지면 엔티티가 아닌 & 만 &amp; 로 고쳐 한 번 더(Rest of World: 사진 주소의 '?width=380&dpr=2'). 다시도 깨지면 처음 읽은 데까지
+        let (first, ok) = treeOnce(data)
+        var root = first
+        // 해석이 깨지면 엔티티가 아닌 & 만 &amp; 로 고쳐 한 번 더(Rest of World: 사진 주소의 '?width=380&dpr=2').
+        // 다시도 깨지면 둘 중 더 많이 읽은 쪽(고친 & 뒤 다른 곳에서 깨져도 그 앞까지는 고친 쪽이 더 읽음)
         if !ok, let fixed = repairAmpersands(data) {
             let (again, ok2) = treeOnce(fixed)
             if ok2 { return again }
+            if again.count > root.count { root = again }
         }
         guard ok || !root.children.isEmpty else { throw FeedError.badFormat }
         return root
@@ -198,7 +207,7 @@ enum FeedParser {
         return changed && out.count <= repairMaxBytes ? Data(out) : nil
     }
 
-    // guid·link 가 모두 빈 글의 id: 제목+날짜로 만든 고정 값(A-31: 빈 id 로 key 가 `출처|` 로 겹쳐 하나만 남던 문제). 실행마다 같다
+    // guid·link 가 모두 빈 글의 id: 제목+날짜로 만든 고정 값(빈 id 로 key 가 `출처|` 로 겹쳐 하나만 남던 문제). 실행마다 같다
     static func fallbackID(_ title: String, _ date: String) -> String {
         var h: UInt64 = 0xcbf29ce484222325 // FNV-1a
         for b in (title.trimmingCharacters(in: .whitespacesAndNewlines) + "|" + date.trimmingCharacters(in: .whitespacesAndNewlines)).utf8 {

@@ -26,6 +26,16 @@ impl XNode {
     pub fn attr(&self, k: &str) -> Option<&str> {
         self.attrs.iter().find(|(a, _)| a == k).map(|(_, v)| v.as_str())
     }
+    // 아래 요소 수(자신 빼고) — 깨진 피드를 두 번 읽었을 때 더 많이 읽은 쪽 고르기(재귀 대신 스택)
+    pub fn count(&self) -> usize {
+        let mut n = 0;
+        let mut stack: Vec<&XNode> = self.children.iter().collect();
+        while let Some(c) = stack.pop() {
+            n += 1;
+            stack.extend(c.children.iter());
+        }
+        n
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -107,13 +117,17 @@ pub const MAX_DEPTH: usize = 64;
 
 pub fn tree(data: &[u8]) -> Result<XNode, FeedError> {
     let text = decode_xml(data);
-    let (root, failed) = tree_once(&text);
-    // 해석이 깨지면 엔티티가 아닌 & 만 &amp; 로 고쳐 한 번 더(Rest of World: 사진 주소의 '?width=380&dpr=2'). 다시도 깨지면 처음 읽은 데까지
+    let (mut root, failed) = tree_once(&text);
+    // 해석이 깨지면 엔티티가 아닌 & 만 &amp; 로 고쳐 한 번 더(Rest of World: 사진 주소의 '?width=380&dpr=2').
+    // 다시도 깨지면 둘 중 더 많이 읽은 쪽(고친 & 뒤 다른 곳에서 깨져도 그 앞까지는 고친 쪽이 더 읽음)
     if failed {
         if let Some(fixed) = repair_ampersands(&text) {
             let (again, failed2) = tree_once(&fixed);
             if !failed2 {
                 return Ok(again);
+            }
+            if again.count() > root.count() {
+                root = again;
             }
         }
         if root.children.is_empty() {
@@ -343,7 +357,7 @@ pub fn feed_title(data: &[u8]) -> Option<String> {
     t.map(|t| plain::clean(&t))
 }
 
-// guid·link 가 모두 빈 글의 id: 제목+날짜로 만든 고정 값(A-31 · 맥 FeedParser.fallbackID 와 같은 FNV-1a·36진수).
+// guid·link 가 모두 빈 글의 id: 제목+날짜로 만든 고정 값(맥 FeedParser.fallbackID 와 같은 FNV-1a·36진수).
 // 빈 id 로 key 가 `출처|` 로 겹쳐 하나만 남던 문제. 실행마다·기기마다 같다
 pub fn fallback_id(title: &str, date: &str) -> String {
     let mut h: u64 = 0xcbf29ce484222325;

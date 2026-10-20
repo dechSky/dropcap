@@ -366,7 +366,7 @@ pub fn open_translate(tex: &gdk::Texture, url: &str, title: &str) {
     me.update();
     motion::present(&win);
     run(&me, url);
-    // 닫으면 바로 놓아 사진째 메모리에 남지 않게(A-35)
+    // 닫으면 바로 놓아 사진째 메모리에 남지 않게
     let keep = RefCell::new(Some(me));
     win.connect_close_request(move |w| {
         keep.borrow_mut().take();

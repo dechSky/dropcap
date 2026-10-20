@@ -48,10 +48,10 @@ actor ImageLoader {
     private func load(_ url: String) async -> NSImage? {
         let f = file(url)
         if let data = try? Data(contentsOf: f), let img = NSImage(data: data) {
-            try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: f.path) // 자주 보는 사진은 정리에서 늦게(A-26)
+            try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: f.path) // 자주 보는 사진은 정리에서 늦게
             return img
         }
-        guard let data = try? await FeedService.shared.fetch(url, limit: .image), // 8MB 를 넘으면 받다가 끊는다(R-2)
+        guard let data = try? await FeedService.shared.fetch(url, limit: .image), // 8MB 를 넘으면 받다가 끊는다(S-12)
               let cg = Self.decode(data) else { return nil }
         let rep = NSBitmapImageRep(cgImage: cg)
         if let jpg = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.82]) {

@@ -122,7 +122,7 @@ WindowMotion.present(w)                               // w.makeKeyAndOrderFront 
 | `Space` · `Radius` · `Font.ds…` · `Elevation` | `--sp-*` · `--r-*` · `--fs-*` · `--el-*` | `ds::space::*` · `ds::font::*`(크기·굵기 쌍, `label(…, font::BODY, …)`) · 모서리·그림자는 테마 CSS 에 같은 값 |
 | 동작 줄이기 | `.reduce-motion` + `@media (prefers-reduced-motion)` | `motion::enabled()`(gtk-enable-animations) |
 
-리눅스 화면 코드의 간격·글자는 `ds.rs` 토큰을 쓴다(맥과 같은 예외는 숫자 그대로). CSS 문자열 안 px 는 토큰과 같은 숫자로 적는다.
+리눅스 화면 코드의 간격·글자는 `ds.rs` 토큰을 쓴다(맥과 같은 예외는 숫자 그대로). CSS 문자열 안 px 는 토큰과 같은 숫자로 적는다. 읽기 창 왼쪽 가위 거터는 `space::XXXL`(40) — 본문 폭은 거터·오른쪽 여백 밖에서 그대로(맥 `ReaderView.gutter` 46 과 같은 규칙, 값은 판마다 다름).
 
 ## 시험
 

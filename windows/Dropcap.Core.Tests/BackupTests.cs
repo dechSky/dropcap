@@ -3,7 +3,7 @@ using Dropcap.Core;
 
 namespace Dropcap.Core.Tests;
 
-// 내 기록 내보내기·가져오기(P-08 · D-14). 맥 Extras2Tests 의 BackupTests 와 같은 경우 + 맥에서 만든 파일과 글자까지 같은지.
+// 내 기록 내보내기·가져오기(P-08). 맥 Extras2Tests 의 BackupTests 와 같은 경우 + 맥에서 만든 파일과 글자까지 같은지.
 public class BackupTests : IDisposable
 {
     private readonly TempDir tmp = new();

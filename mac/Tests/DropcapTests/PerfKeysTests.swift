@@ -15,7 +15,7 @@ private func tempDB() throws -> (Database, URL) {
     return (Database(file: d.appendingPathComponent("magazine.sqlite")), d)
 }
 
-// 같은 소식 판단 한 곳(R-4): 알림 목록 묶기와 매거진 스토리가 같은 판단을 쓴다
+// 같은 소식 판단 한 곳(C-15): 알림 목록 묶기와 매거진 스토리가 같은 판단을 쓴다
 @Suite struct StoryGrouperTests {
     private let a = news("OpenAI launches GPT-6 with new reasoning features", "verge")
     private let b = news("GPT-6 launches: OpenAI reveals reasoning features", "techcrunch", hoursAgo: 2)
@@ -67,7 +67,7 @@ private func tempDB() throws -> (Database, URL) {
     }
 }
 
-// 매거진 편집(R-1): 화면 밖 Editor 가 같은 결과를 낸다
+// 매거진 편집(화면 줄기 밖): 화면 밖 Editor 가 같은 결과를 낸다
 @Suite struct EditorTests {
     @Test func representativesInOneQuery() throws {
         let (db, d) = try tempDB(); defer { try? FileManager.default.removeItem(at: d) }
@@ -108,7 +108,7 @@ private func tempDB() throws -> (Database, URL) {
     }
 }
 
-// 저장 묶기(R-3)
+// 저장 묶기(C-13)
 @Suite struct StateSaverTests {
     @Test func coalescesAndFlushes() throws {
         let d = FileManager.default.temporaryDirectory.appendingPathComponent("dropcap-saver-\(UUID().uuidString)")
@@ -128,7 +128,7 @@ private func tempDB() throws -> (Database, URL) {
         #expect(saver.writes == 1) // 기다리는 것이 없으면 쓰지 않음
     }
 
-    @Test func skipBackupKeepsGoodBackup() throws { // 손상 복구(A-03): 깨진 본 파일로 .bak 을 덮지 않음
+    @Test func skipBackupKeepsGoodBackup() throws { // 손상 복구: 깨진 본 파일로 .bak 을 덮지 않음
         let d = FileManager.default.temporaryDirectory.appendingPathComponent("dropcap-saver-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: d) }
@@ -162,7 +162,7 @@ private func tempDB() throws -> (Database, URL) {
 }
 
 @Suite struct DigestWindowTests {
-    @Test func morningOnly() { // A-20: 밤에 처음 켜도 '아침 브리핑'이 뜨지 않게
+    @Test func morningOnly() { // 밤에 처음 켜도 '아침 브리핑'이 뜨지 않게
         #expect(AppModel.digestWindow(hour: 9, digestHour: 9))
         #expect(AppModel.digestWindow(hour: 11, digestHour: 9))
         #expect(!AppModel.digestWindow(hour: 12, digestHour: 9))

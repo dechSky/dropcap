@@ -1,7 +1,7 @@
 import Foundation
 import Compression
 
-// 받는 크기 상한(R-2 · A-10): 받는 도중 넘으면 바로 끊는다(다 받은 뒤 버리지 않음). gzip 을 푼 뒤에는 Gzip 의 32MB 상한
+// 받는 크기 상한(S-12): 받는 도중 넘으면 바로 끊는다(다 받은 뒤 버리지 않음). gzip 을 푼 뒤에는 Gzip 의 32MB 상한
 enum FetchLimit: Int, Sendable {
     case feed = 10_485_760   // 피드·사이트맵·채널 찾기 10MB
     case page = 2_097_152    // 기사 페이지 2MB
@@ -228,7 +228,7 @@ final class RequestGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable 
     private var verdict: Bool?            // nil = 아직 측정값 없음, true = 안전, false = 막음
     private var lastIP: String?
     private var waiter: CheckedContinuation<Void, Never>?
-    private var gaveUp = false             // 기다리기를 끝냈다(시간 초과) — 늦게 온 기다림은 바로 깨운다(A-22)
+    private var gaveUp = false             // 기다리기를 끝냈다(시간 초과) — 늦게 온 기다림은 바로 깨운다
 
     var lastRemote: String? { lock.lock(); defer { lock.unlock() }; return lastIP }
 

@@ -172,7 +172,7 @@ struct ToastView: View {
             HStack(spacing: 4) {
                 QuickButton(symbol: (savedNow ?? AppModel.shared.isSaved(item)) ? "bookmark.fill" : "bookmark", help: "나중에 읽기") {
                     AppModel.shared.toggleSaved(item)
-                    savedNow = AppModel.shared.isSaved(item) // 카드가 AppModel 을 보지 않으므로 누른 즉시 아이콘을 바꾼다(A-28)
+                    savedNow = AppModel.shared.isSaved(item) // 카드가 AppModel 을 보지 않으므로 누른 즉시 아이콘을 바꾼다
                 }
                 QuickButton(symbol: "safari", help: "브라우저에서 열기") {
                     ExternalLink.open(item.link)

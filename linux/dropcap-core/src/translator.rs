@@ -228,7 +228,7 @@ impl Translator {
         self.translate_many_reporting(texts).await.0
     }
 
-    // 번역과 함께 '이번 번역에 쓴 엔진'을 돌려준다(T-08 · A-24: 앱 전체에 하나인 last_engine 은 다른 번역이 동시에 돌거나
+    // 번역과 함께 '이번 번역에 쓴 엔진'을 돌려준다(T-08: 앱 전체에 하나인 last_engine 은 다른 번역이 동시에 돌거나
     // 캐시로 끝나면 틀리게 보였다). 새로 번역했거나 캐시에서 꺼낸 것이 있으면 그 엔진(리눅스는 Google 뿐), 번역할 것이 없으면 None
     pub async fn translate_many_reporting(&self, texts: &[String]) -> (Vec<String>, Engine) {
         if !self.sending() {
@@ -308,7 +308,7 @@ pub fn batches(texts: &[String], todo: &[usize], limit: usize) -> Vec<Vec<usize>
     out
 }
 
-// 한 번에 보낼 수 있는 길이(구글 공개 엔드포인트). 이보다 긴 문단은 문장 단위로 나눠 보내고 이어 붙인다(A-25: 예전엔 뒤가 잘렸다)
+// 한 번에 보낼 수 있는 길이(구글 공개 엔드포인트). 이보다 긴 문단은 문장 단위로 나눠 보내고 이어 붙인다(예전엔 뒤가 잘렸다)
 pub const REQUEST_LIMIT: usize = 4500;
 
 // 문장 경계(. ! ? 。 ！ ？ 뒤 공백, 줄바꿈)에서 max 글자 이하로 묶는다. 한 문장이 max 보다 길면 그 문장만 max 씩 자른다.

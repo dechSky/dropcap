@@ -9,7 +9,7 @@ import Translation
 actor Translator {
     static let shared = Translator(followSettings: true)
     private var cache: [String: String] = [:]
-    private var cacheEngine: [String: Engine] = [:] // 캐시에서 꺼낸 번역도 어느 엔진 것인지 알게(A-24)
+    private var cacheEngine: [String: Engine] = [:] // 캐시에서 꺼낸 번역도 어느 엔진 것인지 알게
 
     enum Engine: String { case apple = "기기 내 번역(Apple)", google = "Google 번역", none = "번역 안 함" }
     private(set) var lastEngine: Engine = .none
@@ -82,7 +82,7 @@ actor Translator {
     // 여러 문단을 한 번에. 순서를 지킨다.
     func translateMany(_ texts: [String]) async -> [String] { await translateManyReporting(texts).texts }
 
-    // 번역과 함께 '이번 번역에 쓴 엔진'을 돌려준다(A-24: 앱 전체에 하나인 lastEngine 은 다른 번역이 동시에 돌거나
+    // 번역과 함께 '이번 번역에 쓴 엔진'을 돌려준다(T-08: 앱 전체에 하나인 lastEngine 은 다른 번역이 동시에 돌거나
     // 캐시로 끝나면 틀리게 보였다). 새로 번역한 것이 있으면 그 엔진, 모두 캐시면 캐시에 남긴 엔진, 번역할 것이 없으면 none.
     func translateManyReporting(_ texts: [String]) async -> (texts: [String], engine: Engine) {
         await translateStreaming(texts, onChunk: nil)
@@ -370,7 +370,7 @@ actor Translator {
         return await LanguageAvailability().status(from: Locale.Language(identifier: "en"), to: Locale.Language(identifier: "ko")) == .installed
     }
 
-    // 한 번에 보낼 수 있는 길이(구글 공개 엔드포인트). 이보다 긴 문단은 문장 단위로 나눠 보내고 이어 붙인다(A-25: 예전엔 뒤가 잘렸다)
+    // 한 번에 보낼 수 있는 길이(구글 공개 엔드포인트). 이보다 긴 문단은 문장 단위로 나눠 보내고 이어 붙인다(예전엔 뒤가 잘렸다)
     static let requestLimit = 4500
 
     private static func google(_ text: String, target: String = "ko") async -> String? {

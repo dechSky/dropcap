@@ -388,7 +388,7 @@ public sealed class ArticleService
                 if (chunk.Count == 0 && n != 0) continue;
                 var inputs = (n == 0 ? new List<string> { artTitle } : new()).Concat(chunk.Select(i => blocks[i].Text!)).ToList();
                 var (outs, used) = await Translator.Shared.TranslateManyReportingAsync(inputs);
-                if (used != Translator.EngineNone) engine = used; // 이 기사에 실제로 쓴 엔진(T-08 · A-24)
+                if (used != Translator.EngineNone) engine = used; // 이 기사에 실제로 쓴 엔진(T-08)
                 var title = a.Title;
                 if (n == 0) { title = outs[0]; outs.RemoveAt(0); }
                 var nb = a.Blocks.ToList();

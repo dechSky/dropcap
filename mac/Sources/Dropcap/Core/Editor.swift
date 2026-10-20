@@ -1,6 +1,6 @@
 import Foundation
 
-// 매거진 편집 작업(R-1): 기사 받아 넣기·스토리 배정·호 엮기·지난 호 발행·검색을 화면 줄기 밖에서 한다.
+// 매거진 편집 작업: 기사 받아 넣기·스토리 배정·호 엮기·지난 호 발행·검색을 화면 줄기 밖에서 한다.
 // 화면(Magazine, @MainActor)은 결과만 받아 @Published 값을 바꾼다. DB 는 자기 줄(queue)로 지켜지므로 여기서 바로 부른다.
 
 // 편집에 필요한 앱 상태의 사본(메인에서 만들어 넘김)
@@ -33,16 +33,20 @@ actor Editor {
     // DB 에 넣지 못한 기사(디스크 가득·오래 잠김). 앱 상태에는 '본 글'로 남아 피드에서 다시 오지 않으므로 여기 두었다가
     // 다음 받아 넣기 때 먼저 다시 넣는다. 끝없이 쌓이지 않게 retryLimit 건까지(오래된 것부터 버림)
     // 앱을 끄면 사라지지 않게 retryFile 에도 적는다 — 비면 파일을 지운다. 파일이 깨졌거나 없으면 빈 것으로
-    // 기사 하나에만 정해진 실패(DB 는 멀쩡 — 바로 뒤 기사는 들어감)가 몇 번 났는지. strikeLimit 번이면 그 기사를 버린다(review-4 L4).
+    // 기사 하나에만 정해진 실패(결과 코드가 DB 전체 문제가 아니고 바로 뒤 기사는 들어감)가 몇 번 났는지. strikeLimit 번이면 그 기사를 버린다.
     // 메모리에만 — 앱을 다시 켜면 다시 셈(그래도 켤 때마다 strikeLimit 번까지라 끝없이 막지 않는다)
     private(set) var retry: [NewsItem] = []
     private var strikes: [String: Int] = [:]
     static let retryLimit = 3000
     static let strikeLimit = 3
+    static let failRunLimit = 20
 
     private func keepRetry(_ items: [NewsItem]) {
         let had = !retry.isEmpty
-        retry = Array(items.suffix(Self.retryLimit))
+        // 같은 기사가 다시 넣기 목록과 새 기사 양쪽에 있었으면 한 번만(나중 것) — 사본이 '잇따른 실패'로 보여 셈을 막지 않게
+        var seen = Set<String>()
+        let unique = items.reversed().filter { seen.insert($0.key).inserted }.reversed()
+        retry = Array(unique.suffix(Self.retryLimit))
         guard let retryFile else { return }
         if retry.isEmpty {
             if had || FileManager.default.fileExists(atPath: retryFile.path) { try? FileManager.default.removeItem(at: retryFile) }
@@ -64,17 +68,18 @@ actor Editor {
         var repKeys: [(id: String, key: StoryKey)] = clusters.compactMap { c in reps[c.id].map { (c.id, StoryKey($0.item)) } }
         var index = Dictionary(clusters.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { a, _ in a })
         var grown: [(Database.Cluster, NewsItem)] = []
-        // 기사 하나를 넣는다. 못 넣으면 false
-        func put(_ it: NewsItem) -> Bool {
+        // 기사 하나를 넣는다
+        func put(_ it: NewsItem) -> Database.WriteResult {
             // 이미 있는 기사는 스토리를 다시 정하지 않는다(대표가 자기 자신이면 '같은 출처'로 보여 새 스토리가 생기던 문제)
-            if db.exists(it.key) { return db.upsert(it, cluster: nil) }
+            if db.exists(it.key) { return db.upsertResult(it, cluster: nil) }
             // 기사만 스토리로 묶는다(논문·릴리스·커뮤니티 글은 양이 많고 성격이 달라 제외)
-            if it.itemKind != .article && it.itemKind != .video { return db.upsert(it, cluster: nil) }
+            if it.itemKind != .article && it.itemKind != .video { return db.upsertResult(it, cluster: nil) }
             let k = StoryKey(it)
             let when = it.date ?? Date()
             if let id = StoryGrouper.storyFor(k, representatives: repKeys), let i = index[id] {
                 // 기사를 먼저 넣고, 넣었을 때만 스토리를 키운다(못 넣은 기사를 다시 넣을 때 두 번 세지 않게)
-                guard db.upsert(it, cluster: id) else { return false }
+                let r = db.upsertResult(it, cluster: id)
+                guard r == .ok else { return r }
                 clusters[i].size += 1
                 clusters[i].last = max(clusters[i].last, when)
                 clusters[i].first = min(clusters[i].first, when)
@@ -83,36 +88,45 @@ actor Editor {
                 if followed.contains(id) { grown.append((clusters[i], it)) }
             } else {
                 let c = Database.Cluster(id: UUID().uuidString, title: it.displayTitle, tokens: k.tokens, first: when, last: when, size: 1)
-                guard db.upsert(it, cluster: c.id) else { return false }
+                let r = db.upsertResult(it, cluster: c.id)
+                guard r == .ok else { return r }
                 index[c.id] = clusters.count
                 clusters.append(c)
                 repKeys.append((c.id, k))
                 db.saveCluster(c)
             }
-            return true
+            return .ok
         }
-        // 실패가 둘 잇따르면 DB 전체 문제(잠김·가득)로 보고 나머지는 하나마다 잠금을 기다리지 않고 바로 다음으로 미룬다.
-        // 실패 뒤 다음 기사가 들어가면 앞 기사만의 실패 — 그 기사가 뒤를 막지 않게 이어 가고, 그런 실패가 strikeLimit 번이면 버린다
+        // 실패해도 다음 기사로 이어 간다 — 디스크가 거의 차 큰 기사 몇 개만 실패해도 작은 기사는 들어가게.
+        // 멈추고 나머지를 바로 다음으로 미루는 것은 잠김으로 두 번 기다렸을 때(하나마다 busy timeout 을 기다리지 않게)와
+        // 실패가 failRunLimit 번 잇따를 때. 실패 뒤 어떤 기사가 들어가면 DB 는 쓸 수 있으니, 그 사이 실패 가운데 기사만의 실패(.item)는
+        // 셈해 strikeLimit 번이면 버리고, DB 전체 문제(잠김·가득·디스크 오류 등)는 셈하지 않고 미루기만 한다. 멈춰서 미룬 것도 셈하지 않음
         var down = false
-        var suspect: NewsItem? = nil
+        var run: [(item: NewsItem, counts: Bool)] = [] // 마지막으로 들어간 기사 뒤 잇따른 실패
+        var waits = 0
         for it in items {
             if down { failed.append(it); continue }
-            if put(it) {
+            let r = put(it)
+            if r == .ok {
                 strikes[it.key] = nil
-                if let f = suspect {
-                    suspect = nil
+                for (f, counts) in run {
                     let n = (strikes[f.key] ?? 0) + 1
-                    if n < Self.strikeLimit { strikes[f.key] = n; failed.append(f) } else { strikes[f.key] = nil }
+                    if !counts { failed.append(f) }
+                    else if n < Self.strikeLimit { strikes[f.key] = n; failed.append(f) } else { strikes[f.key] = nil }
                 }
-            } else if let f = suspect {
-                down = true
-                failed += [f, it]
-                suspect = nil
+                run = []
+                waits = 0
             } else {
-                suspect = it
+                run.append((it, r == .item))
+                if r == .locked { waits += 1 }
+                if waits >= 2 || run.count >= Self.failRunLimit {
+                    down = true
+                    failed += run.map(\.item)
+                    run = []
+                }
             }
         }
-        if let f = suspect { failed.append(f) }
+        failed += run.map(\.item)
         strikes = strikes.filter { k, _ in failed.contains { $0.key == k } }
         return grown
     }
@@ -231,7 +245,7 @@ actor Editor {
     }
 
     // 하루가 지나면 그날 호를, 일요일이 지나면 그 주 호를 발행해 지난 호에 남긴다. 지난 호 목록을 돌려준다.
-    // 어제 호는 정오까지 새 기사가 오면 다시 엮되, 실린 기사가 같으면 다시 저장하지 않는다(A-21).
+    // 어제 호는 정오까지 새 기사가 오면 다시 엮되, 실린 기사가 같으면 다시 저장하지 않는다.
     // 빈 날은 최근 dueDays 일까지 메운다(매거진 채우기로 넣은 지난 기사도 그날 호가 생기게 — 예전엔 1~3일 전만이라 4일 넘은 날은 호가 없었다).
     // 이미 있는 호는 건너뛰고, 4일 넘은 날은 기사 수만 먼저 세어 없으면 엮지 않는다(확인마다 14일을 다시 엮지 않게)
     static let dueDays = 14

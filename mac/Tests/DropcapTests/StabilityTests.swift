@@ -343,6 +343,34 @@ final class SilentTranslate: URLProtocol {
         #expect(await editor.retry.isEmpty)
     }
 
+    // 늘 실패하는 큰 기사가 failRunLimit 건 넘게 다시 넣기 목록 앞에 쌓여도, 멈춘 뒤 다음 판은 다른 기사부터 시도해 작은 새 기사가 들어간다
+    @Test func manyBigItemsBeyondRunLimitDoNotStarveSmall() async throws {
+        let dir = StabilityTests.tempDir("dbfull4")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let db = Database(file: dir.appendingPathComponent("m.sqlite"), busyTimeoutMs: 100)
+        let editor = Editor(db: db)
+        var spare = Self.item(70)
+        spare.summary = String(repeating: "spare page ", count: 3_000)
+        _ = await editor.ingest([spare], followed: [])
+        spare.summary = ""
+        #expect(db.upsert(spare, cluster: nil))
+        let bigs = (100..<(100 + Editor.failRunLimit + 5)).map { i -> NewsItem in
+            var b = Self.item(i); b.summary = String(repeating: "harbour budget \(i) ", count: 5_000); return b
+        }
+        db.execForTests("PRAGMA max_page_count=1")
+        let smalls = (80..<84).map(Self.item)
+        _ = await editor.ingest(bigs + [smalls[0]], followed: [])
+        for s in smalls.dropFirst() { _ = await editor.ingest([s], followed: []) }
+        // 판마다 새 작은 기사 하나 — 각각 두 판 안에 들어감(마지막 것은 아직 한 판뿐이라 셈하지 않음)
+        #expect(smalls.dropLast().allSatisfy { db.exists($0.key) }, "큰 기사가 failRunLimit 건 넘게 앞에 있어도 작은 기사는 들어감")
+        #expect(Set(await editor.retry.map(\.key)).isSuperset(of: bigs.map(\.key)), "큰 기사는 버리지 않고 미룸")
+        db.execForTests("PRAGMA max_page_count=1073741823")
+        _ = await editor.ingest([], followed: [])
+        #expect(bigs.map(\.key).allSatisfy(db.exists))
+        #expect(smalls.map(\.key).allSatisfy(db.exists))
+        #expect(await editor.retry.isEmpty)
+    }
+
     // 잠겨 있으면 두 번 기다린 뒤 나머지는 기다리지 않고 미룬다(기사마다 기다리면 받아 넣기가 기사 수 × 기다림만큼 멈춤)
     @Test func lockedWaitsTwiceThenDefers() async throws {
         let dir = StabilityTests.tempDir("dblock2")

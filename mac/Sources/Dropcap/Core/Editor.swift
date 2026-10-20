@@ -100,9 +100,12 @@ actor Editor {
         // 실패해도 다음 기사로 이어 간다 — 디스크가 거의 차 큰 기사 몇 개만 실패해도 작은 기사는 들어가게.
         // 멈추고 나머지를 바로 다음으로 미루는 것은 잠김으로 두 번 기다렸을 때(하나마다 busy timeout 을 기다리지 않게)와
         // 실패가 failRunLimit 번 잇따를 때. 실패 뒤 어떤 기사가 들어가면 DB 는 쓸 수 있으니, 그 사이 실패 가운데 기사만의 실패(.item)는
-        // 셈해 strikeLimit 번이면 버리고, DB 전체 문제(잠김·가득·디스크 오류 등)는 셈하지 않고 미루기만 한다. 멈춰서 미룬 것도 셈하지 않음
+        // 셈해 strikeLimit 번이면 버리고, DB 전체 문제(잠김·가득·디스크 오류 등)는 셈하지 않고 미루기만 한다. 멈춰서 미룬 것도 셈하지 않음.
+        // 멈출 때 실패한 것(stalled)은 시도 안 한 나머지 뒤로 — 늘 실패하는 기사가 failRunLimit 건 넘게 쌓여도 다음 판은 다른 기사부터 시도해
+        // 뒤 기사가 굶지 않는다. 잠김으로 멈출 때도 같다(어느 기사든 같이 실패하니 순서는 잃는 것 없이 시도할 차례만 바꾼다)
         var down = false
         var run: [(item: NewsItem, counts: Bool)] = [] // 마지막으로 들어간 기사 뒤 잇따른 실패
+        var stalled: [NewsItem] = []
         var waits = 0
         for it in items {
             if down { failed.append(it); continue }
@@ -121,12 +124,12 @@ actor Editor {
                 if r == .locked { waits += 1 }
                 if waits >= 2 || run.count >= Self.failRunLimit {
                     down = true
-                    failed += run.map(\.item)
+                    stalled = run.map(\.item)
                     run = []
                 }
             }
         }
-        failed += run.map(\.item)
+        failed += run.map(\.item) + stalled
         strikes = strikes.filter { k, _ in failed.contains { $0.key == k } }
         return grown
     }
